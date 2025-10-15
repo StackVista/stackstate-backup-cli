@@ -1,0 +1,67 @@
+project_name: stackstate-backup-cli
+release:
+  github:
+    owner: stackvista
+    name: stackstate-backup-cli
+  name_template: '{{.Tag}}'
+before:
+  hooks:
+    - go mod download
+builds:
+- id: stackstate-backup-cli
+  targets:
+  - darwin_amd64
+  - darwin_arm64
+  - linux_amd64
+  - linux_arm64
+  - windows_amd64
+  main: .
+  ldflags:
+  - -s -w -X github.com/stackvista/stackstate-backup-cli/cmd/version/version.Version={{.Version}}
+    -X github.com/stackvista/stackstate-backup-cli/cmd/version/version.Commit={{.Commit}}
+    -X github.com/stackvista/stackstate-backup-cli/cmd/version/version.BuildDate={{.Date}}
+  binary: sts-backup
+  env:
+  - CGO_ENABLED=0
+  - GO111MODULE=on
+archives:
+- id: stackstate-backup-cli
+  builds:
+  - stackstate-backup-cli
+  name_template: '{{ .ProjectName }}-{{ .Version }}.{{ .Os }}-{{- if eq .Arch "amd64" }}x86_64{{- else }}{{ .Arch }}{{ end }}'
+  format: tar.gz
+  format_overrides:
+  - goos: windows
+    format: zip
+blobs:
+  - provider: s3
+    bucket: cli-dl.stackstate.com
+    ids:
+      - stackstate-backup-cli
+dockers:
+- image_templates:
+  - "stackstate/stackstate-backup-cli:{{ .Version }}-x86_64"
+  ids:
+    - stackstate-backup-cli
+  use: buildx
+  dockerfile: docker/Dockerfile.goreleaser
+  build_flag_templates:
+  - "--platform=linux/amd64"
+- image_templates:
+  - "stackstate/stackstate-backup-cli:{{ .Version }}-arm64v8"
+  ids:
+    - stackstate-backup-cli
+  use: buildx
+  goarch: arm64
+  dockerfile: docker/Dockerfile.goreleaser
+  build_flag_templates:
+  - "--platform=linux/arm64/v8"
+docker_manifests:
+- name_template: stackstate/stackstate-backup-cli:{{ .Version }}
+  image_templates:
+  - stackstate/stackstate-backup-cli:{{ .Version }}-x86_64
+  - stackstate/stackstate-backup-cli:{{ .Version }}-arm64v8
+- name_template: stackstate/stackstate-backup-cli:latest
+  image_templates:
+  - stackstate/stackstate-backup-cli:{{ .Version }}-x86_64
+  - stackstate/stackstate-backup-cli:{{ .Version }}-arm64v8

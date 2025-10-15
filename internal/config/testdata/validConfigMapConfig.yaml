@@ -1,0 +1,62 @@
+# Valid ConfigMap Configuration for StackState Backup CLI
+# This file contains the main configuration for Elasticsearch backup and restore operations.
+# It is typically stored in a Kubernetes ConfigMap.
+
+elasticsearch:
+  # Snapshot repository configuration for S3-compatible storage (Minio)
+  snapshotRepository:
+    # Name of the Elasticsearch snapshot repository
+    name: sts-backup
+    # S3 bucket name where snapshots will be stored
+    bucket: sts-elasticsearch-backup
+    # Minio/S3 endpoint (hostname:port)
+    endpoint: suse-observability-minio:9000
+    # Base path within the bucket for snapshots (empty string for root)
+    basepath: ""
+
+  # Snapshot Lifecycle Management (SLM) policy configuration
+  # SLM automates snapshot creation on a schedule
+  slm:
+    # Name of the SLM policy
+    name: auto-sts-backup
+    # Cron schedule for automatic snapshots (Quartz format: "second minute hour day month weekday")
+    # Example: "0 0 3 * * ?" = daily at 3:00 AM
+    schedule: "0 0 3 * * ?"
+    # Template for snapshot names (supports Elasticsearch date math)
+    # Example: "<sts-backup-{now{yyyyMMdd-HHmm}}>" creates snapshots like "sts-backup-20240115-0300"
+    snapshotTemplateName: "<sts-backup-{now{yyyyMMdd-HHmm}}>"
+    # Repository to store snapshots (must match snapshotRepository.name)
+    repository: sts-backup
+    # Indices pattern to include in snapshots (glob pattern)
+    indices: "sts*"
+    # Retention policy: delete snapshots older than this duration (e.g., 30d, 7d, 90d)
+    retentionExpireAfter: 30d
+    # Retention policy: minimum number of snapshots to keep (even if expired)
+    retentionMinCount: 5
+    # Retention policy: maximum number of snapshots to keep
+    retentionMaxCount: 30
+
+  # Elasticsearch service connection details
+  service:
+    # Name of the Elasticsearch service in Kubernetes
+    name: suse-observability-elasticsearch-master-headless
+    # Port number for Elasticsearch HTTP API
+    port: 9200
+    # Local port to use for port-forwarding (can be same as port)
+    localPortForwardPort: 9200
+
+  # Restore operation configuration
+  restore:
+    # Snapshot repository to restore from (must match snapshotRepository.name)
+    repository: sts-backup
+    # Kubernetes label selector for deployments to scale down during restore
+    # Example: "observability.suse.com/scalable-during-es-restore=true"
+    scaleDownLabelSelector: "observability.suse.com/scalable-during-es-restore=true"
+    # Prefix for regular indices to filter during restore operations
+    indexPrefix: sts
+    # Prefix for datastream indices (datastreams use pattern: .ds-{name}-{generation})
+    datastreamIndexPrefix: .ds-sts_k8s_logs
+    # Name of the datastream (used for rollover operations)
+    datastreamName: sts_k8s_logs
+    # Pattern for indices to restore from snapshot (comma-separated glob patterns)
+    indicesPattern: sts*,.ds-sts_k8s_logs*
