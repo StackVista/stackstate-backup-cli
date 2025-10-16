@@ -219,3 +219,13 @@ func (c *Client) ScaleUpDeployments(namespace string, deploymentScales []Deploym
 
 	return nil
 }
+
+// NewTestClient creates a k8s Client for testing with a fake clientset.
+// This function is exported so it can be used in other package tests.
+func NewTestClient(clientset kubernetes.Interface) *Client {
+	return &Client{
+		clientset:  clientset,
+		restConfig: nil,
+		debug:      false,
+	}
+}

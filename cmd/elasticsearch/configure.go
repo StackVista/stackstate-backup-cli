@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/stackvista/stackstate-backup-cli/cmd/portforward"
 	"github.com/stackvista/stackstate-backup-cli/internal/config"
 	"github.com/stackvista/stackstate-backup-cli/internal/elasticsearch"
 	"github.com/stackvista/stackstate-backup-cli/internal/k8s"
@@ -51,21 +52,14 @@ func runConfigure(cliCtx *config.Context) error {
 	localPort := cfg.Elasticsearch.Service.LocalPortForwardPort
 	remotePort := cfg.Elasticsearch.Service.Port
 
-	log.Infof("Setting up port-forward to %s:%d in namespace %s...", serviceName, remotePort, cliCtx.Config.Namespace)
-
-	stopChan, readyChan, err := k8sClient.PortForwardService(cliCtx.Config.Namespace, serviceName, localPort, remotePort)
+	pf, err := portforward.SetupPortForward(k8sClient, cliCtx.Config.Namespace, serviceName, localPort, remotePort, log)
 	if err != nil {
-		return fmt.Errorf("failed to setup port-forward: %w", err)
+		return err
 	}
-	defer close(stopChan)
-
-	// Wait for port-forward to be ready
-	<-readyChan
-
-	log.Successf("Port-forward established successfully")
+	defer close(pf.StopChan)
 
 	// Create Elasticsearch client
-	esClient, err := elasticsearch.NewClient(fmt.Sprintf("http://localhost:%d", localPort))
+	esClient, err := elasticsearch.NewClient(fmt.Sprintf("http://localhost:%d", pf.LocalPort))
 	if err != nil {
 		return fmt.Errorf("failed to create Elasticsearch client: %w", err)
 	}
