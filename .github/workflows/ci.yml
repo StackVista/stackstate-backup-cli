@@ -12,9 +12,6 @@ on:
   # Allows to run this via the Actions tab
   workflow_dispatch:
 
-env:
-  REGISTRY: quay.io
-
 jobs:
   lint:
     permissions:
@@ -110,28 +107,12 @@ jobs:
     env:
       TAG: ${{ github.ref_name }}
       S3_BUCKET: "s3://cli-dl.stackstate.com/stackstate-backup-cli/"
-      QUAY_USER: ${{ secrets.QUAY_USER }}
-      QUAY_PASSWORD: ${{ secrets.QUAY_PASSWORD }}
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25.x"
-      - name: Log in to the Container registry
-        uses: docker/login-action@v3
-        if: github.event_name != 'pull_request'
-        with:
-          registry: quay.io
-          username: ${{ secrets.QUAY_USER }}
-          password: ${{ secrets.QUAY_PASSWORD }}
-      - name: Log in to the Container registry
-        uses: docker/login-action@v3
-        if: github.event_name != 'pull_request'
-        with:
-          registry: docker.io
-          username: ${{ secrets.DOCKER_USER }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
       - name: Go releaser publish
         uses: goreleaser/goreleaser-action@v5
         env:
@@ -159,8 +140,3 @@ jobs:
         run: |
           echo "aws s3 cp dist/LATEST_VERSION ${{ env.S3_BUCKET }}"
           aws s3 cp dist/LATEST_VERSION ${{ env.S3_BUCKET }}
-
-      - name: Publish installers to S3
-        run: |
-          echo "aws s3 cp scripts/publish/installers/ ${{ env.S3_BUCKET }} --recursive"
-          aws s3 cp scripts/publish/installers/ ${{ env.S3_BUCKET }} --recursive
