@@ -1,0 +1,3 @@
+FROM gcr.io/distroless/static-debian11
+ENTRYPOINT ["/usr/bin/sts-backup"]
+COPY sts-backup /usr/bin/sts-backup
