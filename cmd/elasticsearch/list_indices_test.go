@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stackvista/stackstate-backup-cli/internal/config"
-	"github.com/stackvista/stackstate-backup-cli/internal/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/internal/clients/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -129,7 +129,7 @@ elasticsearch:
     retentionExpireAfter: 30d
     retentionMinCount: 5
     retentionMaxCount: 50
-`,
+` + minimalMinioStackgraphConfig,
 		},
 	}
 	_, err := fakeClient.CoreV1().ConfigMaps(testNamespace).Create(

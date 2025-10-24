@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stackvista/stackstate-backup-cli/internal/config"
-	"github.com/stackvista/stackstate-backup-cli/internal/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/internal/clients/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -152,7 +152,7 @@ elasticsearch:
     retentionExpireAfter: 30d
     retentionMinCount: 5
     retentionMaxCount: 50
-`,
+` + minimalMinioStackgraphConfig,
 			secretData:  "",
 			expectError: false,
 		},
@@ -187,12 +187,15 @@ elasticsearch:
     retentionExpireAfter: 30d
     retentionMinCount: 5
     retentionMaxCount: 50
-`,
+` + minimalMinioStackgraphConfig,
 			secretData: `
 elasticsearch:
   snapshotRepository:
     accessKey: secret-key
     secretKey: secret-value
+minio:
+  accessKey: secret-minio-key
+  secretKey: secret-minio-value
 `,
 			expectError: false,
 		},

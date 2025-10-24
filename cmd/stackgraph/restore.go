@@ -1,0 +1,526 @@
+package stackgraph
+
+import (
+	"bufio"
+	"context"
+	"fmt"
+	"os"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/spf13/cobra"
+	"github.com/stackvista/stackstate-backup-cli/internal/clients/k8s"
+	s3client "github.com/stackvista/stackstate-backup-cli/internal/clients/s3"
+	cfg "github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
+	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/portforward"
+	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/scale"
+	"github.com/stackvista/stackstate-backup-cli/internal/scripts"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+)
+
+const (
+	jobNameTemplate               = "stackgraph-restore"
+	minioKeysSecretName           = "suse-observability-backup-cli-minio-keys" //nolint:gosec // This is a Kubernetes secret name, not a credential
+	restoreScriptsConfigMap       = "suse-observability-backup-cli-restore-scripts"
+	defaultJobCompletionTimeout   = 30 * time.Minute
+	defaultJobStatusCheckInterval = 10 * time.Second
+	configMapDefaultFileMode      = 0755
+	purgeStackgraphDataFlag       = "-force"
+)
+
+// Restore command flags
+var (
+	archiveName      string
+	useLatest        bool
+	background       bool
+	skipConfirmation bool
+)
+
+func restoreCmd(cliCtx *cfg.Context) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "restore",
+		Short: "Restore Stackgraph from a backup archive",
+		Long:  `Restore Stackgraph data from a backup archive stored in S3/Minio. Can use --latest or --archive to specify which backup to restore.`,
+		Run: func(_ *cobra.Command, _ []string) {
+			if err := runRestore(cliCtx); err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+		},
+	}
+
+	cmd.Flags().StringVar(&archiveName, "archive", "", "Specific archive name to restore (e.g., sts-backup-20210216-0300.graph)")
+	cmd.Flags().BoolVar(&useLatest, "latest", false, "Restore from the most recent backup")
+	cmd.Flags().BoolVar(&background, "background", false, "Run restore job in background without waiting for completion")
+	cmd.Flags().BoolVarP(&skipConfirmation, "yes", "y", false, "Skip confirmation prompt")
+	cmd.MarkFlagsMutuallyExclusive("archive", "latest")
+	cmd.MarkFlagsOneRequired("archive", "latest")
+
+	return cmd
+}
+
+func runRestore(cliCtx *cfg.Context) error {
+	// Create logger
+	log := logger.New(cliCtx.Config.Quiet, cliCtx.Config.Debug)
+
+	// Create Kubernetes client
+	k8sClient, err := k8s.NewClient(cliCtx.Config.Kubeconfig, cliCtx.Config.Debug)
+	if err != nil {
+		return fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
+
+	// Load configuration
+	config, err := cfg.LoadConfig(k8sClient.Clientset(), cliCtx.Config.Namespace, cliCtx.Config.ConfigMapName, cliCtx.Config.SecretName)
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	// Determine which archive to restore
+	backupFile := archiveName
+	if useLatest {
+		log.Infof("Finding latest backup...")
+		latest, err := getLatestBackup(k8sClient, cliCtx, config, log)
+		if err != nil {
+			return err
+		}
+		backupFile = latest
+		log.Infof("Using latest backup: %s", backupFile)
+	}
+
+	// Warn user and ask for confirmation
+	if !skipConfirmation {
+		log.Println()
+		log.Warningf("WARNING: Restoring from backup will PURGE all existing Stackgraph data!")
+		log.Warningf("This operation cannot be undone.")
+		log.Println()
+		log.Infof("Backup to restore: %s", backupFile)
+		log.Infof("Namespace: %s", cliCtx.Config.Namespace)
+		log.Println()
+
+		if !promptForConfirmation() {
+			return fmt.Errorf("restore operation cancelled by user")
+		}
+	}
+
+	// Scale down deployments before restore
+	log.Println()
+	scaleDownLabelSelector := config.Stackgraph.Restore.ScaleDownLabelSelector
+	scaledDeployments, err := scale.ScaleDown(k8sClient, cliCtx.Config.Namespace, scaleDownLabelSelector, log)
+	if err != nil {
+		return err
+	}
+
+	// Ensure deployments are scaled back up on exit (even if restore fails)
+	defer func() {
+		if len(scaledDeployments) > 0 && !background {
+			log.Println()
+			if err := scale.ScaleUp(k8sClient, cliCtx.Config.Namespace, scaledDeployments, log); err != nil {
+				log.Warningf("Failed to scale up deployments: %v", err)
+			}
+		}
+	}()
+
+	// Setup Kubernetes resources for restore job
+	log.Println()
+	if err := ensureRestoreResources(k8sClient, cliCtx.Config.Namespace, config, log); err != nil {
+		return err
+	}
+
+	// Create restore job
+	log.Println()
+	log.Infof("Creating restore job for backup: %s", backupFile)
+
+	jobName := fmt.Sprintf("%s-%s", jobNameTemplate, time.Now().Format("20060102t150405"))
+
+	job, pvc, err := createRestoreJob(k8sClient, cliCtx.Config.Namespace, jobName, backupFile, config)
+	if err != nil {
+		return fmt.Errorf("failed to create restore job: %w", err)
+	}
+
+	log.Successf("Restore job created: %s", jobName)
+
+	if background {
+		printBackgroundModeInstructions(log, jobName, cliCtx.Config.Namespace, scaleDownLabelSelector)
+		return nil
+	}
+
+	return waitAndCleanupRestoreJob(k8sClient, cliCtx.Config.Namespace, jobName, job, pvc, log)
+}
+
+// ensureRestoreResources ensures that required Kubernetes resources exist for the restore job
+func ensureRestoreResources(k8sClient *k8s.Client, namespace string, config *cfg.Config, log *logger.Logger) error {
+	// Ensure backup scripts ConfigMap exists
+	log.Infof("Ensuring backup scripts ConfigMap exists...")
+
+	scriptNames, err := scripts.ListScripts()
+	if err != nil {
+		return fmt.Errorf("failed to list embedded scripts: %w", err)
+	}
+
+	scriptsData := make(map[string]string)
+	for _, scriptName := range scriptNames {
+		scriptContent, err := scripts.GetScript(scriptName)
+		if err != nil {
+			return fmt.Errorf("failed to get script %s: %w", scriptName, err)
+		}
+		scriptsData[scriptName] = string(scriptContent)
+	}
+
+	configMapLabels := k8s.MergeLabels(config.Kubernetes.CommonLabels, map[string]string{})
+	if _, err := k8sClient.EnsureConfigMap(namespace, restoreScriptsConfigMap, scriptsData, configMapLabels); err != nil {
+		return fmt.Errorf("failed to ensure backup scripts ConfigMap: %w", err)
+	}
+	log.Successf("Backup scripts ConfigMap ready")
+
+	// Ensure Minio keys secret exists
+	log.Infof("Ensuring Minio keys secret exists...")
+
+	secretData := map[string][]byte{
+		"accesskey": []byte(config.Minio.AccessKey),
+		"secretkey": []byte(config.Minio.SecretKey),
+	}
+
+	secretLabels := k8s.MergeLabels(config.Kubernetes.CommonLabels, map[string]string{})
+	if _, err := k8sClient.EnsureSecret(namespace, minioKeysSecretName, secretData, secretLabels); err != nil {
+		return fmt.Errorf("failed to ensure Minio keys secret: %w", err)
+	}
+	log.Successf("Minio keys secret ready")
+
+	return nil
+}
+
+// printBackgroundModeInstructions prints instructions for monitoring and cleanup in background mode
+func printBackgroundModeInstructions(log *logger.Logger, jobName, namespace, scaleDownSelector string) {
+	log.Println()
+	log.Infof("Job is running in background. Use the following commands to monitor and cleanup:")
+	log.Infof("  Monitor: kubectl logs --follow job/%s -n %s", jobName, namespace)
+	log.Infof("  Cleanup: kubectl delete job,pvc %s -n %s", jobName, namespace)
+	log.Infof("  Scale up: kubectl scale --replicas=1 deployments --selector=%s -n %s", scaleDownSelector, namespace)
+	log.Println()
+	log.Warningf("IMPORTANT: The restore job may take significant time to complete.")
+	log.Warningf("Remember to scale up deployments after the job completes successfully!")
+}
+
+// waitAndCleanupRestoreJob waits for job completion and cleans up resources
+func waitAndCleanupRestoreJob(k8sClient *k8s.Client, namespace, jobName string, job *batchv1.Job, pvc *corev1.PersistentVolumeClaim, log *logger.Logger) error {
+	log.Println()
+	log.Infof("Waiting for restore job to complete (this may take several minutes)...")
+
+	if err := waitForJobCompletion(k8sClient, namespace, jobName, log); err != nil {
+		log.Errorf("Job failed: %v", err)
+		log.Println()
+		log.Infof("Cleanup commands:")
+		log.Infof("  kubectl delete job,pvc %s -n %s", jobName, namespace)
+		return err
+	}
+
+	log.Println()
+	log.Successf("Restore completed successfully")
+
+	// Cleanup job and PVC
+	log.Infof("Cleaning up job and PVC...")
+	if err := k8sClient.DeleteJob(namespace, job.Name); err != nil {
+		log.Warningf("Failed to delete job: %v", err)
+	}
+	if err := k8sClient.DeletePVC(namespace, pvc.Name); err != nil {
+		log.Warningf("Failed to delete PVC: %v", err)
+	}
+
+	return nil
+}
+
+// getLatestBackup retrieves the most recent backup from S3
+func getLatestBackup(k8sClient *k8s.Client, cliCtx *cfg.Context, config *cfg.Config, log *logger.Logger) (string, error) {
+	// Setup port-forward to Minio
+	serviceName := config.Minio.Service.Name
+	localPort := config.Minio.Service.LocalPortForwardPort
+	remotePort := config.Minio.Service.Port
+
+	pf, err := portforward.SetupPortForward(k8sClient, cliCtx.Config.Namespace, serviceName, localPort, remotePort, log)
+	if err != nil {
+		return "", err
+	}
+	defer close(pf.StopChan)
+
+	// Create S3 client
+	endpoint := fmt.Sprintf("http://localhost:%d", pf.LocalPort)
+	s3Client, err := s3client.NewClient(endpoint, config.Minio.AccessKey, config.Minio.SecretKey)
+	if err != nil {
+		return "", err
+	}
+
+	// List objects in bucket
+	bucket := config.Stackgraph.Bucket
+	prefix := config.Stackgraph.S3Prefix
+	archiveSplitSize := config.Stackgraph.ArchiveSplitSize
+
+	input := &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucket),
+		Prefix: aws.String(prefix),
+	}
+
+	result, err := s3Client.ListObjectsV2(context.Background(), input)
+	if err != nil {
+		return "", fmt.Errorf("failed to list S3 objects: %w", err)
+	}
+
+	// Filter objects based on archive split size
+	filteredObjects := s3client.FilterBackupObjects(result.Contents, archiveSplitSize)
+
+	if len(filteredObjects) == 0 {
+		return "", fmt.Errorf("no backups found in bucket %s", bucket)
+	}
+
+	// Sort by LastModified time (most recent first)
+	sort.Slice(filteredObjects, func(i, j int) bool {
+		return filteredObjects[i].LastModified.After(filteredObjects[j].LastModified)
+	})
+
+	return filteredObjects[0].Key, nil
+}
+
+// buildPVCSpec builds a PVCSpec from configuration
+func buildPVCSpec(name string, config *cfg.Config, labels map[string]string) k8s.PVCSpec {
+	pvcConfig := config.Stackgraph.Restore.PVC
+
+	// Convert string access modes to k8s types
+	accessModes := []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce} // default
+	if len(pvcConfig.AccessModes) > 0 {
+		accessModes = make([]corev1.PersistentVolumeAccessMode, 0, len(pvcConfig.AccessModes))
+		for _, mode := range pvcConfig.AccessModes {
+			accessModes = append(accessModes, corev1.PersistentVolumeAccessMode(mode))
+		}
+	}
+
+	// Handle storage class (nil if not set)
+	var storageClass *string
+	if pvcConfig.StorageClassName != "" {
+		storageClass = &pvcConfig.StorageClassName
+	}
+
+	return k8s.PVCSpec{
+		Name:         name,
+		Labels:       labels,
+		StorageSize:  pvcConfig.Size,
+		AccessModes:  accessModes,
+		StorageClass: storageClass,
+	}
+}
+
+// createRestoreJob creates a Kubernetes Job and PVC for restoring from backup
+func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile string, config *cfg.Config) (*batchv1.Job, *corev1.PersistentVolumeClaim, error) {
+	defaultMode := int32(configMapDefaultFileMode)
+
+	// Merge common labels with resource-specific labels
+	pvcLabels := k8s.MergeLabels(config.Kubernetes.CommonLabels, map[string]string{})
+	jobLabels := k8s.MergeLabels(config.Kubernetes.CommonLabels, config.Stackgraph.Restore.Job.Labels)
+
+	// Create PVC first
+	pvcSpec := buildPVCSpec(jobName, config, pvcLabels)
+	pvc, err := k8sClient.CreatePVC(namespace, pvcSpec)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to create PVC: %w", err)
+	}
+
+	// Build job spec using configuration
+	spec := k8s.BackupJobSpec{
+		Name:                     jobName,
+		Labels:                   jobLabels,
+		ImagePullSecrets:         k8s.ConvertImagePullSecrets(config.Stackgraph.Restore.Job.ImagePullSecrets),
+		SecurityContext:          k8s.ConvertPodSecurityContext(&config.Stackgraph.Restore.Job.SecurityContext),
+		NodeSelector:             config.Stackgraph.Restore.Job.NodeSelector,
+		Tolerations:              k8s.ConvertTolerations(config.Stackgraph.Restore.Job.Tolerations),
+		Affinity:                 k8s.ConvertAffinity(config.Stackgraph.Restore.Job.Affinity),
+		ContainerSecurityContext: k8s.ConvertSecurityContext(config.Stackgraph.Restore.Job.ContainerSecurityContext),
+		Image:                    config.Stackgraph.Restore.Job.Image,
+		Command:                  []string{"/backup-restore-scripts/restore-stackgraph-backup.sh"},
+		Env:                      buildRestoreEnvVars(backupFile, config),
+		Resources:                k8s.ConvertResources(config.Stackgraph.Restore.Job.Resources),
+		VolumeMounts:             buildRestoreVolumeMounts(),
+		InitContainers:           buildRestoreInitContainers(config),
+		Volumes:                  buildRestoreVolumes(jobName, config, defaultMode),
+	}
+
+	// Create job
+	job, err := k8sClient.CreateBackupJob(namespace, spec)
+	if err != nil {
+		// Cleanup PVC if job creation fails
+		_ = k8sClient.DeletePVC(namespace, pvc.Name)
+		return nil, nil, fmt.Errorf("failed to create job: %w", err)
+	}
+
+	return job, pvc, nil
+}
+
+// buildRestoreEnvVars constructs environment variables for the restore job
+func buildRestoreEnvVars(backupFile string, config *cfg.Config) []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: "BACKUP_FILE", Value: backupFile},
+		{Name: "FORCE_DELETE", Value: purgeStackgraphDataFlag},
+		{Name: "BACKUP_STACKGRAPH_BUCKET_NAME", Value: config.Stackgraph.Bucket},
+		{Name: "BACKUP_STACKGRAPH_S3_PREFIX", Value: config.Stackgraph.S3Prefix},
+		{Name: "BACKUP_STACKGRAPH_ARCHIVE_SPLIT_SIZE", Value: config.Stackgraph.ArchiveSplitSize},
+		{Name: "MINIO_ENDPOINT", Value: fmt.Sprintf("%s:%d", config.Minio.Service.Name, config.Minio.Service.Port)},
+		{Name: "ZOOKEEPER_QUORUM", Value: config.Stackgraph.Restore.ZookeeperQuorum},
+	}
+}
+
+// buildRestoreVolumeMounts constructs volume mounts for the restore job container
+func buildRestoreVolumeMounts() []corev1.VolumeMount {
+	return []corev1.VolumeMount{
+		{Name: "backup-log", MountPath: "/opt/docker/etc_log"},
+		{Name: "backup-restore-scripts", MountPath: "/backup-restore-scripts"},
+		{Name: "minio-keys", MountPath: "/aws-keys"},
+		{Name: "tmp-data", MountPath: "/tmp-data"},
+	}
+}
+
+// buildRestoreInitContainers constructs init containers for the restore job
+func buildRestoreInitContainers(config *cfg.Config) []corev1.Container {
+	return []corev1.Container{
+		{
+			Name:            "wait",
+			Image:           config.Stackgraph.Restore.Job.WaitImage,
+			ImagePullPolicy: corev1.PullIfNotPresent,
+			Command: []string{
+				"sh",
+				"-c",
+				fmt.Sprintf("/entrypoint -c %s:%d -t 300", config.Minio.Service.Name, config.Minio.Service.Port),
+			},
+		},
+	}
+}
+
+// buildRestoreVolumes constructs volumes for the restore job pod
+func buildRestoreVolumes(jobName string, config *cfg.Config, defaultMode int32) []corev1.Volume {
+	return []corev1.Volume{
+		{
+			Name: "backup-log",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: config.Stackgraph.Restore.LoggingConfigConfigMapName,
+					},
+				},
+			},
+		},
+		{
+			Name: "backup-restore-scripts",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: restoreScriptsConfigMap,
+					},
+					DefaultMode: &defaultMode,
+				},
+			},
+		},
+		{
+			Name: "minio-keys",
+			VolumeSource: corev1.VolumeSource{
+				Secret: &corev1.SecretVolumeSource{
+					SecretName: minioKeysSecretName,
+				},
+			},
+		},
+		{
+			Name: "tmp-data",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: jobName,
+				},
+			},
+		},
+	}
+}
+
+// waitForJobCompletion waits for a Kubernetes job to complete
+func waitForJobCompletion(k8sClient *k8s.Client, namespace, jobName string, log *logger.Logger) error {
+	timeout := time.After(defaultJobCompletionTimeout)
+	ticker := time.NewTicker(defaultJobStatusCheckInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeout:
+			return fmt.Errorf("timeout waiting for job to complete")
+		case <-ticker.C:
+			job, err := k8sClient.GetJob(namespace, jobName)
+			if err != nil {
+				return fmt.Errorf("failed to get job status: %w", err)
+			}
+
+			if job.Status.Succeeded > 0 {
+				return nil
+			}
+
+			if job.Status.Failed > 0 {
+				// Get and print logs from failed job
+				log.Println()
+				log.Errorf("Job failed. Fetching logs...")
+				log.Println()
+				if err := printJobLogs(k8sClient, namespace, jobName, log); err != nil {
+					log.Warningf("Failed to fetch job logs: %v", err)
+				}
+				return fmt.Errorf("job failed")
+			}
+
+			log.Debugf("Job status: Active=%d, Succeeded=%d, Failed=%d",
+				job.Status.Active, job.Status.Succeeded, job.Status.Failed)
+		}
+	}
+}
+
+// printJobLogs retrieves and prints logs from all containers in a job's pods
+func printJobLogs(k8sClient *k8s.Client, namespace, jobName string, log *logger.Logger) error {
+	// Get logs from all pods in the job
+	allPodLogs, err := k8sClient.GetJobLogs(namespace, jobName)
+	if err != nil {
+		return err
+	}
+
+	// Print logs from each pod
+	for _, podLogs := range allPodLogs {
+		log.Infof("=== Logs from pod: %s ===", podLogs.PodName)
+		log.Println()
+
+		// Print logs from each container
+		for _, containerLog := range podLogs.ContainerLogs {
+			containerType := "container"
+			if containerLog.IsInit {
+				containerType = "init container"
+			}
+
+			log.Infof("--- Logs from %s: %s ---", containerType, containerLog.Name)
+
+			// Print the actual logs
+			if containerLog.Logs != "" {
+				fmt.Println(containerLog.Logs)
+			} else {
+				log.Infof("(no logs)")
+			}
+			log.Println()
+		}
+	}
+
+	return nil
+}
+
+// promptForConfirmation prompts the user for confirmation and returns true if they confirm
+func promptForConfirmation() bool {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Print("Do you want to continue? (yes/no): ")
+
+	response, err := reader.ReadString('\n')
+	if err != nil {
+		return false
+	}
+
+	response = strings.TrimSpace(strings.ToLower(response))
+	return response == "yes" || response == "y"
+}

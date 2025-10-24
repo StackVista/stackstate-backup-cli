@@ -385,6 +385,42 @@ func TestConfig_StructValidation(t *testing.T) {
 						RetentionMaxCount:    10,
 					},
 				},
+				Minio: MinioConfig{
+					Service: ServiceConfig{
+						Name:                 "minio",
+						Port:                 9000,
+						LocalPortForwardPort: 9000,
+					},
+					AccessKey: "minioadmin",
+					SecretKey: "minioadmin",
+				},
+				Stackgraph: StackgraphConfig{
+					Bucket:           "stackgraph-bucket",
+					S3Prefix:         "",
+					ArchiveSplitSize: "500M",
+					Restore: StackgraphRestoreConfig{
+						ScaleDownLabelSelector:     "app=stackgraph",
+						LoggingConfigConfigMapName: "logging-config",
+						ZookeeperQuorum:            "zookeeper:2181",
+						Job: JobConfig{
+							Image:     "backup:latest",
+							WaitImage: "wait:latest",
+							Resources: ResourceRequirements{
+								Limits: ResourceList{
+									CPU:    "2",
+									Memory: "4Gi",
+								},
+								Requests: ResourceList{
+									CPU:    "1",
+									Memory: "2Gi",
+								},
+							},
+						},
+						PVC: PVCConfig{
+							Size: "10Gi",
+						},
+					},
+				},
 			},
 			expectError: false,
 		},

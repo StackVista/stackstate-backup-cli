@@ -8,11 +8,12 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/stackvista/stackstate-backup-cli/cmd/portforward"
-	"github.com/stackvista/stackstate-backup-cli/internal/config"
-	"github.com/stackvista/stackstate-backup-cli/internal/elasticsearch"
-	"github.com/stackvista/stackstate-backup-cli/internal/k8s"
-	"github.com/stackvista/stackstate-backup-cli/internal/logger"
+	"github.com/stackvista/stackstate-backup-cli/internal/clients/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/internal/clients/k8s"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
+	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/portforward"
+	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/scale"
 )
 
 const (
@@ -65,7 +66,7 @@ func runRestore(cliCtx *config.Context) error {
 	}
 
 	// Scale down deployments before restore
-	scaledDeployments, err := scaleDownDeployments(k8sClient, cliCtx.Config.Namespace, cfg.Elasticsearch.Restore.ScaleDownLabelSelector, log)
+	scaledDeployments, err := scale.ScaleDown(k8sClient, cliCtx.Config.Namespace, cfg.Elasticsearch.Restore.ScaleDownLabelSelector, log)
 	if err != nil {
 		return err
 	}
@@ -74,14 +75,8 @@ func runRestore(cliCtx *config.Context) error {
 	defer func() {
 		if len(scaledDeployments) > 0 {
 			log.Println()
-			log.Infof("Scaling up deployments back to original replica counts...")
-			if err := k8sClient.ScaleUpDeployments(cliCtx.Config.Namespace, scaledDeployments); err != nil {
+			if err := scale.ScaleUp(k8sClient, cliCtx.Config.Namespace, scaledDeployments, log); err != nil {
 				log.Warningf("Failed to scale up deployments: %v", err)
-			} else {
-				log.Successf("Scaled up %d deployment(s) successfully:", len(scaledDeployments))
-				for _, dep := range scaledDeployments {
-					log.Infof("  - %s (replicas: 0 -> %d)", dep.Name, dep.Replicas)
-				}
 			}
 		}
 	}()
@@ -212,27 +207,6 @@ func deleteIndexWithVerification(esClient *elasticsearch.Client, index string, l
 		time.Sleep(defaultIndexDeleteRetryInterval)
 	}
 	return nil
-}
-
-// scaleDownDeployments scales down deployments matching the label selector
-func scaleDownDeployments(k8sClient *k8s.Client, namespace, labelSelector string, log *logger.Logger) ([]k8s.DeploymentScale, error) {
-	log.Infof("Scaling down deployments (selector: %s)...", labelSelector)
-
-	scaledDeployments, err := k8sClient.ScaleDownDeployments(namespace, labelSelector)
-	if err != nil {
-		return nil, fmt.Errorf("failed to scale down deployments: %w", err)
-	}
-
-	if len(scaledDeployments) == 0 {
-		log.Infof("No deployments found to scale down")
-	} else {
-		log.Successf("Scaled down %d deployment(s):", len(scaledDeployments))
-		for _, dep := range scaledDeployments {
-			log.Infof("  - %s (replicas: %d -> 0)", dep.Name, dep.Replicas)
-		}
-	}
-
-	return scaledDeployments, nil
 }
 
 // deleteIndices handles the deletion of all STS indices including datastream rollover

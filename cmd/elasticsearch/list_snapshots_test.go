@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackvista/stackstate-backup-cli/internal/config"
-	"github.com/stackvista/stackstate-backup-cli/internal/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/internal/clients/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -20,6 +20,36 @@ const (
 	testNamespace     = "test-ns"
 	testSecretName    = "backup-secret"
 )
+
+// minimalMinioStackgraphConfig provides the required Minio and Stackgraph configuration for tests
+const minimalMinioStackgraphConfig = `
+minio:
+  service:
+    name: minio
+    port: 9000
+    localPortForwardPort: 9000
+  accessKey: minioadmin
+  secretKey: minioadmin
+stackgraph:
+  bucket: stackgraph-bucket
+  archiveSplitSize: "500M"
+  restore:
+    scaleDownLabelSelector: "app=stackgraph"
+    loggingConfigConfigMap: logging-config
+    zookeeperQuorum: "zookeeper:2181"
+    job:
+      image: backup:latest
+      waitImage: wait:latest
+      resources:
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+        requests:
+          cpu: "1"
+          memory: "2Gi"
+    pvc:
+      size: "10Gi"
+`
 
 // mockESClient is a simple mock for testing commands
 type mockESClient struct {
@@ -117,7 +147,7 @@ elasticsearch:
     retentionExpireAfter: 30d
     retentionMinCount: 5
     retentionMaxCount: 50
-`,
+` + minimalMinioStackgraphConfig,
 		},
 	}
 	_, err := fakeClient.CoreV1().ConfigMaps(testNamespace).Create(

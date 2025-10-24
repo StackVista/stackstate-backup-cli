@@ -3,8 +3,8 @@ package portforward
 import (
 	"fmt"
 
-	"github.com/stackvista/stackstate-backup-cli/internal/k8s"
-	"github.com/stackvista/stackstate-backup-cli/internal/logger"
+	"github.com/stackvista/stackstate-backup-cli/internal/clients/k8s"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
 )
 
 // Conn contains the channels needed to manage a port-forward connection

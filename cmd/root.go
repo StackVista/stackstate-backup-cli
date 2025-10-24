@@ -5,8 +5,9 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/stackvista/stackstate-backup-cli/cmd/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/cmd/stackgraph"
 	"github.com/stackvista/stackstate-backup-cli/cmd/version"
-	"github.com/stackvista/stackstate-backup-cli/internal/config"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 )
 
 var (
@@ -33,6 +34,10 @@ func init() {
 	esCmd := elasticsearch.Cmd(cliCtx)
 	addBackupConfigFlags(esCmd)
 	rootCmd.AddCommand(esCmd)
+
+	stackgraphCmd := stackgraph.Cmd(cliCtx)
+	addBackupConfigFlags(stackgraphCmd)
+	rootCmd.AddCommand(stackgraphCmd)
 
 	// Add commands that don't need backup config flags
 	rootCmd.AddCommand(version.Cmd())

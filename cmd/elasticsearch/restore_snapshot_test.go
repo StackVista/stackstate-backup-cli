@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackvista/stackstate-backup-cli/internal/config"
-	"github.com/stackvista/stackstate-backup-cli/internal/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/internal/clients/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

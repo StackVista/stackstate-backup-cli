@@ -5,11 +5,11 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/stackvista/stackstate-backup-cli/cmd/portforward"
-	"github.com/stackvista/stackstate-backup-cli/internal/config"
-	"github.com/stackvista/stackstate-backup-cli/internal/elasticsearch"
-	"github.com/stackvista/stackstate-backup-cli/internal/k8s"
-	"github.com/stackvista/stackstate-backup-cli/internal/logger"
+	"github.com/stackvista/stackstate-backup-cli/internal/clients/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/internal/clients/k8s"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
+	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/portforward"
 )
 
 func configureCmd(cliCtx *config.Context) *cobra.Command {
