@@ -12,9 +12,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/spf13/cobra"
+	"github.com/stackvista/stackstate-backup-cli/internal/app"
 	"github.com/stackvista/stackstate-backup-cli/internal/clients/k8s"
 	s3client "github.com/stackvista/stackstate-backup-cli/internal/clients/s3"
-	cfg "github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/portforward"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/scale"
@@ -41,13 +42,18 @@ var (
 	skipConfirmation bool
 )
 
-func restoreCmd(cliCtx *cfg.Context) *cobra.Command {
+func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "restore",
 		Short: "Restore Stackgraph from a backup archive",
 		Long:  `Restore Stackgraph data from a backup archive stored in S3/Minio. Can use --latest or --archive to specify which backup to restore.`,
 		Run: func(_ *cobra.Command, _ []string) {
-			if err := runRestore(cliCtx); err != nil {
+			appCtx, err := app.NewContext(globalFlags)
+			if err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			if err := runRestore(appCtx); err != nil {
 				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
 			}
@@ -64,43 +70,28 @@ func restoreCmd(cliCtx *cfg.Context) *cobra.Command {
 	return cmd
 }
 
-func runRestore(cliCtx *cfg.Context) error {
-	// Create logger
-	log := logger.New(cliCtx.Config.Quiet, cliCtx.Config.Debug)
-
-	// Create Kubernetes client
-	k8sClient, err := k8s.NewClient(cliCtx.Config.Kubeconfig, cliCtx.Config.Debug)
-	if err != nil {
-		return fmt.Errorf("failed to create Kubernetes client: %w", err)
-	}
-
-	// Load configuration
-	config, err := cfg.LoadConfig(k8sClient.Clientset(), cliCtx.Config.Namespace, cliCtx.Config.ConfigMapName, cliCtx.Config.SecretName)
-	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
-	}
-
+func runRestore(appCtx *app.Context) error {
 	// Determine which archive to restore
 	backupFile := archiveName
 	if useLatest {
-		log.Infof("Finding latest backup...")
-		latest, err := getLatestBackup(k8sClient, cliCtx, config, log)
+		appCtx.Logger.Infof("Finding latest backup...")
+		latest, err := getLatestBackup(appCtx.K8sClient, appCtx.Namespace, appCtx.Config, appCtx.Logger)
 		if err != nil {
 			return err
 		}
 		backupFile = latest
-		log.Infof("Using latest backup: %s", backupFile)
+		appCtx.Logger.Infof("Using latest backup: %s", backupFile)
 	}
 
 	// Warn user and ask for confirmation
 	if !skipConfirmation {
-		log.Println()
-		log.Warningf("WARNING: Restoring from backup will PURGE all existing Stackgraph data!")
-		log.Warningf("This operation cannot be undone.")
-		log.Println()
-		log.Infof("Backup to restore: %s", backupFile)
-		log.Infof("Namespace: %s", cliCtx.Config.Namespace)
-		log.Println()
+		appCtx.Logger.Println()
+		appCtx.Logger.Warningf("WARNING: Restoring from backup will PURGE all existing Stackgraph data!")
+		appCtx.Logger.Warningf("This operation cannot be undone.")
+		appCtx.Logger.Println()
+		appCtx.Logger.Infof("Backup to restore: %s", backupFile)
+		appCtx.Logger.Infof("Namespace: %s", appCtx.Namespace)
+		appCtx.Logger.Println()
 
 		if !promptForConfirmation() {
 			return fmt.Errorf("restore operation cancelled by user")
@@ -108,9 +99,9 @@ func runRestore(cliCtx *cfg.Context) error {
 	}
 
 	// Scale down deployments before restore
-	log.Println()
-	scaleDownLabelSelector := config.Stackgraph.Restore.ScaleDownLabelSelector
-	scaledDeployments, err := scale.ScaleDown(k8sClient, cliCtx.Config.Namespace, scaleDownLabelSelector, log)
+	appCtx.Logger.Println()
+	scaleDownLabelSelector := appCtx.Config.Stackgraph.Restore.ScaleDownLabelSelector
+	scaledDeployments, err := scale.ScaleDown(appCtx.K8sClient, appCtx.Namespace, scaleDownLabelSelector, appCtx.Logger)
 	if err != nil {
 		return err
 	}
@@ -118,42 +109,42 @@ func runRestore(cliCtx *cfg.Context) error {
 	// Ensure deployments are scaled back up on exit (even if restore fails)
 	defer func() {
 		if len(scaledDeployments) > 0 && !background {
-			log.Println()
-			if err := scale.ScaleUp(k8sClient, cliCtx.Config.Namespace, scaledDeployments, log); err != nil {
-				log.Warningf("Failed to scale up deployments: %v", err)
+			appCtx.Logger.Println()
+			if err := scale.ScaleUp(appCtx.K8sClient, appCtx.Namespace, scaledDeployments, appCtx.Logger); err != nil {
+				appCtx.Logger.Warningf("Failed to scale up deployments: %v", err)
 			}
 		}
 	}()
 
 	// Setup Kubernetes resources for restore job
-	log.Println()
-	if err := ensureRestoreResources(k8sClient, cliCtx.Config.Namespace, config, log); err != nil {
+	appCtx.Logger.Println()
+	if err := ensureRestoreResources(appCtx.K8sClient, appCtx.Namespace, appCtx.Config, appCtx.Logger); err != nil {
 		return err
 	}
 
 	// Create restore job
-	log.Println()
-	log.Infof("Creating restore job for backup: %s", backupFile)
+	appCtx.Logger.Println()
+	appCtx.Logger.Infof("Creating restore job for backup: %s", backupFile)
 
 	jobName := fmt.Sprintf("%s-%s", jobNameTemplate, time.Now().Format("20060102t150405"))
 
-	job, pvc, err := createRestoreJob(k8sClient, cliCtx.Config.Namespace, jobName, backupFile, config)
+	job, pvc, err := createRestoreJob(appCtx.K8sClient, appCtx.Namespace, jobName, backupFile, appCtx.Config)
 	if err != nil {
 		return fmt.Errorf("failed to create restore job: %w", err)
 	}
 
-	log.Successf("Restore job created: %s", jobName)
+	appCtx.Logger.Successf("Restore job created: %s", jobName)
 
 	if background {
-		printBackgroundModeInstructions(log, jobName, cliCtx.Config.Namespace, scaleDownLabelSelector)
+		printBackgroundModeInstructions(appCtx.Logger, jobName, appCtx.Namespace, scaleDownLabelSelector)
 		return nil
 	}
 
-	return waitAndCleanupRestoreJob(k8sClient, cliCtx.Config.Namespace, jobName, job, pvc, log)
+	return waitAndCleanupRestoreJob(appCtx.K8sClient, appCtx.Namespace, jobName, job, pvc, appCtx.Logger)
 }
 
 // ensureRestoreResources ensures that required Kubernetes resources exist for the restore job
-func ensureRestoreResources(k8sClient *k8s.Client, namespace string, config *cfg.Config, log *logger.Logger) error {
+func ensureRestoreResources(k8sClient *k8s.Client, namespace string, config *config.Config, log *logger.Logger) error {
 	// Ensure backup scripts ConfigMap exists
 	log.Infof("Ensuring backup scripts ConfigMap exists...")
 
@@ -235,13 +226,13 @@ func waitAndCleanupRestoreJob(k8sClient *k8s.Client, namespace, jobName string, 
 }
 
 // getLatestBackup retrieves the most recent backup from S3
-func getLatestBackup(k8sClient *k8s.Client, cliCtx *cfg.Context, config *cfg.Config, log *logger.Logger) (string, error) {
+func getLatestBackup(k8sClient *k8s.Client, namespace string, config *config.Config, log *logger.Logger) (string, error) {
 	// Setup port-forward to Minio
 	serviceName := config.Minio.Service.Name
 	localPort := config.Minio.Service.LocalPortForwardPort
 	remotePort := config.Minio.Service.Port
 
-	pf, err := portforward.SetupPortForward(k8sClient, cliCtx.Config.Namespace, serviceName, localPort, remotePort, log)
+	pf, err := portforward.SetupPortForward(k8sClient, namespace, serviceName, localPort, remotePort, log)
 	if err != nil {
 		return "", err
 	}
@@ -285,7 +276,7 @@ func getLatestBackup(k8sClient *k8s.Client, cliCtx *cfg.Context, config *cfg.Con
 }
 
 // buildPVCSpec builds a PVCSpec from configuration
-func buildPVCSpec(name string, config *cfg.Config, labels map[string]string) k8s.PVCSpec {
+func buildPVCSpec(name string, config *config.Config, labels map[string]string) k8s.PVCSpec {
 	pvcConfig := config.Stackgraph.Restore.PVC
 
 	// Convert string access modes to k8s types
@@ -313,7 +304,7 @@ func buildPVCSpec(name string, config *cfg.Config, labels map[string]string) k8s
 }
 
 // createRestoreJob creates a Kubernetes Job and PVC for restoring from backup
-func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile string, config *cfg.Config) (*batchv1.Job, *corev1.PersistentVolumeClaim, error) {
+func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile string, config *config.Config) (*batchv1.Job, *corev1.PersistentVolumeClaim, error) {
 	defaultMode := int32(configMapDefaultFileMode)
 
 	// Merge common labels with resource-specific labels
@@ -358,7 +349,7 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 }
 
 // buildRestoreEnvVars constructs environment variables for the restore job
-func buildRestoreEnvVars(backupFile string, config *cfg.Config) []corev1.EnvVar {
+func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvVar {
 	return []corev1.EnvVar{
 		{Name: "BACKUP_FILE", Value: backupFile},
 		{Name: "FORCE_DELETE", Value: purgeStackgraphDataFlag},
@@ -381,7 +372,7 @@ func buildRestoreVolumeMounts() []corev1.VolumeMount {
 }
 
 // buildRestoreInitContainers constructs init containers for the restore job
-func buildRestoreInitContainers(config *cfg.Config) []corev1.Container {
+func buildRestoreInitContainers(config *config.Config) []corev1.Container {
 	return []corev1.Container{
 		{
 			Name:            "wait",
@@ -397,7 +388,7 @@ func buildRestoreInitContainers(config *cfg.Config) []corev1.Container {
 }
 
 // buildRestoreVolumes constructs volumes for the restore job pod
-func buildRestoreVolumes(jobName string, config *cfg.Config, defaultMode int32) []corev1.Volume {
+func buildRestoreVolumes(jobName string, config *config.Config, defaultMode int32) []corev1.Volume {
 	return []corev1.Volume{
 		{
 			Name: "backup-log",

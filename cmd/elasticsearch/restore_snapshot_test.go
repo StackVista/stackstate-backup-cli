@@ -94,8 +94,10 @@ func (m *mockESClientForRestore) ConfigureSLMPolicy(_, _, _, _, _, _ string, _, 
 
 // TestRestoreCmd_Unit tests the command structure
 func TestRestoreCmd_Unit(t *testing.T) {
-	cliCtx := config.NewContext()
-	cmd := restoreCmd(cliCtx)
+	flags := config.NewCLIGlobalFlags()
+	flags.Namespace = testNamespace
+	flags.ConfigMapName = testConfigMapName
+	cmd := restoreCmd(flags)
 
 	// Test command metadata
 	assert.Equal(t, "restore-snapshot", cmd.Use)

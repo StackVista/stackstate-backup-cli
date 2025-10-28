@@ -30,7 +30,7 @@ func loadTestData(t *testing.T, filename string) string {
 }
 
 func TestLoadConfig_FromConfigMapOnly(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
+	fakeClient := fake.NewClientset()
 	validConfigYAML := loadTestData(t, "validConfigMapOnly.yaml")
 
 	// Create ConfigMap
@@ -62,7 +62,7 @@ func TestLoadConfig_FromConfigMapOnly(t *testing.T) {
 }
 
 func TestLoadConfig_CompleteConfiguration(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
+	fakeClient := fake.NewClientset()
 	validConfigYAML := loadTestData(t, "validConfigMapConfig.yaml")
 	secretOverrideYAML := loadTestData(t, "validSecretConfig.yaml")
 
@@ -137,7 +137,7 @@ func TestLoadConfig_CompleteConfiguration(t *testing.T) {
 }
 
 func TestLoadConfig_WithSecretOverride(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
+	fakeClient := fake.NewClientset()
 	validConfigYAML := loadTestData(t, "validConfigMapOnly.yaml")
 	secretOverrideYAML := loadTestData(t, "validSecretConfig.yaml")
 
@@ -184,7 +184,7 @@ func TestLoadConfig_WithSecretOverride(t *testing.T) {
 }
 
 func TestLoadConfig_ConfigMapNotFound(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
+	fakeClient := fake.NewClientset()
 
 	// Try to load non-existent ConfigMap
 	config, err := LoadConfig(fakeClient, "test-ns", "nonexistent", "")
@@ -196,7 +196,7 @@ func TestLoadConfig_ConfigMapNotFound(t *testing.T) {
 }
 
 func TestLoadConfig_ConfigMapMissingConfigKey(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
+	fakeClient := fake.NewClientset()
 	validConfigYAML := loadTestData(t, "validConfigMapOnly.yaml")
 
 	// Create ConfigMap without 'config' key
@@ -224,7 +224,7 @@ func TestLoadConfig_ConfigMapMissingConfigKey(t *testing.T) {
 }
 
 func TestLoadConfig_InvalidYAML(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
+	fakeClient := fake.NewClientset()
 
 	// Create ConfigMap with invalid YAML
 	cm := &corev1.ConfigMap{
@@ -251,7 +251,7 @@ func TestLoadConfig_InvalidYAML(t *testing.T) {
 }
 
 func TestLoadConfig_ValidationFails(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
+	fakeClient := fake.NewClientset()
 
 	// Create ConfigMap with invalid config (missing required fields)
 	cm := &corev1.ConfigMap{
@@ -278,7 +278,7 @@ func TestLoadConfig_ValidationFails(t *testing.T) {
 }
 
 func TestLoadConfig_SecretNotFoundWarning(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
+	fakeClient := fake.NewClientset()
 	validConfigYAML := loadTestData(t, "validConfigMapOnly.yaml")
 
 	// Create only ConfigMap
@@ -306,7 +306,7 @@ func TestLoadConfig_SecretNotFoundWarning(t *testing.T) {
 }
 
 func TestLoadConfig_EmptyConfigMapName(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
+	fakeClient := fake.NewClientset()
 
 	// Try to load with empty ConfigMap name
 	config, err := LoadConfig(fakeClient, "test-ns", "", "")
@@ -314,33 +314,6 @@ func TestLoadConfig_EmptyConfigMapName(t *testing.T) {
 	// Should fail - ConfigMap is required
 	assert.Error(t, err)
 	assert.Nil(t, config)
-}
-
-func TestNewContext(t *testing.T) {
-	ctx := NewContext()
-
-	assert.NotNil(t, ctx)
-	assert.NotNil(t, ctx.Config)
-	assert.Equal(t, "", ctx.Config.Namespace)
-	assert.Equal(t, "", ctx.Config.Kubeconfig)
-	assert.False(t, ctx.Config.Debug)
-	assert.False(t, ctx.Config.Quiet)
-	assert.Equal(t, "", ctx.Config.ConfigMapName)
-	assert.Equal(t, "", ctx.Config.SecretName)
-	assert.Equal(t, "", ctx.Config.OutputFormat)
-}
-
-func TestCLIConfig_Defaults(t *testing.T) {
-	config := &CLIConfig{}
-
-	// Verify zero values
-	assert.Equal(t, "", config.Namespace)
-	assert.Equal(t, "", config.Kubeconfig)
-	assert.False(t, config.Debug)
-	assert.False(t, config.Quiet)
-	assert.Equal(t, "", config.ConfigMapName)
-	assert.Equal(t, "", config.SecretName)
-	assert.Equal(t, "", config.OutputFormat)
 }
 
 //nolint:funlen

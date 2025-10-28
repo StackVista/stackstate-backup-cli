@@ -287,11 +287,7 @@ func LoadConfig(clientset kubernetes.Interface, namespace, configMapName, secret
 	return config, nil
 }
 
-type Context struct {
-	Config *CLIConfig
-}
-
-type CLIConfig struct {
+type CLIGlobalFlags struct {
 	Namespace     string
 	Kubeconfig    string
 	Debug         bool
@@ -301,8 +297,6 @@ type CLIConfig struct {
 	OutputFormat  string // table, json
 }
 
-func NewContext() *Context {
-	return &Context{
-		Config: &CLIConfig{},
-	}
+func NewCLIGlobalFlags() *CLIGlobalFlags {
+	return &CLIGlobalFlags{}
 }

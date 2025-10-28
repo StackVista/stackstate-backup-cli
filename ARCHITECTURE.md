@@ -16,13 +16,13 @@ The codebase follows several key principles:
 
 ```
 stackstate-backup-cli/
-├── cmd/                      # Command-line interface (Layer 3)
+├── cmd/                      # Command-line interface (Layer 4)
 │   ├── root.go              # Root command and global flags
 │   ├── version/             # Version information command
 │   ├── elasticsearch/       # Elasticsearch backup/restore commands
 │   └── stackgraph/          # Stackgraph backup/restore commands
 │
-├── internal/                # Internal packages (Layers 0-2)
+├── internal/                # Internal packages (Layers 0-3)
 │   ├── foundation/          # Layer 0: Core utilities
 │   │   ├── config/          # Configuration management
 │   │   ├── logger/          # Structured logging
@@ -37,6 +37,9 @@ stackstate-backup-cli/
 │   │   ├── portforward/     # Port-forwarding orchestration
 │   │   └── scale/           # Deployment scaling workflows
 │   │
+│   ├── app/                 # Layer 3: Dependency Container
+│   │   └── app.go           # Application context and dependency injection
+│   │
 │   └── scripts/             # Embedded bash scripts
 │
 ├── main.go                  # Application entry point
@@ -46,14 +49,15 @@ stackstate-backup-cli/
 
 ## Architectural Layers
 
-### Layer 3: Commands (`cmd/`)
+### Layer 4: Commands (`cmd/`)
 
 **Purpose**: User-facing CLI commands and application entry points
 
 **Characteristics**:
 - Implements the Cobra command structure
 - Handles user input validation and flag parsing
-- Orchestrates calls to lower layers
+- Delegates to orchestration and client layers via app context
+- Minimal business logic (thin command layer)
 - Formats output for end users
 
 **Key Packages**:
@@ -62,8 +66,44 @@ stackstate-backup-cli/
 - `cmd/version/`: Version information
 
 **Dependency Rules**:
+- ✅ Can import: `internal/app/*` (preferred), all other `internal/` packages
+- ❌ Should not: Create clients directly, contain business logic
+
+### Layer 3: Dependency Container (`internal/app/`)
+
+**Purpose**: Centralized dependency initialization and injection
+
+**Characteristics**:
+- Creates and wires all application dependencies
+- Provides single entry point for dependency creation
+- Eliminates boilerplate from commands
+- Improves testability through centralized mocking
+
+**Key Components**:
+- `Context`: Struct holding all dependencies (K8s client, S3 client, ES client, config, logger, formatter)
+- `NewContext()`: Factory function creating production dependencies from global flags
+
+**Usage Pattern**:
+```go
+// In command files
+appCtx, err := app.NewContext(globalFlags)
+if err != nil {
+    return err
+}
+
+// All dependencies available via appCtx
+appCtx.K8sClient
+appCtx.S3Client
+appCtx.ESClient
+appCtx.Config
+appCtx.Logger
+appCtx.Formatter
+```
+
+**Dependency Rules**:
 - ✅ Can import: All `internal/` packages
-- ❌ Should not: Contain business logic or direct service calls
+- ✅ Used by: `cmd/` layer only
+- ❌ Should not: Contain business logic or orchestration
 
 ### Layer 2: Orchestration (`internal/orchestration/`)
 
@@ -130,31 +170,63 @@ stackstate-backup-cli/
    └─> cmd/elasticsearch/restore-snapshot.go
        │
 2. Parse flags and validate input
+   └─> Cobra command receives global flags
        │
-3. Load configuration
-   └─> internal/foundation/config/
+3. Create application context with dependencies
+   └─> app.NewContext(globalFlags)
+       ├─> internal/clients/k8s/ (K8s client)
+       ├─> internal/foundation/config/ (Load from ConfigMap/Secret)
+       ├─> internal/clients/s3/ (S3/Minio client)
+       ├─> internal/clients/elasticsearch/ (ES client)
+       ├─> internal/foundation/logger/ (Logger)
+       └─> internal/foundation/output/ (Formatter)
        │
-4. Create clients
-   └─> internal/clients/k8s/
-   └─> internal/clients/elasticsearch/
+4. Execute business logic with injected dependencies
+   └─> runRestore(appCtx)
+       ├─> internal/orchestration/scale/ (Scale down)
+       ├─> internal/orchestration/portforward/ (Port-forward)
+       ├─> internal/clients/elasticsearch/ (Restore snapshot)
+       └─> internal/orchestration/scale/ (Scale up)
        │
-5. Execute orchestration workflow
-   └─> internal/orchestration/scale/
-       └─> Scale down deployments
-   └─> internal/orchestration/portforward/
-       └─> Setup port-forward to Elasticsearch
-   └─> internal/clients/elasticsearch/
-       └─> Perform snapshot restore
-   └─> internal/orchestration/scale/
-       └─> Scale up deployments
-       │
-6. Format and display results
-   └─> internal/foundation/output/
+5. Format and display results
+   └─> appCtx.Formatter.PrintTable() or PrintJSON()
 ```
 
 ## Key Design Patterns
 
-### 1. Configuration Precedence
+### 1. Dependency Injection Pattern
+
+All dependencies are created once and injected via `app.Context`:
+
+```go
+// Before (repeated in every command)
+func runList(globalFlags *config.CLIGlobalFlags) error {
+    k8sClient, _ := k8s.NewClient(...)
+    cfg, _ := config.LoadConfig(...)
+    s3Client, _ := s3.NewClient(...)
+    log := logger.New(...)
+    formatter := output.NewFormatter(...)
+    // ... use dependencies
+}
+
+// After (centralized creation)
+func runList(appCtx *app.Context) error {
+    // All dependencies available immediately
+    appCtx.K8sClient
+    appCtx.Config
+    appCtx.S3Client
+    appCtx.Logger
+    appCtx.Formatter
+}
+```
+
+**Benefits**:
+- Eliminates boilerplate from commands (30-50 lines per command)
+- Centralized dependency creation makes testing easier
+- Single source of truth for dependency wiring
+- Commands are thinner and more focused on business logic
+
+### 2. Configuration Precedence
 
 Configuration is loaded with the following precedence (highest to lowest):
 
@@ -166,7 +238,7 @@ Configuration is loaded with the following precedence (highest to lowest):
 
 Implementation: `internal/foundation/config/config.go`
 
-### 2. Client Factory Pattern
+### 3. Client Factory Pattern
 
 Clients are created with a consistent factory pattern:
 
@@ -178,7 +250,7 @@ func NewClient(endpoint string) (*Client, error) {
 }
 ```
 
-### 3. Port-Forward Lifecycle
+### 4. Port-Forward Lifecycle
 
 Services running in Kubernetes are accessed via automatic port-forwarding:
 
@@ -188,7 +260,7 @@ pf, err := SetupPortForward(k8sClient, namespace, service, localPort, remotePort
 defer close(pf.StopChan)  // Automatic cleanup
 ```
 
-### 4. Scale Down/Up Pattern
+### 5. Scale Down/Up Pattern
 
 Deployments are scaled down before restore operations and scaled up afterward:
 
@@ -198,7 +270,7 @@ scaledDeployments, _ := scale.ScaleDown(k8sClient, namespace, selector, log)
 defer scale.ScaleUp(k8sClient, namespace, scaledDeployments, log)
 ```
 
-### 5. Structured Logging
+### 6. Structured Logging
 
 All operations use structured logging with consistent levels:
 
@@ -291,6 +363,27 @@ endpoint := "http://localhost:9200"
 ```
 
 **Fix**: Use configuration management: `config.Elasticsearch.Service.Name`
+
+### ❌ Don't: Create Clients Directly in Commands
+
+```go
+// BAD: cmd/elasticsearch/list-snapshots.go
+func runListSnapshots(globalFlags *config.CLIGlobalFlags) error {
+    k8sClient, _ := k8s.NewClient(globalFlags.Kubeconfig, globalFlags.Debug)
+    esClient, _ := elasticsearch.NewClient("http://localhost:9200")
+    // ... use clients
+}
+```
+
+**Fix**: Use `app.Context` for dependency injection:
+```go
+// GOOD
+func runListSnapshots(appCtx *app.Context) error {
+    // Dependencies already created
+    appCtx.K8sClient
+    appCtx.ESClient
+}
+```
 
 ## Automated Enforcement
 

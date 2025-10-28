@@ -5,14 +5,14 @@ import (
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 )
 
-func Cmd(cliCtx *config.Context) *cobra.Command {
+func Cmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "stackgraph",
 		Short: "Stackgraph backup and restore operations",
 	}
 
-	cmd.AddCommand(listCmd(cliCtx))
-	cmd.AddCommand(restoreCmd(cliCtx))
+	cmd.AddCommand(listCmd(globalFlags))
+	cmd.AddCommand(restoreCmd(globalFlags))
 
 	return cmd
 }

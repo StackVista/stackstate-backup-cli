@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 	"text/tabwriter"
 )
@@ -28,13 +27,13 @@ type Formatter struct {
 
 // NewFormatter creates a new output formatter
 // Defaults to table format if invalid format provided
-func NewFormatter(format string) *Formatter {
+func NewFormatter(wr io.Writer, format string) *Formatter {
 	f := Format(format)
 	if f != FormatTable && f != FormatJSON {
 		f = FormatTable
 	}
 	return &Formatter{
-		writer: os.Stdout,
+		writer: wr,
 		format: f,
 	}
 }

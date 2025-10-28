@@ -92,12 +92,12 @@ func (m *mockESClientForConfigure) RolloverDatastream(_ string) error {
 
 // TestConfigureCmd_Unit tests the command structure
 func TestConfigureCmd_Unit(t *testing.T) {
-	cliCtx := config.NewContext()
-	cliCtx.Config.Namespace = testNamespace
-	cliCtx.Config.ConfigMapName = testConfigMapName
-	cliCtx.Config.SecretName = testSecretName
+	flags := config.NewCLIGlobalFlags()
+	flags.Namespace = testNamespace
+	flags.ConfigMapName = testConfigMapName
+	flags.SecretName = testSecretName
 
-	cmd := configureCmd(cliCtx)
+	cmd := configureCmd(flags)
 
 	// Test command metadata
 	assert.Equal(t, "configure", cmd.Use)
@@ -203,7 +203,7 @@ minio:
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fakeClient := fake.NewSimpleClientset()
+			fakeClient := fake.NewClientset()
 
 			// Create ConfigMap
 			cm := &corev1.ConfigMap{

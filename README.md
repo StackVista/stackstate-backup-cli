@@ -186,7 +186,7 @@ See [internal/foundation/config/testdata/validConfigMapConfig.yaml](internal/fou
 
 ```
 .
-├── cmd/                          # CLI commands
+├── cmd/                          # CLI commands (Layer 4)
 │   ├── root.go                   # Root command and global flags
 │   ├── version/                  # Version command
 │   ├── elasticsearch/            # Elasticsearch subcommands
@@ -197,7 +197,7 @@ See [internal/foundation/config/testdata/validConfigMapConfig.yaml](internal/fou
 │   └── stackgraph/               # Stackgraph subcommands
 │       ├── list.go               # List backups
 │       └── restore.go            # Restore backup
-├── internal/                     # Internal packages (layered architecture)
+├── internal/                     # Internal packages (Layers 0-3)
 │   ├── foundation/               # Layer 0: Core utilities
 │   │   ├── config/               # Configuration management
 │   │   ├── logger/               # Structured logging
@@ -209,10 +209,19 @@ See [internal/foundation/config/testdata/validConfigMapConfig.yaml](internal/fou
 │   ├── orchestration/            # Layer 2: Workflows
 │   │   ├── portforward/          # Port-forwarding lifecycle
 │   │   └── scale/                # Deployment scaling
+│   ├── app/                      # Layer 3: Dependency container
+│   │   └── app.go                # Application context and DI
 │   └── scripts/                  # Embedded bash scripts
 ├── main.go                       # Entry point
 └── ARCHITECTURE.md               # Detailed architecture documentation
 ```
+
+### Key Architectural Features
+
+- **Layered Architecture**: Clear separation between commands (Layer 4), dependency injection (Layer 3), workflows (Layer 2), clients (Layer 1), and utilities (Layer 0)
+- **Dependency Injection**: Centralized dependency creation via `internal/app/` eliminates boilerplate from commands
+- **Testability**: All layers use interfaces for external dependencies, enabling comprehensive unit testing
+- **Clean Commands**: Commands are thin (50-100 lines) and focused on business logic
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed information about the layered architecture and design patterns.
 

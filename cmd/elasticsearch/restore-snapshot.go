@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/stackvista/stackstate-backup-cli/internal/app"
 	"github.com/stackvista/stackstate-backup-cli/internal/clients/elasticsearch"
-	"github.com/stackvista/stackstate-backup-cli/internal/clients/k8s"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/portforward"
@@ -30,13 +30,18 @@ var (
 	skipConfirmation bool
 )
 
-func restoreCmd(cliCtx *config.Context) *cobra.Command {
+func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "restore-snapshot",
 		Short: "Restore Elasticsearch from a snapshot",
 		Long:  `Restore Elasticsearch indices from a snapshot. Can optionally delete existing indices before restore.`,
 		Run: func(_ *cobra.Command, _ []string) {
-			if err := runRestore(cliCtx); err != nil {
+			appCtx, err := app.NewContext(globalFlags)
+			if err != nil {
+				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
+				os.Exit(1)
+			}
+			if err := runRestore(appCtx); err != nil {
 				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
 				os.Exit(1)
 			}
@@ -49,24 +54,9 @@ func restoreCmd(cliCtx *config.Context) *cobra.Command {
 	return cmd
 }
 
-func runRestore(cliCtx *config.Context) error {
-	// Create logger
-	log := logger.New(cliCtx.Config.Quiet, cliCtx.Config.Debug)
-
-	// Create Kubernetes client
-	k8sClient, err := k8s.NewClient(cliCtx.Config.Kubeconfig, cliCtx.Config.Debug)
-	if err != nil {
-		return fmt.Errorf("failed to create Kubernetes client: %w", err)
-	}
-
-	// Load configuration
-	cfg, err := config.LoadConfig(k8sClient.Clientset(), cliCtx.Config.Namespace, cliCtx.Config.ConfigMapName, cliCtx.Config.SecretName)
-	if err != nil {
-		return fmt.Errorf("failed to load configuration: %w", err)
-	}
-
+func runRestore(appCtx *app.Context) error {
 	// Scale down deployments before restore
-	scaledDeployments, err := scale.ScaleDown(k8sClient, cliCtx.Config.Namespace, cfg.Elasticsearch.Restore.ScaleDownLabelSelector, log)
+	scaledDeployments, err := scale.ScaleDown(appCtx.K8sClient, appCtx.Namespace, appCtx.Config.Elasticsearch.Restore.ScaleDownLabelSelector, appCtx.Logger)
 	if err != nil {
 		return err
 	}
@@ -74,77 +64,71 @@ func runRestore(cliCtx *config.Context) error {
 	// Ensure deployments are scaled back up on exit (even if restore fails)
 	defer func() {
 		if len(scaledDeployments) > 0 {
-			log.Println()
-			if err := scale.ScaleUp(k8sClient, cliCtx.Config.Namespace, scaledDeployments, log); err != nil {
-				log.Warningf("Failed to scale up deployments: %v", err)
+			appCtx.Logger.Println()
+			if err := scale.ScaleUp(appCtx.K8sClient, appCtx.Namespace, scaledDeployments, appCtx.Logger); err != nil {
+				appCtx.Logger.Warningf("Failed to scale up deployments: %v", err)
 			}
 		}
 	}()
 
 	// Setup port-forward to Elasticsearch
-	serviceName := cfg.Elasticsearch.Service.Name
-	localPort := cfg.Elasticsearch.Service.LocalPortForwardPort
-	remotePort := cfg.Elasticsearch.Service.Port
+	serviceName := appCtx.Config.Elasticsearch.Service.Name
+	localPort := appCtx.Config.Elasticsearch.Service.LocalPortForwardPort
+	remotePort := appCtx.Config.Elasticsearch.Service.Port
 
-	pf, err := portforward.SetupPortForward(k8sClient, cliCtx.Config.Namespace, serviceName, localPort, remotePort, log)
+	pf, err := portforward.SetupPortForward(appCtx.K8sClient, appCtx.Namespace, serviceName, localPort, remotePort, appCtx.Logger)
 	if err != nil {
 		return err
 	}
 	defer close(pf.StopChan)
 
-	// Create Elasticsearch client
-	esClient, err := elasticsearch.NewClient(fmt.Sprintf("http://localhost:%d", pf.LocalPort))
-	if err != nil {
-		return fmt.Errorf("failed to create Elasticsearch client: %w", err)
-	}
-
-	repository := cfg.Elasticsearch.Restore.Repository
+	repository := appCtx.Config.Elasticsearch.Restore.Repository
 
 	// Get all indices and filter for STS indices
-	log.Infof("Fetching current Elasticsearch indices...")
-	allIndices, err := esClient.ListIndices("*")
+	appCtx.Logger.Infof("Fetching current Elasticsearch indices...")
+	allIndices, err := appCtx.ESClient.ListIndices("*")
 	if err != nil {
 		return fmt.Errorf("failed to list indices: %w", err)
 	}
 
-	stsIndices := filterSTSIndices(allIndices, cfg.Elasticsearch.Restore.IndexPrefix, cfg.Elasticsearch.Restore.DatastreamIndexPrefix)
+	stsIndices := filterSTSIndices(allIndices, appCtx.Config.Elasticsearch.Restore.IndexPrefix, appCtx.Config.Elasticsearch.Restore.DatastreamIndexPrefix)
 
 	if dropAllIndices {
-		log.Println()
-		if err := deleteIndices(esClient, stsIndices, cfg, log, skipConfirmation); err != nil {
+		appCtx.Logger.Println()
+		if err := deleteIndices(appCtx.ESClient, stsIndices, appCtx.Config, appCtx.Logger, skipConfirmation); err != nil {
 			return err
 		}
 	}
 
 	// Restore snapshot
-	log.Println()
-	log.Infof("Restoring snapshot '%s' from repository '%s'", snapshotName, repository)
+	appCtx.Logger.Println()
+	appCtx.Logger.Infof("Restoring snapshot '%s' from repository '%s'", snapshotName, repository)
 
 	// Get snapshot details to show indices
-	snapshot, err := esClient.GetSnapshot(repository, snapshotName)
+	snapshot, err := appCtx.ESClient.GetSnapshot(repository, snapshotName)
 	if err != nil {
 		return fmt.Errorf("failed to get snapshot details: %w", err)
 	}
 
-	log.Debugf("Indices pattern: %s", cfg.Elasticsearch.Restore.IndicesPattern)
+	appCtx.Logger.Debugf("Indices pattern: %s", appCtx.Config.Elasticsearch.Restore.IndicesPattern)
 
 	if len(snapshot.Indices) == 0 {
-		log.Warningf("Snapshot contains no indices")
+		appCtx.Logger.Warningf("Snapshot contains no indices")
 	} else {
-		log.Infof("Snapshot contains %d index(es)", len(snapshot.Indices))
+		appCtx.Logger.Infof("Snapshot contains %d index(es)", len(snapshot.Indices))
 		for _, index := range snapshot.Indices {
-			log.Debugf("  - %s", index)
+			appCtx.Logger.Debugf("  - %s", index)
 		}
 	}
 
-	log.Infof("Starting restore - this may take several minutes...")
+	appCtx.Logger.Infof("Starting restore - this may take several minutes...")
 
-	if err := esClient.RestoreSnapshot(repository, snapshotName, cfg.Elasticsearch.Restore.IndicesPattern, true); err != nil {
+	if err := appCtx.ESClient.RestoreSnapshot(repository, snapshotName, appCtx.Config.Elasticsearch.Restore.IndicesPattern, true); err != nil {
 		return fmt.Errorf("failed to restore snapshot: %w", err)
 	}
 
-	log.Println()
-	log.Successf("Restore completed successfully")
+	appCtx.Logger.Println()
+	appCtx.Logger.Successf("Restore completed successfully")
 	return nil
 }
 
@@ -185,7 +169,7 @@ func hasDatastreamIndices(indices []string, datastreamPrefix string) bool {
 }
 
 // deleteIndexWithVerification deletes an index and verifies it's gone
-func deleteIndexWithVerification(esClient *elasticsearch.Client, index string, log *logger.Logger) error {
+func deleteIndexWithVerification(esClient elasticsearch.Interface, index string, log *logger.Logger) error {
 	log.Infof("  Deleting index: %s", index)
 	if err := esClient.DeleteIndex(index); err != nil {
 		return fmt.Errorf("failed to delete index %s: %w", index, err)
@@ -210,7 +194,7 @@ func deleteIndexWithVerification(esClient *elasticsearch.Client, index string, l
 }
 
 // deleteIndices handles the deletion of all STS indices including datastream rollover
-func deleteIndices(esClient *elasticsearch.Client, stsIndices []string, cfg *config.Config, log *logger.Logger, skipConfirm bool) error {
+func deleteIndices(esClient elasticsearch.Interface, stsIndices []string, cfg *config.Config, log *logger.Logger, skipConfirm bool) error {
 	if len(stsIndices) == 0 {
 		log.Infof("No STS indices found to delete")
 		return nil

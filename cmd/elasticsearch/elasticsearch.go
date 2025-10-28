@@ -5,16 +5,16 @@ import (
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 )
 
-func Cmd(cliCtx *config.Context) *cobra.Command {
+func Cmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "elasticsearch",
 		Short: "Elasticsearch backup and restore operations",
 	}
 
-	cmd.AddCommand(listSnapshotsCmd(cliCtx))
-	cmd.AddCommand(listIndicesCmd(cliCtx))
-	cmd.AddCommand(restoreCmd(cliCtx))
-	cmd.AddCommand(configureCmd(cliCtx))
+	cmd.AddCommand(listSnapshotsCmd(globalFlags))
+	cmd.AddCommand(listIndicesCmd(globalFlags))
+	cmd.AddCommand(restoreCmd(globalFlags))
+	cmd.AddCommand(configureCmd(globalFlags))
 
 	return cmd
 }

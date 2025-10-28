@@ -109,7 +109,7 @@ func TestListSnapshotsCmd_Integration(t *testing.T) {
 	}
 
 	// Create fake Kubernetes client
-	fakeClient := fake.NewSimpleClientset()
+	fakeClient := fake.NewClientset()
 
 	// Create ConfigMap with valid config
 	cm := &corev1.ConfigMap{
@@ -165,12 +165,12 @@ elasticsearch:
 // TestListSnapshotsCmd_Unit demonstrates a unit-style test
 // This test focuses on the command structure and basic behavior
 func TestListSnapshotsCmd_Unit(t *testing.T) {
-	cliCtx := config.NewContext()
-	cliCtx.Config.Namespace = testNamespace
-	cliCtx.Config.ConfigMapName = testConfigMapName
-	cliCtx.Config.OutputFormat = "table"
+	flags := config.NewCLIGlobalFlags()
+	flags.Namespace = testNamespace
+	flags.ConfigMapName = testConfigMapName
+	flags.OutputFormat = "table"
 
-	cmd := listSnapshotsCmd(cliCtx)
+	cmd := listSnapshotsCmd(flags)
 
 	// Test command metadata
 	assert.Equal(t, "list-snapshots", cmd.Use)
