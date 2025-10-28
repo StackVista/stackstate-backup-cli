@@ -10,7 +10,7 @@ AWS_SECRET_ACCESS_KEY="$(cat /aws-keys/secretkey)"
 
 echo "=== Downloading StackGraph backup \"${BACKUP_FILE}\" from bucket \"${BACKUP_STACKGRAPH_BUCKET_NAME}\"..."
 
-if [ "${BACKUP_STACKGRAPH_ARCHIVE_SPLIT_SIZE:-0}" == "0" ]; then
+if [ "${BACKUP_STACKGRAPH_MULTIPART_ARCHIVE:-false}" == "false" ]; then
     sts-toolbox aws s3 cp --endpoint "http://${MINIO_ENDPOINT}" --region minio "s3://${BACKUP_STACKGRAPH_BUCKET_NAME}/${BACKUP_STACKGRAPH_S3_PREFIX}${BACKUP_FILE}" "${TMP_DIR}/${BACKUP_FILE}"
 else
     # Check if the filename of the snapshot is one of the multiparts

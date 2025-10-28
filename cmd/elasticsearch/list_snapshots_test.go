@@ -32,7 +32,7 @@ minio:
   secretKey: minioadmin
 stackgraph:
   bucket: stackgraph-bucket
-  archiveSplitSize: "500M"
+  multipartArchive: true
   restore:
     scaleDownLabelSelector: "app=stackgraph"
     loggingConfigConfigMap: logging-config

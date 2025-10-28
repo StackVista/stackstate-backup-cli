@@ -370,7 +370,7 @@ func TestConfig_StructValidation(t *testing.T) {
 				Stackgraph: StackgraphConfig{
 					Bucket:           "stackgraph-bucket",
 					S3Prefix:         "",
-					ArchiveSplitSize: "500M",
+					MultipartArchive: "500M",
 					Restore: StackgraphRestoreConfig{
 						ScaleDownLabelSelector:     "app=stackgraph",
 						LoggingConfigConfigMapName: "logging-config",

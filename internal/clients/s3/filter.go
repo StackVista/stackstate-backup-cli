@@ -15,17 +15,17 @@ type Object struct {
 	Size         int64
 }
 
-// FilterBackupObjects filters S3 objects based on archive split size configuration
-// If archiveSplitSize is "0", it filters out multipart archives (files ending with .digits)
+// FilterBackupObjects filters S3 objects based on whether the archive is split or not
+// If it is not multipartArchive, it filters out multipart archives (files ending with .digits)
 // Otherwise, it only includes the first part of multipart archives (files ending with .00)
-func FilterBackupObjects(objects []s3types.Object, archiveSplitSize string) []Object {
+func FilterBackupObjects(objects []s3types.Object, multipartArchive bool) []Object {
 	var filteredObjects []Object
 
 	for _, obj := range objects {
 		key := aws.ToString(obj.Key)
 
-		// Skip if archiveSplitSize is "0" and object is multipart (ends with .digits)
-		if archiveSplitSize == "0" {
+		// Skip if it is not multipartArchive (ends with .digits)
+		if !multipartArchive {
 			if strings.Contains(key, ".") {
 				parts := strings.Split(key, ".")
 				lastPart := parts[len(parts)-1]

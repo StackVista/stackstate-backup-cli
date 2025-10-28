@@ -85,7 +85,7 @@ type MinioConfig struct {
 type StackgraphConfig struct {
 	Bucket           string                  `yaml:"bucket" validate:"required"`
 	S3Prefix         string                  `yaml:"s3Prefix"`
-	ArchiveSplitSize string                  `yaml:"archiveSplitSize" validate:"required"`
+	MultipartArchive bool                    `yaml:"multipartArchive" validate:"boolean"`
 	Restore          StackgraphRestoreConfig `yaml:"restore" validate:"required"`
 }
 

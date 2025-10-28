@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestFilterBackupObjects_SingleFileMode tests filtering when archiveSplitSize is "0"
+// TestFilterBackupObjects_SingleFileMode tests filtering when it is not multipartArchive
 func TestFilterBackupObjects_SingleFileMode(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -79,7 +79,7 @@ func TestFilterBackupObjects_SingleFileMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FilterBackupObjects(tt.objects, "0")
+			result := FilterBackupObjects(tt.objects, false)
 
 			assert.Equal(t, tt.expectedCount, len(result))
 
@@ -93,12 +93,12 @@ func TestFilterBackupObjects_SingleFileMode(t *testing.T) {
 	}
 }
 
-// TestFilterBackupObjects_MultipartMode tests filtering when archiveSplitSize is not "0"
+// TestFilterBackupObjects_MultipartMode tests filtering when it is multipartArchive
 func TestFilterBackupObjects_MultipartMode(t *testing.T) {
 	tests := []struct {
 		name             string
 		objects          []s3types.Object
-		archiveSplitSize string
+		multipartArchive bool
 		expectedCount    int
 		expectedKeys     []string
 	}{
@@ -111,7 +111,7 @@ func TestFilterBackupObjects_MultipartMode(t *testing.T) {
 				{Key: aws.String("backup-2024-01-02.00"), Size: aws.Int64(500000000)},
 				{Key: aws.String("backup-2024-01-02.01"), Size: aws.Int64(400000000)},
 			},
-			archiveSplitSize: "500M",
+			multipartArchive: true,
 			expectedCount:    2,
 			expectedKeys:     []string{"backup-2024-01-01.00", "backup-2024-01-02.00"},
 		},
@@ -123,7 +123,7 @@ func TestFilterBackupObjects_MultipartMode(t *testing.T) {
 				{Key: aws.String("backup-split.01"), Size: aws.Int64(500000000)},
 				{Key: aws.String("backup-single"), Size: aws.Int64(1000000)},
 			},
-			archiveSplitSize: "500M",
+			multipartArchive: true,
 			expectedCount:    1,
 			expectedKeys:     []string{"backup-split.00"},
 		},
@@ -133,14 +133,14 @@ func TestFilterBackupObjects_MultipartMode(t *testing.T) {
 				{Key: aws.String("backup-1G.00"), Size: aws.Int64(1000000000)},
 				{Key: aws.String("backup-1G.01"), Size: aws.Int64(500000000)},
 			},
-			archiveSplitSize: "1G",
+			multipartArchive: true,
 			expectedCount:    1,
 			expectedKeys:     []string{"backup-1G.00"},
 		},
 		{
 			name:             "handles empty object list",
 			objects:          []s3types.Object{},
-			archiveSplitSize: "500M",
+			multipartArchive: true,
 			expectedCount:    0,
 			expectedKeys:     []string{},
 		},
@@ -150,7 +150,7 @@ func TestFilterBackupObjects_MultipartMode(t *testing.T) {
 				{Key: aws.String("backup.00.tar"), Size: aws.Int64(1000)},
 				{Key: aws.String("backup-final.00"), Size: aws.Int64(500000000)},
 			},
-			archiveSplitSize: "500M",
+			multipartArchive: true,
 			expectedCount:    1,
 			expectedKeys:     []string{"backup-final.00"},
 		},
@@ -158,7 +158,7 @@ func TestFilterBackupObjects_MultipartMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FilterBackupObjects(tt.objects, tt.archiveSplitSize)
+			result := FilterBackupObjects(tt.objects, tt.multipartArchive)
 
 			assert.Equal(t, tt.expectedCount, len(result))
 
@@ -191,14 +191,14 @@ func TestFilterBackupObjects_ObjectMetadata(t *testing.T) {
 	}
 
 	// Test single file mode
-	result := FilterBackupObjects(objects, "0")
+	result := FilterBackupObjects(objects, false)
 	assert.Equal(t, 1, len(result))
 	assert.Equal(t, "backup-2024-01-01.tar.gz", result[0].Key)
 	assert.Equal(t, int64(1234567890), result[0].Size)
 	assert.Equal(t, now.Unix(), result[0].LastModified.Unix())
 
 	// Test multipart mode
-	result = FilterBackupObjects(objects, "500M")
+	result = FilterBackupObjects(objects, true)
 	assert.Equal(t, 1, len(result))
 	assert.Equal(t, "backup-2024-01-02.00", result[0].Key)
 	assert.Equal(t, int64(9876543210), result[0].Size)
@@ -210,7 +210,7 @@ func TestFilterBackupObjects_EdgeCases(t *testing.T) {
 	tests := []struct {
 		name             string
 		objects          []s3types.Object
-		archiveSplitSize string
+		multipartArchive bool
 		expectedCount    int
 	}{
 		{
@@ -218,7 +218,7 @@ func TestFilterBackupObjects_EdgeCases(t *testing.T) {
 			objects: []s3types.Object{
 				{Key: aws.String("backup."), Size: aws.Int64(1000)},
 			},
-			archiveSplitSize: "0",
+			multipartArchive: false,
 			expectedCount:    1, // Empty extension, should be included
 		},
 		{
@@ -226,7 +226,7 @@ func TestFilterBackupObjects_EdgeCases(t *testing.T) {
 			objects: []s3types.Object{
 				{Key: aws.String("backup.123abc"), Size: aws.Int64(1000)},
 			},
-			archiveSplitSize: "0",
+			multipartArchive: false,
 			expectedCount:    1, // Contains non-digits, should be included
 		},
 		{
@@ -234,22 +234,22 @@ func TestFilterBackupObjects_EdgeCases(t *testing.T) {
 			objects: []s3types.Object{
 				{Key: aws.String("backup.00000000000000000001"), Size: aws.Int64(1000)},
 			},
-			archiveSplitSize: "0",
+			multipartArchive: false,
 			expectedCount:    0, // All digits, should be filtered
 		},
 		{
-			name: "multipart with .00 but archiveSplitSize is 0",
+			name: "multipart with .00 but it is not multipartArchive",
 			objects: []s3types.Object{
 				{Key: aws.String("backup.00"), Size: aws.Int64(1000)},
 			},
-			archiveSplitSize: "0",
+			multipartArchive: false,
 			expectedCount:    0, // Numeric extension in single file mode, should be filtered
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FilterBackupObjects(tt.objects, tt.archiveSplitSize)
+			result := FilterBackupObjects(tt.objects, tt.multipartArchive)
 			assert.Equal(t, tt.expectedCount, len(result))
 		})
 	}
@@ -261,7 +261,7 @@ func TestFilterBackupObjects_RealWorldScenarios(t *testing.T) {
 		name             string
 		scenario         string
 		objects          []s3types.Object
-		archiveSplitSize string
+		multipartArchive bool
 		expectedCount    int
 	}{
 		{
@@ -272,7 +272,7 @@ func TestFilterBackupObjects_RealWorldScenarios(t *testing.T) {
 				{Key: aws.String("stackgraph-backup-2024-01-02.tar.gz"), Size: aws.Int64(12000000)},
 				{Key: aws.String("stackgraph-backup-2024-01-03.tar.gz"), Size: aws.Int64(11000000)},
 			},
-			archiveSplitSize: "0",
+			multipartArchive: false,
 			expectedCount:    3,
 		},
 		{
@@ -285,7 +285,7 @@ func TestFilterBackupObjects_RealWorldScenarios(t *testing.T) {
 				{Key: aws.String("stackgraph-backup-2024-01-02.00"), Size: aws.Int64(500000000)},
 				{Key: aws.String("stackgraph-backup-2024-01-02.01"), Size: aws.Int64(300000000)},
 			},
-			archiveSplitSize: "500M",
+			multipartArchive: true,
 			expectedCount:    2, // Only .00 files
 		},
 		{
@@ -298,14 +298,14 @@ func TestFilterBackupObjects_RealWorldScenarios(t *testing.T) {
 				{Key: aws.String("backup-old-split.00"), Size: aws.Int64(1000)},
 				{Key: aws.String("backup-old-split.01"), Size: aws.Int64(1000)},
 			},
-			archiveSplitSize: "500M",
+			multipartArchive: true,
 			expectedCount:    2, // Two .00 files
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FilterBackupObjects(tt.objects, tt.archiveSplitSize)
+			result := FilterBackupObjects(tt.objects, tt.multipartArchive)
 			assert.Equal(t, tt.expectedCount, len(result), "Scenario: %s", tt.scenario)
 		})
 	}

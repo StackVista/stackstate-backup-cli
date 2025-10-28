@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -248,7 +249,7 @@ func getLatestBackup(k8sClient *k8s.Client, namespace string, config *config.Con
 	// List objects in bucket
 	bucket := config.Stackgraph.Bucket
 	prefix := config.Stackgraph.S3Prefix
-	archiveSplitSize := config.Stackgraph.ArchiveSplitSize
+	multipartArchive := config.Stackgraph.MultipartArchive
 
 	input := &s3.ListObjectsV2Input{
 		Bucket: aws.String(bucket),
@@ -260,8 +261,8 @@ func getLatestBackup(k8sClient *k8s.Client, namespace string, config *config.Con
 		return "", fmt.Errorf("failed to list S3 objects: %w", err)
 	}
 
-	// Filter objects based on archive split size
-	filteredObjects := s3client.FilterBackupObjects(result.Contents, archiveSplitSize)
+	// Filter objects based on whether the archive is split or not
+	filteredObjects := s3client.FilterBackupObjects(result.Contents, multipartArchive)
 
 	if len(filteredObjects) == 0 {
 		return "", fmt.Errorf("no backups found in bucket %s", bucket)
@@ -355,7 +356,7 @@ func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvV
 		{Name: "FORCE_DELETE", Value: purgeStackgraphDataFlag},
 		{Name: "BACKUP_STACKGRAPH_BUCKET_NAME", Value: config.Stackgraph.Bucket},
 		{Name: "BACKUP_STACKGRAPH_S3_PREFIX", Value: config.Stackgraph.S3Prefix},
-		{Name: "BACKUP_STACKGRAPH_ARCHIVE_SPLIT_SIZE", Value: config.Stackgraph.ArchiveSplitSize},
+		{Name: "BACKUP_STACKGRAPH_MULTIPART_ARCHIVE", Value: strconv.FormatBool(config.Stackgraph.MultipartArchive)},
 		{Name: "MINIO_ENDPOINT", Value: fmt.Sprintf("%s:%d", config.Minio.Service.Name, config.Minio.Service.Port)},
 		{Name: "ZOOKEEPER_QUORUM", Value: config.Stackgraph.Restore.ZookeeperQuorum},
 	}

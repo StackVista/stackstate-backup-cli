@@ -81,7 +81,7 @@ minio:
 stackgraph:
   bucket: sts-stackgraph-backup
   s3Prefix: ""
-  archiveSplitSize: "500M"
+  multipartArchive: true
   restore:
     scaleDownLabelSelector: "observability.suse.com/scalable-during-stackgraph-restore=true"
     loggingConfigConfigMap: suse-observability-logging

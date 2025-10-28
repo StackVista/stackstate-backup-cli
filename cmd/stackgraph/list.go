@@ -49,7 +49,7 @@ func runList(appCtx *app.Context) error {
 	// List objects in bucket
 	bucket := appCtx.Config.Stackgraph.Bucket
 	prefix := appCtx.Config.Stackgraph.S3Prefix
-	archiveSplitSize := appCtx.Config.Stackgraph.ArchiveSplitSize
+	multipartArchive := appCtx.Config.Stackgraph.MultipartArchive
 
 	appCtx.Logger.Infof("Listing Stackgraph backups in bucket '%s'...", bucket)
 
@@ -63,8 +63,8 @@ func runList(appCtx *app.Context) error {
 		return fmt.Errorf("failed to list S3 objects: %w", err)
 	}
 
-	// Filter objects based on archive split size
-	filteredObjects := s3client.FilterBackupObjects(result.Contents, archiveSplitSize)
+	// Filter objects based on whether the archive is split or not
+	filteredObjects := s3client.FilterBackupObjects(result.Contents, multipartArchive)
 
 	// Sort by LastModified time (most recent first)
 	sort.Slice(filteredObjects, func(i, j int) bool {
