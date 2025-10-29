@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -110,99 +111,232 @@ func TestClient_ScaleDownDeployments(t *testing.T) {
 				require.NoError(t, err)
 				if expectedScale.Replicas > 0 {
 					assert.Equal(t, int32(0), *deploy.Spec.Replicas, "deployment should be scaled to 0")
+					// Verify annotation was added with original replica count
+					assert.Equal(t, fmt.Sprintf("%d", expectedScale.Replicas), deploy.Annotations[PreRestoreReplicasAnnotation], "annotation should be added with original replica count")
 				}
 			}
 		})
 	}
 }
 
-func TestClient_ScaleUpDeployments(t *testing.T) {
+//nolint:funlen // Table-driven test with comprehensive test cases
+func TestClient_ScaleUpDeploymentsFromAnnotations(t *testing.T) {
 	tests := []struct {
-		name            string
-		namespace       string
-		initialReplicas int32
-		scaleToReplicas int32
-		deploymentName  string
-		expectError     bool
+		name           string
+		namespace      string
+		labelSelector  string
+		deployments    []appsv1.Deployment
+		expectedScales []DeploymentScale
+		expectError    bool
+		errorContains  string
 	}{
 		{
-			name:            "scale up from zero to three",
-			namespace:       "test-ns",
-			initialReplicas: 0,
-			scaleToReplicas: 3,
-			deploymentName:  "test-deploy",
-			expectError:     false,
+			name:          "scale up multiple deployments from annotations",
+			namespace:     "test-ns",
+			labelSelector: "app=test",
+			deployments: []appsv1.Deployment{
+				func() appsv1.Deployment {
+					d := createDeployment("deploy1", "test-ns", map[string]string{"app": "test"}, 0)
+					d.Annotations = map[string]string{PreRestoreReplicasAnnotation: "3"}
+					return d
+				}(),
+				func() appsv1.Deployment {
+					d := createDeployment("deploy2", "test-ns", map[string]string{"app": "test"}, 0)
+					d.Annotations = map[string]string{PreRestoreReplicasAnnotation: "5"}
+					return d
+				}(),
+			},
+			expectedScales: []DeploymentScale{
+				{Name: "deploy1", Replicas: 3},
+				{Name: "deploy2", Replicas: 5},
+			},
+			expectError: false,
 		},
 		{
-			name:            "scale up from two to five",
-			namespace:       "test-ns",
-			initialReplicas: 2,
-			scaleToReplicas: 5,
-			deploymentName:  "test-deploy",
-			expectError:     false,
+			name:          "no deployments with annotations",
+			namespace:     "test-ns",
+			labelSelector: "app=test",
+			deployments: []appsv1.Deployment{
+				createDeployment("deploy1", "test-ns", map[string]string{"app": "test"}, 0),
+			},
+			expectedScales: []DeploymentScale{},
+			expectError:    false,
 		},
 		{
-			name:            "restore to zero replicas",
-			namespace:       "test-ns",
-			initialReplicas: 3,
-			scaleToReplicas: 0,
-			deploymentName:  "test-deploy",
-			expectError:     false,
+			name:          "mixed deployments with and without annotations",
+			namespace:     "test-ns",
+			labelSelector: "app=test",
+			deployments: []appsv1.Deployment{
+				func() appsv1.Deployment {
+					d := createDeployment("deploy1", "test-ns", map[string]string{"app": "test"}, 0)
+					d.Annotations = map[string]string{PreRestoreReplicasAnnotation: "3"}
+					return d
+				}(),
+				createDeployment("deploy2", "test-ns", map[string]string{"app": "test"}, 0),
+			},
+			expectedScales: []DeploymentScale{
+				{Name: "deploy1", Replicas: 3},
+			},
+			expectError: false,
+		},
+		{
+			name:          "invalid annotation value",
+			namespace:     "test-ns",
+			labelSelector: "app=test",
+			deployments: []appsv1.Deployment{
+				func() appsv1.Deployment {
+					d := createDeployment("deploy1", "test-ns", map[string]string{"app": "test"}, 0)
+					d.Annotations = map[string]string{PreRestoreReplicasAnnotation: "invalid"}
+					return d
+				}(),
+			},
+			expectedScales: []DeploymentScale{},
+			expectError:    true,
+			errorContains:  "failed to parse replicas annotation",
+		},
+		{
+			name:          "scale to zero replicas",
+			namespace:     "test-ns",
+			labelSelector: "app=test",
+			deployments: []appsv1.Deployment{
+				func() appsv1.Deployment {
+					d := createDeployment("deploy1", "test-ns", map[string]string{"app": "test"}, 0)
+					d.Annotations = map[string]string{PreRestoreReplicasAnnotation: "0"}
+					return d
+				}(),
+			},
+			expectedScales: []DeploymentScale{
+				{Name: "deploy1", Replicas: 0},
+			},
+			expectError: false,
+		},
+		{
+			name:           "no deployments matching selector",
+			namespace:      "test-ns",
+			labelSelector:  "app=test",
+			deployments:    []appsv1.Deployment{},
+			expectedScales: []DeploymentScale{},
+			expectError:    false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create fake clientset with deployment at initial scale
+			// Create fake clientset with test deployments
 			fakeClient := fake.NewSimpleClientset()
-			deploy := createDeployment(tt.deploymentName, tt.namespace, map[string]string{"app": "test"}, tt.initialReplicas)
-			_, err := fakeClient.AppsV1().Deployments(tt.namespace).Create(
-				context.Background(), &deploy, metav1.CreateOptions{},
-			)
-			require.NoError(t, err)
+			for _, deploy := range tt.deployments {
+				_, err := fakeClient.AppsV1().Deployments(tt.namespace).Create(
+					context.Background(), &deploy, metav1.CreateOptions{},
+				)
+				require.NoError(t, err)
+			}
 
 			// Create our client wrapper
 			client := &Client{
 				clientset: fakeClient,
 			}
 
-			// Execute scale up
-			scales := []DeploymentScale{
-				{Name: tt.deploymentName, Replicas: tt.scaleToReplicas},
-			}
-			err = client.ScaleUpDeployments(tt.namespace, scales)
+			// Execute scale up from annotations
+			scales, err := client.ScaleUpDeploymentsFromAnnotations(tt.namespace, tt.labelSelector)
 
 			// Assertions
 			if tt.expectError {
 				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
 				return
 			}
 
 			require.NoError(t, err)
+			assert.Equal(t, len(tt.expectedScales), len(scales))
 
-			// Verify the deployment was scaled to expected replicas
-			updatedDeploy, err := fakeClient.AppsV1().Deployments(tt.namespace).Get(
-				context.Background(), tt.deploymentName, metav1.GetOptions{},
-			)
-			require.NoError(t, err)
-			assert.Equal(t, tt.scaleToReplicas, *updatedDeploy.Spec.Replicas)
+			// Verify each scaled deployment
+			for i, expectedScale := range tt.expectedScales {
+				assert.Equal(t, expectedScale.Name, scales[i].Name)
+				assert.Equal(t, expectedScale.Replicas, scales[i].Replicas)
+
+				// Verify the deployment was actually scaled to expected replicas
+				deploy, err := fakeClient.AppsV1().Deployments(tt.namespace).Get(
+					context.Background(), expectedScale.Name, metav1.GetOptions{},
+				)
+				require.NoError(t, err)
+				assert.Equal(t, expectedScale.Replicas, *deploy.Spec.Replicas, "deployment should be scaled to expected replicas")
+
+				// Verify annotation was removed
+				_, exists := deploy.Annotations[PreRestoreReplicasAnnotation]
+				assert.False(t, exists, "annotation should be removed after scale up")
+			}
 		})
 	}
 }
 
-func TestClient_ScaleUpDeployments_NonExistent(t *testing.T) {
+func TestClient_ScaleDownThenScaleUpFromAnnotations(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
+
+	// Create deployments with different replica counts
+	deploy1 := createDeployment("deploy1", "test-ns", map[string]string{"app": "test"}, 3)
+	deploy2 := createDeployment("deploy2", "test-ns", map[string]string{"app": "test"}, 5)
+
+	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(
+		context.Background(), &deploy1, metav1.CreateOptions{},
+	)
+	require.NoError(t, err)
+
+	_, err = fakeClient.AppsV1().Deployments("test-ns").Create(
+		context.Background(), &deploy2, metav1.CreateOptions{},
+	)
+	require.NoError(t, err)
+
 	client := &Client{
 		clientset: fakeClient,
 	}
 
-	scales := []DeploymentScale{
-		{Name: "nonexistent-deploy", Replicas: 3},
-	}
-	err := client.ScaleUpDeployments("test-ns", scales)
+	// Scale down
+	scaledDown, err := client.ScaleDownDeployments("test-ns", "app=test")
+	require.NoError(t, err)
+	assert.Len(t, scaledDown, 2)
 
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to get deployment")
+	// Verify deployments are scaled to 0
+	deploy1After, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "deploy1", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(0), *deploy1After.Spec.Replicas)
+
+	// Verify annotations were added
+	assert.Equal(t, "3", deploy1After.Annotations[PreRestoreReplicasAnnotation])
+
+	deploy2After, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "deploy2", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "5", deploy2After.Annotations[PreRestoreReplicasAnnotation])
+
+	// Scale up from annotations
+	scaledUp, err := client.ScaleUpDeploymentsFromAnnotations("test-ns", "app=test")
+	require.NoError(t, err)
+	assert.Len(t, scaledUp, 2)
+
+	// Verify deployments are scaled back to original replicas
+	deploy1Final, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "deploy1", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(3), *deploy1Final.Spec.Replicas)
+
+	// Verify annotations were removed
+	_, exists := deploy1Final.Annotations[PreRestoreReplicasAnnotation]
+	assert.False(t, exists)
+
+	deploy2Final, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "deploy2", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(5), *deploy2Final.Spec.Replicas)
+
+	_, exists = deploy2Final.Annotations[PreRestoreReplicasAnnotation]
+	assert.False(t, exists)
 }
 
 func TestClient_Clientset(t *testing.T) {
@@ -298,6 +432,8 @@ func TestClient_PortForwardService_NoRunningPods(t *testing.T) {
 }
 
 // Helper function to create a deployment for testing
+//
+//nolint:unparam // namespace parameter is always "test-ns" in current tests, but kept for flexibility
 func createDeployment(name, namespace string, labels map[string]string, replicas int32) appsv1.Deployment {
 	return appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{

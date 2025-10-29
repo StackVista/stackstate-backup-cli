@@ -21,7 +21,6 @@ import (
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/portforward"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/scale"
 	"github.com/stackvista/stackstate-backup-cli/internal/scripts"
-	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -111,7 +110,7 @@ func runRestore(appCtx *app.Context) error {
 	defer func() {
 		if len(scaledDeployments) > 0 && !background {
 			appCtx.Logger.Println()
-			if err := scale.ScaleUp(appCtx.K8sClient, appCtx.Namespace, scaledDeployments, appCtx.Logger); err != nil {
+			if err := scale.ScaleUpFromAnnotations(appCtx.K8sClient, appCtx.Namespace, scaleDownLabelSelector, appCtx.Logger); err != nil {
 				appCtx.Logger.Warningf("Failed to scale up deployments: %v", err)
 			}
 		}
@@ -129,19 +128,18 @@ func runRestore(appCtx *app.Context) error {
 
 	jobName := fmt.Sprintf("%s-%s", jobNameTemplate, time.Now().Format("20060102t150405"))
 
-	job, pvc, err := createRestoreJob(appCtx.K8sClient, appCtx.Namespace, jobName, backupFile, appCtx.Config)
-	if err != nil {
+	if err = createRestoreJob(appCtx.K8sClient, appCtx.Namespace, jobName, backupFile, appCtx.Config); err != nil {
 		return fmt.Errorf("failed to create restore job: %w", err)
 	}
 
 	appCtx.Logger.Successf("Restore job created: %s", jobName)
 
 	if background {
-		printBackgroundModeInstructions(appCtx.Logger, jobName, appCtx.Namespace, scaleDownLabelSelector)
+		printRunningJobStatus(appCtx.Logger, jobName, appCtx.Namespace, 0)
 		return nil
 	}
 
-	return waitAndCleanupRestoreJob(appCtx.K8sClient, appCtx.Namespace, jobName, job, pvc, appCtx.Logger)
+	return waitAndCleanupRestoreJob(appCtx.K8sClient, appCtx.Namespace, jobName, appCtx.Logger)
 }
 
 // ensureRestoreResources ensures that required Kubernetes resources exist for the restore job
@@ -186,22 +184,56 @@ func ensureRestoreResources(k8sClient *k8s.Client, namespace string, config *con
 	return nil
 }
 
-// printBackgroundModeInstructions prints instructions for monitoring and cleanup in background mode
-func printBackgroundModeInstructions(log *logger.Logger, jobName, namespace, scaleDownSelector string) {
+// printWaitingMessage prints waiting message with instructions for interruption
+func printWaitingMessage(log *logger.Logger, jobName, namespace string) {
 	log.Println()
-	log.Infof("Job is running in background. Use the following commands to monitor and cleanup:")
-	log.Infof("  Monitor: kubectl logs --follow job/%s -n %s", jobName, namespace)
-	log.Infof("  Cleanup: kubectl delete job,pvc %s -n %s", jobName, namespace)
-	log.Infof("  Scale up: kubectl scale --replicas=1 deployments --selector=%s -n %s", scaleDownSelector, namespace)
+	log.Infof("Waiting for restore job to complete (this may take several minutes)...")
 	log.Println()
-	log.Warningf("IMPORTANT: The restore job may take significant time to complete.")
-	log.Warningf("Remember to scale up deployments after the job completes successfully!")
+	log.Infof("You can safely interrupt this command with Ctrl+C.")
+	log.Infof("To check status, scale up the required deployments and cleanup later, run:")
+	log.Infof("  sts-backup stackgraph check-and-finalize --job %s --wait -n %s", jobName, namespace)
+}
+
+// printRunningJobStatus prints status and instructions for a running job
+func printRunningJobStatus(log *logger.Logger, jobName, namespace string, activePods int32) {
+	log.Println()
+	log.Infof("Job is running in background: %s", jobName)
+	if activePods > 0 {
+		log.Infof("  Active pods: %d", activePods)
+	}
+	log.Println()
+	log.Infof("Monitoring commands:")
+	log.Infof("  kubectl logs --follow job/%s -n %s", jobName, namespace)
+	log.Infof("  kubectl get job %s -n %s", jobName, namespace)
+	log.Println()
+	log.Infof("To wait for completion, scaling up the necessary deployments and cleanup, run:")
+	log.Infof("  sts-backup stackgraph check-and-finalize --job %s --wait -n %s", jobName, namespace)
+}
+
+// cleanupRestoreResources cleans up job and PVC resources
+func cleanupRestoreResources(k8sClient *k8s.Client, namespace, jobName string, log *logger.Logger) error {
+	log.Infof("Cleaning up job and PVC...")
+
+	// Delete job
+	if err := k8sClient.DeleteJob(namespace, jobName); err != nil {
+		log.Warningf("Failed to delete job: %v", err)
+	} else {
+		log.Successf("Job deleted: %s", jobName)
+	}
+
+	// Delete PVC (same name as job)
+	if err := k8sClient.DeletePVC(namespace, jobName); err != nil {
+		log.Warningf("Failed to delete PVC: %v", err)
+	} else {
+		log.Successf("PVC deleted: %s", jobName)
+	}
+
+	return nil
 }
 
 // waitAndCleanupRestoreJob waits for job completion and cleans up resources
-func waitAndCleanupRestoreJob(k8sClient *k8s.Client, namespace, jobName string, job *batchv1.Job, pvc *corev1.PersistentVolumeClaim, log *logger.Logger) error {
-	log.Println()
-	log.Infof("Waiting for restore job to complete (this may take several minutes)...")
+func waitAndCleanupRestoreJob(k8sClient *k8s.Client, namespace, jobName string, log *logger.Logger) error {
+	printWaitingMessage(log, jobName, namespace)
 
 	if err := waitForJobCompletion(k8sClient, namespace, jobName, log); err != nil {
 		log.Errorf("Job failed: %v", err)
@@ -214,16 +246,9 @@ func waitAndCleanupRestoreJob(k8sClient *k8s.Client, namespace, jobName string, 
 	log.Println()
 	log.Successf("Restore completed successfully")
 
-	// Cleanup job and PVC
-	log.Infof("Cleaning up job and PVC...")
-	if err := k8sClient.DeleteJob(namespace, job.Name); err != nil {
-		log.Warningf("Failed to delete job: %v", err)
-	}
-	if err := k8sClient.DeletePVC(namespace, pvc.Name); err != nil {
-		log.Warningf("Failed to delete PVC: %v", err)
-	}
-
-	return nil
+	// Cleanup job and PVC using shared function
+	log.Println()
+	return cleanupRestoreResources(k8sClient, namespace, jobName, log)
 }
 
 // getLatestBackup retrieves the most recent backup from S3
@@ -305,7 +330,7 @@ func buildPVCSpec(name string, config *config.Config, labels map[string]string) 
 }
 
 // createRestoreJob creates a Kubernetes Job and PVC for restoring from backup
-func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile string, config *config.Config) (*batchv1.Job, *corev1.PersistentVolumeClaim, error) {
+func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile string, config *config.Config) error {
 	defaultMode := int32(configMapDefaultFileMode)
 
 	// Merge common labels with resource-specific labels
@@ -316,7 +341,7 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 	pvcSpec := buildPVCSpec(jobName, config, pvcLabels)
 	pvc, err := k8sClient.CreatePVC(namespace, pvcSpec)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create PVC: %w", err)
+		return fmt.Errorf("failed to create PVC: %w", err)
 	}
 
 	// Build job spec using configuration
@@ -339,14 +364,14 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 	}
 
 	// Create job
-	job, err := k8sClient.CreateBackupJob(namespace, spec)
+	_, err = k8sClient.CreateBackupJob(namespace, spec)
 	if err != nil {
 		// Cleanup PVC if job creation fails
 		_ = k8sClient.DeletePVC(namespace, pvc.Name)
-		return nil, nil, fmt.Errorf("failed to create job: %w", err)
+		return fmt.Errorf("failed to create job: %w", err)
 	}
 
-	return job, pvc, nil
+	return nil
 }
 
 // buildRestoreEnvVars constructs environment variables for the restore job

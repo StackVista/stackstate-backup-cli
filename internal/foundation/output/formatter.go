@@ -48,7 +48,7 @@ type Table struct {
 func (f *Formatter) PrintTable(table Table) error {
 	if len(table.Rows) == 0 {
 		if f.format == FormatTable {
-			fmt.Fprintln(f.writer, "No data found")
+			_, _ = fmt.Fprintln(f.writer, "No data found")
 		} else {
 			// For JSON, output empty array
 			return f.printJSON([]map[string]string{})
@@ -71,11 +71,11 @@ func (f *Formatter) printTable(table Table) error {
 	w := tabwriter.NewWriter(f.writer, 0, 0, tabwriterPadding, ' ', 0)
 
 	// Print header
-	fmt.Fprintln(w, strings.Join(table.Headers, "\t"))
+	_, _ = fmt.Fprintln(w, strings.Join(table.Headers, "\t"))
 
 	// Print rows
 	for _, row := range table.Rows {
-		fmt.Fprintln(w, strings.Join(row, "\t"))
+		_, _ = fmt.Fprintln(w, strings.Join(row, "\t"))
 	}
 
 	return w.Flush()
@@ -106,13 +106,13 @@ func tableToMaps(table Table) []map[string]string {
 // PrintMessage prints a simple message (only in table format, ignored in JSON)
 func (f *Formatter) PrintMessage(message string) {
 	if f.format == FormatTable {
-		fmt.Fprintln(f.writer, message)
+		_, _ = fmt.Fprintln(f.writer, message)
 	}
 }
 
 // PrintError prints an error message (only in table format, ignored in JSON)
 func (f *Formatter) PrintError(err error) {
 	if f.format == FormatTable {
-		fmt.Fprintf(f.writer, "Errorf: %v\n", err)
+		_, _ = fmt.Fprintf(f.writer, "Errorf: %v\n", err)
 	}
 }

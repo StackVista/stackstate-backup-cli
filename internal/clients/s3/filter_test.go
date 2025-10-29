@@ -103,7 +103,7 @@ func TestFilterBackupObjects_MultipartMode(t *testing.T) {
 		expectedKeys     []string
 	}{
 		{
-			name: "only includes first part of multipart archives (.00)",
+			name: "groups multipart archives and sums their sizes",
 			objects: []s3types.Object{
 				{Key: aws.String("backup-2024-01-01.00"), Size: aws.Int64(500000000)},
 				{Key: aws.String("backup-2024-01-01.01"), Size: aws.Int64(500000000)},
@@ -113,10 +113,10 @@ func TestFilterBackupObjects_MultipartMode(t *testing.T) {
 			},
 			multipartArchive: true,
 			expectedCount:    2,
-			expectedKeys:     []string{"backup-2024-01-01.00", "backup-2024-01-02.00"},
+			expectedKeys:     []string{"backup-2024-01-01", "backup-2024-01-02"},
 		},
 		{
-			name: "filters out files not ending with .00",
+			name: "includes both multipart and single files",
 			objects: []s3types.Object{
 				{Key: aws.String("backup.tar.gz"), Size: aws.Int64(1000)},
 				{Key: aws.String("backup-split.00"), Size: aws.Int64(500000000)},
@@ -124,8 +124,8 @@ func TestFilterBackupObjects_MultipartMode(t *testing.T) {
 				{Key: aws.String("backup-single"), Size: aws.Int64(1000000)},
 			},
 			multipartArchive: true,
-			expectedCount:    1,
-			expectedKeys:     []string{"backup-split.00"},
+			expectedCount:    3,
+			expectedKeys:     []string{"backup.tar.gz", "backup-split", "backup-single"},
 		},
 		{
 			name: "handles different split size values",
@@ -135,7 +135,7 @@ func TestFilterBackupObjects_MultipartMode(t *testing.T) {
 			},
 			multipartArchive: true,
 			expectedCount:    1,
-			expectedKeys:     []string{"backup-1G.00"},
+			expectedKeys:     []string{"backup-1G"},
 		},
 		{
 			name:             "handles empty object list",
@@ -151,8 +151,8 @@ func TestFilterBackupObjects_MultipartMode(t *testing.T) {
 				{Key: aws.String("backup-final.00"), Size: aws.Int64(500000000)},
 			},
 			multipartArchive: true,
-			expectedCount:    1,
-			expectedKeys:     []string{"backup-final.00"},
+			expectedCount:    2,
+			expectedKeys:     []string{"backup.00.tar", "backup-final"},
 		},
 	}
 
@@ -167,7 +167,7 @@ func TestFilterBackupObjects_MultipartMode(t *testing.T) {
 				resultKeys[i] = obj.Key
 			}
 
-			assert.Equal(t, tt.expectedKeys, resultKeys)
+			assert.ElementsMatch(t, tt.expectedKeys, resultKeys)
 		})
 	}
 }
@@ -185,8 +185,13 @@ func TestFilterBackupObjects_ObjectMetadata(t *testing.T) {
 		},
 		{
 			Key:          aws.String("backup-2024-01-02.00"),
-			Size:         aws.Int64(9876543210),
+			Size:         aws.Int64(100000000),
 			LastModified: aws.Time(yesterday),
+		},
+		{
+			Key:          aws.String("backup-2024-01-02.01"),
+			Size:         aws.Int64(50000000),
+			LastModified: aws.Time(yesterday.Add(1 * time.Minute)), // Slightly later
 		},
 	}
 
@@ -197,12 +202,33 @@ func TestFilterBackupObjects_ObjectMetadata(t *testing.T) {
 	assert.Equal(t, int64(1234567890), result[0].Size)
 	assert.Equal(t, now.Unix(), result[0].LastModified.Unix())
 
-	// Test multipart mode
+	// Test multipart mode - should group parts and sum sizes
 	result = FilterBackupObjects(objects, true)
-	assert.Equal(t, 1, len(result))
-	assert.Equal(t, "backup-2024-01-02.00", result[0].Key)
-	assert.Equal(t, int64(9876543210), result[0].Size)
-	assert.Equal(t, yesterday.Unix(), result[0].LastModified.Unix())
+	assert.Equal(t, 2, len(result)) // tar.gz file + grouped multipart
+
+	// Find the multipart archive result
+	var multipartResult *Object
+	var singleResult *Object
+	for i := range result {
+		switch result[i].Key {
+		case "backup-2024-01-02":
+			multipartResult = &result[i]
+		case "backup-2024-01-01.tar.gz":
+			singleResult = &result[i]
+		}
+	}
+
+	assert.NotNil(t, multipartResult, "Should find grouped multipart archive")
+	assert.NotNil(t, singleResult, "Should find single file")
+
+	// Verify multipart archive has summed size
+	assert.Equal(t, "backup-2024-01-02", multipartResult.Key)
+	assert.Equal(t, int64(150000000), multipartResult.Size)                                   // 100M + 50M
+	assert.Equal(t, yesterday.Add(1*time.Minute).Unix(), multipartResult.LastModified.Unix()) // Most recent timestamp
+
+	// Verify single file
+	assert.Equal(t, "backup-2024-01-01.tar.gz", singleResult.Key)
+	assert.Equal(t, int64(1234567890), singleResult.Size)
 }
 
 // TestFilterBackupObjects_EdgeCases tests edge cases and boundary conditions
@@ -286,7 +312,7 @@ func TestFilterBackupObjects_RealWorldScenarios(t *testing.T) {
 				{Key: aws.String("stackgraph-backup-2024-01-02.01"), Size: aws.Int64(300000000)},
 			},
 			multipartArchive: true,
-			expectedCount:    2, // Only .00 files
+			expectedCount:    2, // Two grouped multipart archives
 		},
 		{
 			name:     "mixed backup types in same bucket",
@@ -299,7 +325,7 @@ func TestFilterBackupObjects_RealWorldScenarios(t *testing.T) {
 				{Key: aws.String("backup-old-split.01"), Size: aws.Int64(1000)},
 			},
 			multipartArchive: true,
-			expectedCount:    2, // Two .00 files
+			expectedCount:    3, // One single file + two grouped multipart archives
 		},
 	}
 
@@ -309,4 +335,32 @@ func TestFilterBackupObjects_RealWorldScenarios(t *testing.T) {
 			assert.Equal(t, tt.expectedCount, len(result), "Scenario: %s", tt.scenario)
 		})
 	}
+}
+
+// TestFilterBackupObjects_SizeSummation tests that sizes are correctly summed for multipart archives
+func TestFilterBackupObjects_SizeSummation(t *testing.T) {
+	objects := []s3types.Object{
+		{Key: aws.String("sts-backup-20251028-1546.graph.00"), Size: aws.Int64(104857600)},
+		{Key: aws.String("sts-backup-20251028-1546.graph.01"), Size: aws.Int64(6885342)},
+		{Key: aws.String("sts-backup-20251029-0300.graph.00"), Size: aws.Int64(104857600)},
+		{Key: aws.String("sts-backup-20251029-0300.graph.01"), Size: aws.Int64(4348555)},
+		{Key: aws.String("sts-backup-20251029-0924.graph.00"), Size: aws.Int64(104857600)},
+		{Key: aws.String("sts-backup-20251029-0924.graph.01"), Size: aws.Int64(6567239)},
+	}
+
+	result := FilterBackupObjects(objects, true)
+
+	// Should have 3 grouped archives
+	assert.Equal(t, 3, len(result))
+
+	// Create a map for easier lookup
+	sizeMap := make(map[string]int64)
+	for _, obj := range result {
+		sizeMap[obj.Key] = obj.Size
+	}
+
+	// Verify sizes are correctly summed
+	assert.Equal(t, int64(111742942), sizeMap["sts-backup-20251028-1546.graph"]) // 104857600 + 6885342
+	assert.Equal(t, int64(109206155), sizeMap["sts-backup-20251029-0300.graph"]) // 104857600 + 4348555
+	assert.Equal(t, int64(111424839), sizeMap["sts-backup-20251029-0924.graph"]) // 104857600 + 6567239
 }

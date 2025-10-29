@@ -208,84 +208,8 @@ func TestScaleDown_K8sError(t *testing.T) {
 	assert.Empty(t, scaledDeployments)
 }
 
-// TestScaleUp_Success tests successful scale up of deployments
-func TestScaleUp_Success(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
-	client := k8s.NewTestClient(fakeClient)
-	log := logger.New(true, false)
-
-	// Create deployments at scale 0
-	deploy1 := createDeployment("deploy1", map[string]string{"app": "test"}, 0)
-	deploy2 := createDeployment("deploy2", map[string]string{"app": "test"}, 0)
-
-	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(
-		context.Background(), &deploy1, metav1.CreateOptions{},
-	)
-	require.NoError(t, err)
-
-	_, err = fakeClient.AppsV1().Deployments("test-ns").Create(
-		context.Background(), &deploy2, metav1.CreateOptions{},
-	)
-	require.NoError(t, err)
-
-	// Scale up
-	deploymentScales := []k8s.DeploymentScale{
-		{Name: "deploy1", Replicas: 3},
-		{Name: "deploy2", Replicas: 5},
-	}
-
-	err = ScaleUp(client, "test-ns", deploymentScales, log)
-
-	// Assertions
-	require.NoError(t, err)
-
-	// Verify deployments were scaled up
-	deploy1After, err := fakeClient.AppsV1().Deployments("test-ns").Get(
-		context.Background(), "deploy1", metav1.GetOptions{},
-	)
-	require.NoError(t, err)
-	assert.Equal(t, int32(3), *deploy1After.Spec.Replicas)
-
-	deploy2After, err := fakeClient.AppsV1().Deployments("test-ns").Get(
-		context.Background(), "deploy2", metav1.GetOptions{},
-	)
-	require.NoError(t, err)
-	assert.Equal(t, int32(5), *deploy2After.Spec.Replicas)
-}
-
-// TestScaleUp_EmptyDeployments tests scale up with empty deployment list
-func TestScaleUp_EmptyDeployments(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
-	client := k8s.NewTestClient(fakeClient)
-	log := logger.New(true, false)
-
-	// Scale up with empty list
-	err := ScaleUp(client, "test-ns", []k8s.DeploymentScale{}, log)
-
-	// Should succeed (no-op)
-	require.NoError(t, err)
-}
-
-// TestScaleUp_NonexistentDeployment tests error handling when deployment doesn't exist
-func TestScaleUp_NonexistentDeployment(t *testing.T) {
-	fakeClient := fake.NewSimpleClientset()
-	client := k8s.NewTestClient(fakeClient)
-	log := logger.New(true, false)
-
-	// Attempt to scale up non-existent deployment
-	deploymentScales := []k8s.DeploymentScale{
-		{Name: "nonexistent", Replicas: 3},
-	}
-
-	err := ScaleUp(client, "test-ns", deploymentScales, log)
-
-	// Should return error
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to scale up deployments")
-}
-
-// TestScaleDown_IntegrationWithScaleUp tests the full cycle
-func TestScaleDown_IntegrationWithScaleUp(t *testing.T) {
+// TestScaleDown_IntegrationWithScaleUpFromAnnotations tests the full cycle
+func TestScaleDown_IntegrationWithScaleUpFromAnnotations(t *testing.T) {
 	fakeClient := fake.NewSimpleClientset()
 	client := k8s.NewTestClient(fakeClient)
 	log := logger.New(true, false)
@@ -331,8 +255,16 @@ func TestScaleDown_IntegrationWithScaleUp(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int32(0), *deploy1After.Spec.Replicas)
 
-	// Scale back up
-	err = ScaleUp(client, "test-ns", scaledDeployments, log)
+	// Verify annotations were added
+	assert.Equal(t, "3", deploy1After.Annotations[k8s.PreRestoreReplicasAnnotation])
+	deploy2After, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "deploy2", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "5", deploy2After.Annotations[k8s.PreRestoreReplicasAnnotation])
+
+	// Scale back up using annotations
+	err = ScaleUpFromAnnotations(client, "test-ns", "app=test", log)
 	require.NoError(t, err)
 
 	// Verify scaled back to original values
@@ -342,11 +274,264 @@ func TestScaleDown_IntegrationWithScaleUp(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int32(3), *deploy1Final.Spec.Replicas)
 
+	// Verify annotation was removed
+	_, exists := deploy1Final.Annotations[k8s.PreRestoreReplicasAnnotation]
+	assert.False(t, exists)
+
 	deploy2Final, err := fakeClient.AppsV1().Deployments("test-ns").Get(
 		context.Background(), "deploy2", metav1.GetOptions{},
 	)
 	require.NoError(t, err)
 	assert.Equal(t, int32(5), *deploy2Final.Spec.Replicas)
+
+	// Verify annotation was removed
+	_, exists = deploy2Final.Annotations[k8s.PreRestoreReplicasAnnotation]
+	assert.False(t, exists)
+}
+
+// TestScaleUpFromAnnotations_Success tests successful scale up from annotations
+func TestScaleUpFromAnnotations_Success(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	client := k8s.NewTestClient(fakeClient)
+	log := logger.New(true, false)
+
+	// Create deployments at scale 0 with annotations
+	deploy1 := createDeployment("deploy1", map[string]string{"app": "test"}, 0)
+	deploy1.Annotations = map[string]string{
+		k8s.PreRestoreReplicasAnnotation: "3",
+	}
+	deploy2 := createDeployment("deploy2", map[string]string{"app": "test"}, 0)
+	deploy2.Annotations = map[string]string{
+		k8s.PreRestoreReplicasAnnotation: "5",
+	}
+
+	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(
+		context.Background(), &deploy1, metav1.CreateOptions{},
+	)
+	require.NoError(t, err)
+
+	_, err = fakeClient.AppsV1().Deployments("test-ns").Create(
+		context.Background(), &deploy2, metav1.CreateOptions{},
+	)
+	require.NoError(t, err)
+
+	// Scale up from annotations
+	err = ScaleUpFromAnnotations(client, "test-ns", "app=test", log)
+
+	// Assertions
+	require.NoError(t, err)
+
+	// Verify deployments were scaled up
+	deploy1After, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "deploy1", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(3), *deploy1After.Spec.Replicas)
+
+	// Verify annotation was removed
+	_, exists := deploy1After.Annotations[k8s.PreRestoreReplicasAnnotation]
+	assert.False(t, exists)
+
+	deploy2After, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "deploy2", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(5), *deploy2After.Spec.Replicas)
+
+	// Verify annotation was removed
+	_, exists = deploy2After.Annotations[k8s.PreRestoreReplicasAnnotation]
+	assert.False(t, exists)
+}
+
+// TestScaleUpFromAnnotations_NoAnnotations tests scale up when deployments have no annotations
+func TestScaleUpFromAnnotations_NoAnnotations(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	client := k8s.NewTestClient(fakeClient)
+	log := logger.New(true, false)
+
+	// Create deployments without annotations
+	deploy1 := createDeployment("deploy1", map[string]string{"app": "test"}, 0)
+	deploy2 := createDeployment("deploy2", map[string]string{"app": "test"}, 2)
+
+	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(
+		context.Background(), &deploy1, metav1.CreateOptions{},
+	)
+	require.NoError(t, err)
+
+	_, err = fakeClient.AppsV1().Deployments("test-ns").Create(
+		context.Background(), &deploy2, metav1.CreateOptions{},
+	)
+	require.NoError(t, err)
+
+	// Scale up from annotations
+	err = ScaleUpFromAnnotations(client, "test-ns", "app=test", log)
+
+	// Assertions - should succeed (no-op)
+	require.NoError(t, err)
+
+	// Verify deployments remain unchanged
+	deploy1After, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "deploy1", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(0), *deploy1After.Spec.Replicas)
+
+	deploy2After, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "deploy2", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), *deploy2After.Spec.Replicas)
+}
+
+// TestScaleUpFromAnnotations_MixedDeployments tests scale up with some annotated and some not
+func TestScaleUpFromAnnotations_MixedDeployments(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	client := k8s.NewTestClient(fakeClient)
+	log := logger.New(true, false)
+
+	// Create deployment with annotation
+	deploy1 := createDeployment("deploy1", map[string]string{"app": "test"}, 0)
+	deploy1.Annotations = map[string]string{
+		k8s.PreRestoreReplicasAnnotation: "3",
+	}
+
+	// Create deployment without annotation
+	deploy2 := createDeployment("deploy2", map[string]string{"app": "test"}, 0)
+
+	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(
+		context.Background(), &deploy1, metav1.CreateOptions{},
+	)
+	require.NoError(t, err)
+
+	_, err = fakeClient.AppsV1().Deployments("test-ns").Create(
+		context.Background(), &deploy2, metav1.CreateOptions{},
+	)
+	require.NoError(t, err)
+
+	// Scale up from annotations
+	err = ScaleUpFromAnnotations(client, "test-ns", "app=test", log)
+
+	// Assertions
+	require.NoError(t, err)
+
+	// Verify only annotated deployment was scaled up
+	deploy1After, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "deploy1", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(3), *deploy1After.Spec.Replicas)
+
+	// Verify annotation was removed from deploy1
+	_, exists := deploy1After.Annotations[k8s.PreRestoreReplicasAnnotation]
+	assert.False(t, exists)
+
+	// Verify deploy2 remains unchanged
+	deploy2After, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "deploy2", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(0), *deploy2After.Spec.Replicas)
+}
+
+// TestScaleUpFromAnnotations_InvalidAnnotationValue tests error handling for invalid annotation
+func TestScaleUpFromAnnotations_InvalidAnnotationValue(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	client := k8s.NewTestClient(fakeClient)
+	log := logger.New(true, false)
+
+	// Create deployment with invalid annotation value
+	deploy1 := createDeployment("deploy1", map[string]string{"app": "test"}, 0)
+	deploy1.Annotations = map[string]string{
+		k8s.PreRestoreReplicasAnnotation: "invalid",
+	}
+
+	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(
+		context.Background(), &deploy1, metav1.CreateOptions{},
+	)
+	require.NoError(t, err)
+
+	// Scale up from annotations
+	err = ScaleUpFromAnnotations(client, "test-ns", "app=test", log)
+
+	// Should return error
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse replicas annotation")
+
+	// Verify deployment was not scaled
+	deploy1After, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "deploy1", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(0), *deploy1After.Spec.Replicas)
+}
+
+// TestScaleUpFromAnnotations_EmptySelector tests scale up with selector matching no deployments
+func TestScaleUpFromAnnotations_EmptySelector(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	client := k8s.NewTestClient(fakeClient)
+	log := logger.New(true, false)
+
+	// Create deployment with different labels
+	deploy1 := createDeployment("deploy1", map[string]string{"app": "other"}, 0)
+	deploy1.Annotations = map[string]string{
+		k8s.PreRestoreReplicasAnnotation: "3",
+	}
+
+	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(
+		context.Background(), &deploy1, metav1.CreateOptions{},
+	)
+	require.NoError(t, err)
+
+	// Scale up from annotations with non-matching selector
+	err = ScaleUpFromAnnotations(client, "test-ns", "app=test", log)
+
+	// Should succeed (no-op)
+	require.NoError(t, err)
+
+	// Verify deployment was not scaled
+	deploy1After, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "deploy1", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(0), *deploy1After.Spec.Replicas)
+
+	// Verify annotation still exists
+	assert.Equal(t, "3", deploy1After.Annotations[k8s.PreRestoreReplicasAnnotation])
+}
+
+// TestScaleUpFromAnnotations_ZeroReplicas tests scale up with annotation value "0"
+func TestScaleUpFromAnnotations_ZeroReplicas(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	client := k8s.NewTestClient(fakeClient)
+	log := logger.New(true, false)
+
+	// Create deployment with annotation value "0"
+	deploy1 := createDeployment("deploy1", map[string]string{"app": "test"}, 0)
+	deploy1.Annotations = map[string]string{
+		k8s.PreRestoreReplicasAnnotation: "0",
+	}
+
+	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(
+		context.Background(), &deploy1, metav1.CreateOptions{},
+	)
+	require.NoError(t, err)
+
+	// Scale up from annotations
+	err = ScaleUpFromAnnotations(client, "test-ns", "app=test", log)
+
+	// Should succeed
+	require.NoError(t, err)
+
+	// Verify deployment remains at 0 replicas
+	deploy1After, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "deploy1", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(0), *deploy1After.Spec.Replicas)
+
+	// Verify annotation was removed
+	_, exists := deploy1After.Annotations[k8s.PreRestoreReplicasAnnotation]
+	assert.False(t, exists)
 }
 
 // Helper function to create a deployment for testing

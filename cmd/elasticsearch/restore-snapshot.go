@@ -65,7 +65,7 @@ func runRestore(appCtx *app.Context) error {
 	defer func() {
 		if len(scaledDeployments) > 0 {
 			appCtx.Logger.Println()
-			if err := scale.ScaleUp(appCtx.K8sClient, appCtx.Namespace, scaledDeployments, appCtx.Logger); err != nil {
+			if err := scale.ScaleUpFromAnnotations(appCtx.K8sClient, appCtx.Namespace, appCtx.Config.Elasticsearch.Restore.ScaleDownLabelSelector, appCtx.Logger); err != nil {
 				appCtx.Logger.Warningf("Failed to scale up deployments: %v", err)
 			}
 		}

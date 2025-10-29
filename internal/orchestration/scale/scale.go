@@ -89,18 +89,25 @@ func waitForPodsToTerminate(k8sClient *k8s.Client, namespace, labelSelector stri
 	}
 }
 
-// ScaleUp scales up deployments to their original replica counts and logs the results
+// ScaleUpFromAnnotations scales up deployments that have pre-restore-replicas annotations
+// This is used to scale up deployments after a background restore job completes
 //
-//nolint:revive // Package name "scale" with function "ScaleUp" is intentionally verbose for clarity
-func ScaleUp(k8sClient *k8s.Client, namespace string, deployments []k8s.DeploymentScale, log *logger.Logger) error {
-	log.Infof("Scaling up deployments back to original replica counts...")
+//nolint:revive // Package name "scale" with function "ScaleUpFromAnnotations" is intentionally verbose for clarity
+func ScaleUpFromAnnotations(k8sClient *k8s.Client, namespace, labelSelector string, log *logger.Logger) error {
+	log.Infof("Scaling up deployments from annotations (selector: %s)...", labelSelector)
 
-	if err := k8sClient.ScaleUpDeployments(namespace, deployments); err != nil {
-		return fmt.Errorf("failed to scale up deployments: %w", err)
+	scaledDeployments, err := k8sClient.ScaleUpDeploymentsFromAnnotations(namespace, labelSelector)
+	if err != nil {
+		return fmt.Errorf("failed to scale up deployments from annotations: %w", err)
 	}
 
-	log.Successf("Scaled up %d deployment(s) successfully:", len(deployments))
-	for _, dep := range deployments {
+	if len(scaledDeployments) == 0 {
+		log.Infof("No deployments found with pre-restore annotations to scale up")
+		return nil
+	}
+
+	log.Successf("Scaled up %d deployment(s) successfully:", len(scaledDeployments))
+	for _, dep := range scaledDeployments {
 		log.Infof("  - %s (replicas: 0 -> %d)", dep.Name, dep.Replicas)
 	}
 

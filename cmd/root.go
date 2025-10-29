@@ -17,7 +17,7 @@ var (
 // addBackupConfigFlags adds configuration flags needed for backup/restore operations
 // to commands that interact with data services (Elasticsearch, etc.)
 func addBackupConfigFlags(cmd *cobra.Command) {
-	cmd.PersistentFlags().StringVar(&flags.Namespace, "namespace", "", "Kubernetes namespace (required)")
+	cmd.PersistentFlags().StringVarP(&flags.Namespace, "namespace", "n", "", "Kubernetes namespace (required)")
 	cmd.PersistentFlags().StringVar(&flags.Kubeconfig, "kubeconfig", "", "Path to kubeconfig file (default: ~/.kube/config)")
 	cmd.PersistentFlags().BoolVar(&flags.Debug, "debug", false, "Enable debug output")
 	cmd.PersistentFlags().BoolVarP(&flags.Quiet, "quiet", "q", false, "Suppress operational messages (only show errors and data output)")

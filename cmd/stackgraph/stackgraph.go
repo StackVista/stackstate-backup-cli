@@ -13,6 +13,7 @@ func Cmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 
 	cmd.AddCommand(listCmd(globalFlags))
 	cmd.AddCommand(restoreCmd(globalFlags))
+	cmd.AddCommand(checkAndFinalizeCmd(globalFlags))
 
 	return cmd
 }
