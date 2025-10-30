@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackvista/stackstate-backup-cli/internal/config"
-	"github.com/stackvista/stackstate-backup-cli/internal/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/internal/clients/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -20,6 +20,36 @@ const (
 	testNamespace     = "test-ns"
 	testSecretName    = "backup-secret"
 )
+
+// minimalMinioStackgraphConfig provides the required Minio and Stackgraph configuration for tests
+const minimalMinioStackgraphConfig = `
+minio:
+  service:
+    name: minio
+    port: 9000
+    localPortForwardPort: 9000
+  accessKey: minioadmin
+  secretKey: minioadmin
+stackgraph:
+  bucket: stackgraph-bucket
+  multipartArchive: true
+  restore:
+    scaleDownLabelSelector: "app=stackgraph"
+    loggingConfigConfigMap: logging-config
+    zookeeperQuorum: "zookeeper:2181"
+    job:
+      image: backup:latest
+      waitImage: wait:latest
+      resources:
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+        requests:
+          cpu: "1"
+          memory: "2Gi"
+    pvc:
+      size: "10Gi"
+`
 
 // mockESClient is a simple mock for testing commands
 type mockESClient struct {
@@ -79,7 +109,7 @@ func TestListSnapshotsCmd_Integration(t *testing.T) {
 	}
 
 	// Create fake Kubernetes client
-	fakeClient := fake.NewSimpleClientset()
+	fakeClient := fake.NewClientset()
 
 	// Create ConfigMap with valid config
 	cm := &corev1.ConfigMap{
@@ -117,7 +147,7 @@ elasticsearch:
     retentionExpireAfter: 30d
     retentionMinCount: 5
     retentionMaxCount: 50
-`,
+` + minimalMinioStackgraphConfig,
 		},
 	}
 	_, err := fakeClient.CoreV1().ConfigMaps(testNamespace).Create(
@@ -135,12 +165,12 @@ elasticsearch:
 // TestListSnapshotsCmd_Unit demonstrates a unit-style test
 // This test focuses on the command structure and basic behavior
 func TestListSnapshotsCmd_Unit(t *testing.T) {
-	cliCtx := config.NewContext()
-	cliCtx.Config.Namespace = testNamespace
-	cliCtx.Config.ConfigMapName = testConfigMapName
-	cliCtx.Config.OutputFormat = "table"
+	flags := config.NewCLIGlobalFlags()
+	flags.Namespace = testNamespace
+	flags.ConfigMapName = testConfigMapName
+	flags.OutputFormat = "table"
 
-	cmd := listSnapshotsCmd(cliCtx)
+	cmd := listSnapshotsCmd(flags)
 
 	// Test command metadata
 	assert.Equal(t, "list-snapshots", cmd.Use)

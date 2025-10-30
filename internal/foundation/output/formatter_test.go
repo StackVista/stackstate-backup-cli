@@ -3,6 +3,7 @@ package output
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
@@ -40,7 +41,7 @@ func TestNewFormatter(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			formatter := NewFormatter(tt.format)
+			formatter := NewFormatter(os.Stdout, tt.format)
 			assert.NotNil(t, formatter)
 			assert.Equal(t, tt.expectedFormat, formatter.format)
 			assert.NotNil(t, formatter.writer)

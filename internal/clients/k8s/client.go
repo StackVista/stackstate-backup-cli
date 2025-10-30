@@ -104,18 +104,18 @@ func (c *Client) PortForwardService(namespace, serviceName string, localPort, re
 func (c *Client) PortForwardPod(namespace, podName string, localPort, remotePort int) (chan struct{}, chan struct{}, error) {
 	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/portforward", namespace, podName)
 	hostIP := c.restConfig.Host
-	url, err := url.Parse(hostIP)
+	pfURL, err := url.Parse(hostIP)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to parse host: %w", err)
 	}
-	url.Path = path
+	pfURL.Path = path
 
 	transport, upgrader, err := spdy.RoundTripperFor(c.restConfig)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create round tripper: %w", err)
 	}
 
-	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, http.MethodPost, url)
+	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, http.MethodPost, pfURL)
 
 	stopChan := make(chan struct{}, 1)
 	readyChan := make(chan struct{})
@@ -138,13 +138,18 @@ func (c *Client) PortForwardPod(namespace, podName string, localPort, remotePort
 	go func() {
 		if err := fw.ForwardPorts(); err != nil {
 			if c.debug {
-				fmt.Fprintf(os.Stderr, "Port forward error: %v\n", err)
+				_, _ = fmt.Fprintf(os.Stderr, "Port forward error: %v\n", err)
 			}
 		}
 	}()
 
 	return stopChan, readyChan, nil
 }
+
+const (
+	// PreRestoreReplicasAnnotation is the annotation key used to store original replica counts
+	PreRestoreReplicasAnnotation = "stackstate.com/pre-restore-replicas"
+)
 
 // DeploymentScale holds the name and original replica count of a deployment
 type DeploymentScale struct {
@@ -186,6 +191,12 @@ func (c *Client) ScaleDownDeployments(namespace, labelSelector string) ([]Deploy
 
 		// Scale to 0 if not already at 0
 		if originalReplicas > 0 {
+			// Add annotation with original replica count
+			if deployment.Annotations == nil {
+				deployment.Annotations = make(map[string]string)
+			}
+			deployment.Annotations[PreRestoreReplicasAnnotation] = fmt.Sprintf("%d", originalReplicas)
+
 			replicas := int32(0)
 			deployment.Spec.Replicas = &replicas
 
@@ -199,25 +210,60 @@ func (c *Client) ScaleDownDeployments(namespace, labelSelector string) ([]Deploy
 	return scaledDeployments, nil
 }
 
-// ScaleUpDeployments restores deployments to their original replica counts
-func (c *Client) ScaleUpDeployments(namespace string, deploymentScales []DeploymentScale) error {
+// ScaleUpDeploymentsFromAnnotations scales up deployments that have the pre-restore-replicas annotation
+// Returns a list of deployments that were scaled up with their replica counts
+func (c *Client) ScaleUpDeploymentsFromAnnotations(namespace, labelSelector string) ([]DeploymentScale, error) {
 	ctx := context.Background()
 
-	for _, scale := range deploymentScales {
-		deployment, err := c.clientset.AppsV1().Deployments(namespace).Get(ctx, scale.Name, metav1.GetOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to get deployment %s: %w", scale.Name, err)
-		}
-
-		deployment.Spec.Replicas = &scale.Replicas
-
-		_, err = c.clientset.AppsV1().Deployments(namespace).Update(ctx, deployment, metav1.UpdateOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to scale up deployment %s: %w", scale.Name, err)
-		}
+	// List deployments matching the label selector
+	deployments, err := c.clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list deployments: %w", err)
 	}
 
-	return nil
+	if len(deployments.Items) == 0 {
+		return []DeploymentScale{}, nil
+	}
+
+	var scaledDeployments []DeploymentScale
+
+	// Scale up each deployment that has the annotation
+	for _, deployment := range deployments.Items {
+		if deployment.Annotations == nil {
+			continue
+		}
+
+		replicasStr, exists := deployment.Annotations[PreRestoreReplicasAnnotation]
+		if !exists {
+			continue
+		}
+
+		var originalReplicas int32
+		if _, err := fmt.Sscanf(replicasStr, "%d", &originalReplicas); err != nil {
+			return scaledDeployments, fmt.Errorf("failed to parse replicas annotation for deployment %s: %w", deployment.Name, err)
+		}
+
+		// Scale up to original replica count
+		deployment.Spec.Replicas = &originalReplicas
+
+		// Remove the annotation
+		delete(deployment.Annotations, PreRestoreReplicasAnnotation)
+
+		_, err := c.clientset.AppsV1().Deployments(namespace).Update(ctx, &deployment, metav1.UpdateOptions{})
+		if err != nil {
+			return scaledDeployments, fmt.Errorf("failed to scale up deployment %s: %w", deployment.Name, err)
+		}
+
+		// Record scaled deployment
+		scaledDeployments = append(scaledDeployments, DeploymentScale{
+			Name:     deployment.Name,
+			Replicas: originalReplicas,
+		})
+	}
+
+	return scaledDeployments, nil
 }
 
 // NewTestClient creates a k8s Client for testing with a fake clientset.

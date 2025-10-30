@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/stackvista/stackstate-backup-cli/internal/config"
-	"github.com/stackvista/stackstate-backup-cli/internal/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/internal/clients/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -71,12 +71,12 @@ func (m *mockESClientForIndices) RolloverDatastream(_ string) error {
 
 // TestListIndicesCmd_Unit tests the command structure
 func TestListIndicesCmd_Unit(t *testing.T) {
-	cliCtx := config.NewContext()
-	cliCtx.Config.Namespace = testNamespace
-	cliCtx.Config.ConfigMapName = testConfigMapName
-	cliCtx.Config.OutputFormat = "table"
+	flags := config.NewCLIGlobalFlags()
+	flags.Namespace = testNamespace
+	flags.ConfigMapName = testConfigMapName
+	flags.OutputFormat = "table"
 
-	cmd := listIndicesCmd(cliCtx)
+	cmd := listIndicesCmd(flags)
 
 	// Test command metadata
 	assert.Equal(t, "list-indices", cmd.Use)
@@ -91,7 +91,7 @@ func TestListIndicesCmd_Integration(t *testing.T) {
 	}
 
 	// Create fake Kubernetes client
-	fakeClient := fake.NewSimpleClientset()
+	fakeClient := fake.NewClientset()
 
 	// Create ConfigMap with valid config
 	cm := &corev1.ConfigMap{
@@ -129,7 +129,7 @@ elasticsearch:
     retentionExpireAfter: 30d
     retentionMinCount: 5
     retentionMaxCount: 50
-`,
+` + minimalMinioStackgraphConfig,
 		},
 	}
 	_, err := fakeClient.CoreV1().ConfigMaps(testNamespace).Create(

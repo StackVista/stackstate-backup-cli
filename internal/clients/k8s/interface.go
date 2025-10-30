@@ -14,7 +14,7 @@ type Interface interface {
 
 	// Deployment scaling operations
 	ScaleDownDeployments(namespace, labelSelector string) ([]DeploymentScale, error)
-	ScaleUpDeployments(namespace string, deployments []DeploymentScale) error
+	ScaleUpDeploymentsFromAnnotations(namespace, labelSelector string) ([]DeploymentScale, error)
 }
 
 // Ensure *Client implements Interface

@@ -67,3 +67,38 @@ elasticsearch:
     datastreamName: sts_k8s_logs
     # Pattern for indices to restore from snapshot (comma-separated glob patterns)
     indicesPattern: sts*,.ds-sts_k8s_logs*
+
+# Minio configuration for S3-compatible storage
+minio:
+  service:
+    name: suse-observability-minio
+    port: 9000
+    localPortForwardPort: 9000
+  accessKey: minioadmin
+  secretKey: minioadmin
+
+# Stackgraph backup configuration
+stackgraph:
+  bucket: sts-stackgraph-backup
+  s3Prefix: ""
+  multipartArchive: true
+  restore:
+    scaleDownLabelSelector: "observability.suse.com/scalable-during-stackgraph-restore=true"
+    loggingConfigConfigMap: suse-observability-logging
+    zookeeperQuorum: "suse-observability-zookeeper:2181"
+    job:
+      labels:
+        app: stackgraph-restore
+      image: quay.io/stackstate/stackstate-backup:latest
+      waitImage: quay.io/stackstate/wait:latest
+      resources:
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+        requests:
+          cpu: "1"
+          memory: "2Gi"
+    pvc:
+      size: "10Gi"
+      accessModes:
+        - ReadWriteOnce

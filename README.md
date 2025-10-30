@@ -6,8 +6,11 @@ A command-line tool for managing backups and restores for SUSE Observability pla
 
 This CLI tool replaces the legacy Bash-based backup/restore scripts with a single Go binary that can be run from an operator host. It uses Kubernetes port-forwarding to connect to services and automatically discovers configuration from ConfigMaps and Secrets.
 
-**Current Support:** Elasticsearch snapshots and restores
-**Planned:** VictoriaMetrics, ClickHouse, StackGraph, Configuration backups
+**Current Support:**
+- Elasticsearch snapshots and restores
+- Stackgraph backups and restores
+
+**Planned:** VictoriaMetrics, ClickHouse, Configuration backups
 
 ## Installation
 
@@ -75,16 +78,44 @@ sts-backup elasticsearch list-snapshots --namespace <namespace>
 
 #### restore-snapshot
 
-Restore Elasticsearch snapshot.
+Restore Elasticsearch snapshot. Automatically scales down affected deployments before restore and scales them back up afterward.
 
 ```bash
 sts-backup elasticsearch restore-snapshot --namespace <namespace> --snapshot-name <name> [flags]
 ```
 
 **Flags:**
-- `--snapshot-name` - Name of snapshot to restore (required)
-- `--drop-all-indices` - Delete all existing indices before restore
+- `--snapshot-name, -s` - Name of snapshot to restore (required)
+- `--drop-all-indices, -r` - Delete all existing STS indices before restore
 - `--yes` - Skip confirmation prompt
+
+### stackgraph
+
+Manage Stackgraph backups and restores.
+
+#### list
+
+List available Stackgraph backups from S3/Minio.
+
+```bash
+sts-backup stackgraph list --namespace <namespace>
+```
+
+#### restore
+
+Restore Stackgraph from a backup archive. Automatically scales down affected deployments before restore and scales them back up afterward.
+
+```bash
+sts-backup stackgraph restore --namespace <namespace> [--archive <name> | --latest] [flags]
+```
+
+**Flags:**
+- `--archive` - Specific archive name to restore (e.g., sts-backup-20210216-0300.graph)
+- `--latest` - Restore from the most recent backup
+- `--force` - Force delete existing data during restore
+- `--background` - Run restore job in background without waiting for completion
+
+**Note**: Either `--archive` or `--latest` must be specified (mutually exclusive).
 
 ## Configuration
 
@@ -149,28 +180,50 @@ kubectl create secret generic suse-observability-backup-config \
   -n <namespace>
 ```
 
-See [internal/config/testdata/validConfigMapConfig.yaml](internal/config/testdata/validConfigMapConfig.yaml) for a complete example.
+See [internal/foundation/config/testdata/validConfigMapConfig.yaml](internal/foundation/config/testdata/validConfigMapConfig.yaml) for a complete example.
 
 ## Project Structure
 
 ```
 .
-├── cmd/                          # CLI commands
-│   ├── root.go                   # Root command and flag definitions
+├── cmd/                          # CLI commands (Layer 4)
+│   ├── root.go                   # Root command and global flags
 │   ├── version/                  # Version command
-│   └── elasticsearch/            # Elasticsearch subcommands
-│       ├── configure.go          # Configure snapshot repository
-│       ├── list-indices.go       # List indices
-│       ├── list-snapshots.go     # List snapshots
-│       └── restore-snapshot.go   # Restore snapshot
-├── internal/                     # Internal packages
-│   ├── config/                   # Configuration loading and validation
-│   ├── elasticsearch/            # Elasticsearch client
-│   ├── k8s/                      # Kubernetes client utilities
-│   ├── logger/                   # Structured logging
-│   └── output/                   # Output formatting (table, JSON)
-└── main.go                       # Entry point
+│   ├── elasticsearch/            # Elasticsearch subcommands
+│   │   ├── configure.go          # Configure snapshot repository
+│   │   ├── list-indices.go       # List indices
+│   │   ├── list-snapshots.go     # List snapshots
+│   │   └── restore-snapshot.go   # Restore snapshot
+│   └── stackgraph/               # Stackgraph subcommands
+│       ├── list.go               # List backups
+│       └── restore.go            # Restore backup
+├── internal/                     # Internal packages (Layers 0-3)
+│   ├── foundation/               # Layer 0: Core utilities
+│   │   ├── config/               # Configuration management
+│   │   ├── logger/               # Structured logging
+│   │   └── output/               # Output formatting
+│   ├── clients/                  # Layer 1: Service clients
+│   │   ├── k8s/                  # Kubernetes client
+│   │   ├── elasticsearch/        # Elasticsearch client
+│   │   └── s3/                   # S3/Minio client
+│   ├── orchestration/            # Layer 2: Workflows
+│   │   ├── portforward/          # Port-forwarding lifecycle
+│   │   └── scale/                # Deployment scaling
+│   ├── app/                      # Layer 3: Dependency container
+│   │   └── app.go                # Application context and DI
+│   └── scripts/                  # Embedded bash scripts
+├── main.go                       # Entry point
+└── ARCHITECTURE.md               # Detailed architecture documentation
 ```
+
+### Key Architectural Features
+
+- **Layered Architecture**: Clear separation between commands (Layer 4), dependency injection (Layer 3), workflows (Layer 2), clients (Layer 1), and utilities (Layer 0)
+- **Dependency Injection**: Centralized dependency creation via `internal/app/` eliminates boilerplate from commands
+- **Testability**: All layers use interfaces for external dependencies, enabling comprehensive unit testing
+- **Clean Commands**: Commands are thin (50-100 lines) and focused on business logic
+
+See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed information about the layered architecture and design patterns.
 
 ## CI/CD
 

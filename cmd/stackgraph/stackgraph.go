@@ -1,4 +1,4 @@
-package elasticsearch
+package stackgraph
 
 import (
 	"github.com/spf13/cobra"
@@ -7,14 +7,13 @@ import (
 
 func Cmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "elasticsearch",
-		Short: "Elasticsearch backup and restore operations",
+		Use:   "stackgraph",
+		Short: "Stackgraph backup and restore operations",
 	}
 
-	cmd.AddCommand(listSnapshotsCmd(globalFlags))
-	cmd.AddCommand(listIndicesCmd(globalFlags))
+	cmd.AddCommand(listCmd(globalFlags))
 	cmd.AddCommand(restoreCmd(globalFlags))
-	cmd.AddCommand(configureCmd(globalFlags))
+	cmd.AddCommand(checkAndFinalizeCmd(globalFlags))
 
 	return cmd
 }

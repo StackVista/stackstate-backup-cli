@@ -7,8 +7,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 
-	"github.com/stackvista/stackstate-backup-cli/internal/k8s"
-	"github.com/stackvista/stackstate-backup-cli/internal/logger"
+	"github.com/stackvista/stackstate-backup-cli/internal/clients/k8s"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
 )
 
 func TestSetupPortForward_ServiceNotFound(t *testing.T) {

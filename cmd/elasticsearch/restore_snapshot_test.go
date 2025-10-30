@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stackvista/stackstate-backup-cli/internal/config"
-	"github.com/stackvista/stackstate-backup-cli/internal/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/internal/clients/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -94,8 +94,10 @@ func (m *mockESClientForRestore) ConfigureSLMPolicy(_, _, _, _, _, _ string, _, 
 
 // TestRestoreCmd_Unit tests the command structure
 func TestRestoreCmd_Unit(t *testing.T) {
-	cliCtx := config.NewContext()
-	cmd := restoreCmd(cliCtx)
+	flags := config.NewCLIGlobalFlags()
+	flags.Namespace = testNamespace
+	flags.ConfigMapName = testConfigMapName
+	cmd := restoreCmd(flags)
 
 	// Test command metadata
 	assert.Equal(t, "restore-snapshot", cmd.Use)
