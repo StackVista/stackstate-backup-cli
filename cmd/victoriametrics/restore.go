@@ -1,11 +1,10 @@
-package stackgraph
+package victoriametrics
 
 import (
 	"context"
 	"fmt"
 	"os"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -23,9 +22,8 @@ import (
 )
 
 const (
-	jobNameTemplate          = "stackgraph-restore"
+	jobNameTemplate          = "victoriametrics-restore"
 	configMapDefaultFileMode = 0755
-	purgeStackgraphDataFlag  = "-force"
 )
 
 // Restore command flags
@@ -39,8 +37,8 @@ var (
 func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "restore",
-		Short: "Restore Stackgraph from a backup archive",
-		Long:  `Restore Stackgraph data from a backup archive stored in S3/Minio. Can use --latest or --archive to specify which backup to restore.`,
+		Short: "Restore VictoriaMetrics from a backup archive",
+		Long:  `Restore VictoriaMetrics data from a backup archive stored in S3/Minio. Can use --latest or --archive to specify which backup to restore.`,
 		Run: func(_ *cobra.Command, _ []string) {
 			appCtx, err := app.NewContext(globalFlags)
 			if err != nil {
@@ -80,7 +78,7 @@ func runRestore(appCtx *app.Context) error {
 	// Warn user and ask for confirmation
 	if !skipConfirmation {
 		appCtx.Logger.Println()
-		appCtx.Logger.Warningf("WARNING: Restoring from backup will PURGE all existing Stackgraph data!")
+		appCtx.Logger.Warningf("WARNING: Restoring from backup will PURGE all existing VictoriaMetrics data!")
 		appCtx.Logger.Warningf("This operation cannot be undone.")
 		appCtx.Logger.Println()
 		appCtx.Logger.Infof("Backup to restore: %s", backupFile)
@@ -92,20 +90,20 @@ func runRestore(appCtx *app.Context) error {
 		}
 	}
 
-	// Scale down deployments before restore
+	// Scale down workload before restore
 	appCtx.Logger.Println()
-	scaleDownLabelSelector := appCtx.Config.Stackgraph.Restore.ScaleDownLabelSelector
-	scaledDeployments, err := scale.ScaleDown(appCtx.K8sClient, appCtx.Namespace, scaleDownLabelSelector, appCtx.Logger)
+	scaleDownLabelSelector := appCtx.Config.VictoriaMetrics.Restore.ScaleDownLabelSelector
+	scaledStatefulSets, err := scale.ScaleDown(appCtx.K8sClient, appCtx.Namespace, scaleDownLabelSelector, appCtx.Logger)
 	if err != nil {
 		return err
 	}
 
-	// Ensure deployments are scaled back up on exit (even if restore fails)
+	// Ensure workload are scaled back up on exit (even if restore fails)
 	defer func() {
-		if len(scaledDeployments) > 0 && !background {
+		if len(scaledStatefulSets) > 0 && !background {
 			appCtx.Logger.Println()
 			if err := scale.ScaleUpFromAnnotations(appCtx.K8sClient, appCtx.Namespace, scaleDownLabelSelector, appCtx.Logger); err != nil {
-				appCtx.Logger.Warningf("Failed to scale up deployments: %v", err)
+				appCtx.Logger.Warningf("Failed to scale up workload: %v", err)
 			}
 		}
 	}()
@@ -129,7 +127,7 @@ func runRestore(appCtx *app.Context) error {
 	appCtx.Logger.Successf("Restore job created: %s", jobName)
 
 	if background {
-		restore.PrintRunningJobStatus(appCtx.Logger, "stackgraph", jobName, appCtx.Namespace, 0)
+		restore.PrintRunningJobStatus(appCtx.Logger, "victoria-metrics", jobName, appCtx.Namespace, 0)
 		return nil
 	}
 
@@ -138,8 +136,8 @@ func runRestore(appCtx *app.Context) error {
 
 // waitAndCleanupRestoreJob waits for job completion and cleans up resources
 func waitAndCleanupRestoreJob(k8sClient *k8s.Client, namespace, jobName string, log *logger.Logger) error {
-	restore.PrintWaitingMessage(log, "stackgraph", jobName, namespace)
-	return restore.WaitAndCleanup(k8sClient, namespace, jobName, log, true)
+	restore.PrintWaitingMessage(log, "victoria-metrics", jobName, namespace)
+	return restore.WaitAndCleanup(k8sClient, namespace, jobName, log, false)
 }
 
 // getLatestBackup retrieves the most recent backup from S3
@@ -162,101 +160,68 @@ func getLatestBackup(k8sClient *k8s.Client, namespace string, config *config.Con
 		return "", err
 	}
 
+	var vmBackups []s3client.Object
 	// List objects in bucket
-	bucket := config.Stackgraph.Bucket
-	prefix := config.Stackgraph.S3Prefix
-	multipartArchive := config.Stackgraph.MultipartArchive
+	log.Infof("Listing VictoriaMetrics backups in bucket ...")
+	for _, s3Location := range config.VictoriaMetrics.S3Locations {
+		bucket := s3Location.Bucket
+		prefix := s3Location.Prefix
 
-	input := &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
-		Prefix: aws.String(prefix),
-	}
+		input := &s3.ListObjectsV2Input{
+			Bucket:    aws.String(bucket),
+			Prefix:    aws.String(prefix),
+			Delimiter: aws.String("/"),
+		}
 
-	result, err := s3Client.ListObjectsV2(context.Background(), input)
-	if err != nil {
-		return "", fmt.Errorf("failed to list S3 objects: %w", err)
-	}
+		result, err := s3Client.ListObjectsV2(context.Background(), input)
+		if err != nil {
+			return "", fmt.Errorf("failed to list S3 objects: %w", err)
+		}
 
-	// Filter objects based on whether the archive is split or not
-	filteredObjects := s3client.FilterBackupObjects(result.Contents, multipartArchive)
-
-	if len(filteredObjects) == 0 {
-		return "", fmt.Errorf("no backups found in bucket %s", bucket)
-	}
-
-	// Sort by LastModified time (most recent first)
-	sort.Slice(filteredObjects, func(i, j int) bool {
-		return filteredObjects[i].LastModified.After(filteredObjects[j].LastModified)
-	})
-
-	return filteredObjects[0].Key, nil
-}
-
-// buildPVCSpec builds a PVCSpec from configuration
-func buildPVCSpec(name string, config *config.Config, labels map[string]string) k8s.PVCSpec {
-	pvcConfig := config.Stackgraph.Restore.PVC
-
-	// Convert string access modes to k8s types
-	accessModes := []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce} // default
-	if len(pvcConfig.AccessModes) > 0 {
-		accessModes = make([]corev1.PersistentVolumeAccessMode, 0, len(pvcConfig.AccessModes))
-		for _, mode := range pvcConfig.AccessModes {
-			accessModes = append(accessModes, corev1.PersistentVolumeAccessMode(mode))
+		for _, key := range s3client.FilterByCommonPrefix(result.CommonPrefixes) {
+			vmBackups = append(vmBackups, s3client.Object{
+				Key:          fmt.Sprintf("%s/%s", bucket, key.Key),
+				LastModified: getVMBackupTime(s3Client, bucket, key.Key),
+			})
 		}
 	}
 
-	// Handle storage class (nil if not set)
-	var storageClass *string
-	if pvcConfig.StorageClassName != "" {
-		storageClass = &pvcConfig.StorageClassName
+	if len(vmBackups) == 0 {
+		return "", fmt.Errorf("no backups found")
 	}
 
-	return k8s.PVCSpec{
-		Name:         name,
-		Labels:       labels,
-		StorageSize:  pvcConfig.Size,
-		AccessModes:  accessModes,
-		StorageClass: storageClass,
-	}
+	sort.Slice(vmBackups, func(i, j int) bool {
+		return vmBackups[i].LastModified.After(vmBackups[j].LastModified)
+	})
+
+	return vmBackups[0].Key, nil
 }
 
-// createRestoreJob creates a Kubernetes Job and PVC for restoring from backup
+// createRestoreJob creates a Kubernetes Job for restoring from backup
 func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile string, config *config.Config) error {
 	defaultMode := int32(configMapDefaultFileMode)
 
 	// Merge common labels with resource-specific labels
-	pvcLabels := k8s.MergeLabels(config.Kubernetes.CommonLabels, map[string]string{})
-	jobLabels := k8s.MergeLabels(config.Kubernetes.CommonLabels, config.Stackgraph.Restore.Job.Labels)
-
-	// Create PVC first
-	pvcSpec := buildPVCSpec(jobName, config, pvcLabels)
-	pvc, err := k8sClient.CreatePVC(namespace, pvcSpec)
-	if err != nil {
-		return fmt.Errorf("failed to create PVC: %w", err)
-	}
+	jobLabels := k8s.MergeLabels(config.Kubernetes.CommonLabels, config.VictoriaMetrics.Restore.Job.Labels)
 
 	// Build job spec using configuration
 	spec := k8s.BackupJobSpec{
-		Name:                     jobName,
-		Labels:                   jobLabels,
-		ImagePullSecrets:         k8s.ConvertImagePullSecrets(config.Stackgraph.Restore.Job.ImagePullSecrets),
-		SecurityContext:          k8s.ConvertPodSecurityContext(&config.Stackgraph.Restore.Job.SecurityContext),
-		NodeSelector:             config.Stackgraph.Restore.Job.NodeSelector,
-		Tolerations:              k8s.ConvertTolerations(config.Stackgraph.Restore.Job.Tolerations),
-		Affinity:                 k8s.ConvertAffinity(config.Stackgraph.Restore.Job.Affinity),
-		ContainerSecurityContext: k8s.ConvertSecurityContext(config.Stackgraph.Restore.Job.ContainerSecurityContext),
-		Image:                    config.Stackgraph.Restore.Job.Image,
-		VolumeMounts:             buildRestoreVolumeMounts(),
-		Containers:               buildRestoreContainers(backupFile, config),
-		InitContainers:           buildRestoreInitContainers(config),
-		Volumes:                  buildRestoreVolumes(jobName, config, defaultMode),
+		Name:             jobName,
+		Labels:           jobLabels,
+		ImagePullSecrets: k8s.ConvertImagePullSecrets(config.VictoriaMetrics.Restore.Job.ImagePullSecrets),
+		SecurityContext:  k8s.ConvertPodSecurityContext(&config.VictoriaMetrics.Restore.Job.SecurityContext),
+		NodeSelector:     config.VictoriaMetrics.Restore.Job.NodeSelector,
+		Tolerations:      k8s.ConvertTolerations(config.VictoriaMetrics.Restore.Job.Tolerations),
+		Affinity:         k8s.ConvertAffinity(config.VictoriaMetrics.Restore.Job.Affinity),
+		Image:            config.VictoriaMetrics.Restore.Job.Image,
+		Containers:       buildRestoreContainers(backupFile, config),
+		InitContainers:   buildRestoreInitContainers(config),
+		Volumes:          buildRestoreVolumes(config, defaultMode),
 	}
 
 	// Create job
-	_, err = k8sClient.CreateBackupJob(namespace, spec)
+	_, err := k8sClient.CreateBackupJob(namespace, spec)
 	if err != nil {
-		// Cleanup PVC if job creation fails
-		_ = k8sClient.DeletePVC(namespace, pvc.Name)
 		return fmt.Errorf("failed to create job: %w", err)
 	}
 
@@ -264,25 +229,18 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 }
 
 // buildRestoreEnvVars constructs environment variables for the restore job
-func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvVar {
+func buildRestoreEnvVars(config *config.Config) []corev1.EnvVar {
 	return []corev1.EnvVar{
-		{Name: "BACKUP_FILE", Value: backupFile},
-		{Name: "FORCE_DELETE", Value: purgeStackgraphDataFlag},
-		{Name: "BACKUP_STACKGRAPH_BUCKET_NAME", Value: config.Stackgraph.Bucket},
-		{Name: "BACKUP_STACKGRAPH_S3_PREFIX", Value: config.Stackgraph.S3Prefix},
-		{Name: "BACKUP_STACKGRAPH_MULTIPART_ARCHIVE", Value: strconv.FormatBool(config.Stackgraph.MultipartArchive)},
 		{Name: "MINIO_ENDPOINT", Value: fmt.Sprintf("%s:%d", config.Minio.Service.Name, config.Minio.Service.Port)},
-		{Name: "ZOOKEEPER_QUORUM", Value: config.Stackgraph.Restore.ZookeeperQuorum},
 	}
 }
 
 // buildRestoreVolumeMounts constructs volume mounts for the restore job container
-func buildRestoreVolumeMounts() []corev1.VolumeMount {
+func buildRestoreVolumeMounts(vmPvc string) []corev1.VolumeMount {
 	return []corev1.VolumeMount{
-		{Name: "backup-log", MountPath: "/opt/docker/etc_log"},
 		{Name: "backup-restore-scripts", MountPath: "/backup-restore-scripts"},
 		{Name: "minio-keys", MountPath: "/aws-keys"},
-		{Name: "tmp-data", MountPath: "/tmp-data"},
+		{Name: vmPvc, MountPath: "/storage"},
 	}
 }
 
@@ -298,24 +256,13 @@ func buildRestoreInitContainers(config *config.Config) []corev1.Container {
 				"-c",
 				fmt.Sprintf("/entrypoint -c %s:%d -t 300", config.Minio.Service.Name, config.Minio.Service.Port),
 			},
-			SecurityContext: k8s.ConvertSecurityContext(config.Stackgraph.Restore.Job.ContainerSecurityContext),
 		},
 	}
 }
 
 // buildRestoreVolumes constructs volumes for the restore job pod
-func buildRestoreVolumes(jobName string, config *config.Config, defaultMode int32) []corev1.Volume {
-	return []corev1.Volume{
-		{
-			Name: "backup-log",
-			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: config.Stackgraph.Restore.LoggingConfigConfigMapName,
-					},
-				},
-			},
-		},
+func buildRestoreVolumes(config *config.Config, defaultMode int32) []corev1.Volume {
+	volumes := []corev1.Volume{
 		{
 			Name: "backup-restore-scripts",
 			VolumeSource: corev1.VolumeSource{
@@ -336,28 +283,72 @@ func buildRestoreVolumes(jobName string, config *config.Config, defaultMode int3
 			},
 		},
 		{
-			Name: "tmp-data",
+			Name: vmPvcName(config.VictoriaMetrics.Restore.PersistentVolumeClaimPrefix, 0),
 			VolumeSource: corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: jobName,
+					ClaimName: vmPvcName(config.VictoriaMetrics.Restore.PersistentVolumeClaimPrefix, 0),
 				},
 			},
 		},
 	}
+
+	if config.VictoriaMetrics.Restore.HaMode == vmHaMirrorMode {
+		v := corev1.Volume{
+			Name: vmPvcName(config.VictoriaMetrics.Restore.PersistentVolumeClaimPrefix, 1),
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: vmPvcName(config.VictoriaMetrics.Restore.PersistentVolumeClaimPrefix, 1),
+				},
+			},
+		}
+		volumes = append(volumes, []corev1.Volume{v}...)
+	}
+
+	return volumes
 }
 
 // buildRestoreContainers constructs containers for the restore job
 func buildRestoreContainers(backupFile string, config *config.Config) []corev1.Container {
-	return []corev1.Container{
+	containers := []corev1.Container{
 		{
 			Name:            "restore",
-			Image:           config.Stackgraph.Restore.Job.Image,
+			Image:           config.VictoriaMetrics.Restore.Job.Image,
 			ImagePullPolicy: corev1.PullIfNotPresent,
-			SecurityContext: k8s.ConvertSecurityContext(config.Stackgraph.Restore.Job.ContainerSecurityContext),
-			Command:         []string{"/backup-restore-scripts/restore-stackgraph-backup.sh"},
-			Env:             buildRestoreEnvVars(backupFile, config),
-			Resources:       k8s.ConvertResources(config.Stackgraph.Restore.Job.Resources),
-			VolumeMounts:    buildRestoreVolumeMounts(),
+			SecurityContext: k8s.ConvertSecurityContext(config.VictoriaMetrics.Restore.Job.ContainerSecurityContext),
+			Command: []string{
+				"sh",
+				"/backup-restore-scripts/restore-victoria-metrics-backup.sh",
+				backupFile,
+				"127.0.0.1:8420",
+			},
+			Env:          buildRestoreEnvVars(config),
+			Resources:    k8s.ConvertResources(config.VictoriaMetrics.Restore.Job.Resources),
+			VolumeMounts: buildRestoreVolumeMounts(vmPvcName(config.VictoriaMetrics.Restore.PersistentVolumeClaimPrefix, 0)),
 		},
 	}
+
+	if config.VictoriaMetrics.Restore.HaMode == vmHaMirrorMode {
+		containers = append(containers, []corev1.Container{
+			{
+				Name:            "restore-1",
+				Image:           config.VictoriaMetrics.Restore.Job.Image,
+				ImagePullPolicy: corev1.PullIfNotPresent,
+				SecurityContext: k8s.ConvertSecurityContext(config.VictoriaMetrics.Restore.Job.ContainerSecurityContext),
+				Command: []string{
+					"sh",
+					"/backup-restore-scripts/restore-victoria-metrics-backup.sh",
+					backupFile,
+					"127.0.0.1:8421",
+				},
+				Env:          buildRestoreEnvVars(config),
+				Resources:    k8s.ConvertResources(config.VictoriaMetrics.Restore.Job.Resources),
+				VolumeMounts: buildRestoreVolumeMounts(vmPvcName(config.VictoriaMetrics.Restore.PersistentVolumeClaimPrefix, 1)),
+			},
+		}...)
+	}
+	return containers
+}
+
+func vmPvcName(prefix string, instance int) string {
+	return fmt.Sprintf("%svictoria-metrics-%d-0", prefix, instance)
 }

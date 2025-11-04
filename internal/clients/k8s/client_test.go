@@ -19,7 +19,7 @@ func TestClient_ScaleDownDeployments(t *testing.T) {
 		namespace      string
 		labelSelector  string
 		deployments    []appsv1.Deployment
-		expectedScales []DeploymentScale
+		expectedScales []AppsScale
 		expectError    bool
 	}{
 		{
@@ -30,7 +30,7 @@ func TestClient_ScaleDownDeployments(t *testing.T) {
 				createDeployment("deploy1", "test-ns", map[string]string{"app": "test"}, 3),
 				createDeployment("deploy2", "test-ns", map[string]string{"app": "test"}, 5),
 			},
-			expectedScales: []DeploymentScale{
+			expectedScales: []AppsScale{
 				{Name: "deploy1", Replicas: 3},
 				{Name: "deploy2", Replicas: 5},
 			},
@@ -43,7 +43,7 @@ func TestClient_ScaleDownDeployments(t *testing.T) {
 			deployments: []appsv1.Deployment{
 				createDeployment("deploy1", "test-ns", map[string]string{"app": "test"}, 0),
 			},
-			expectedScales: []DeploymentScale{
+			expectedScales: []AppsScale{
 				{Name: "deploy1", Replicas: 0},
 			},
 			expectError: false,
@@ -53,7 +53,7 @@ func TestClient_ScaleDownDeployments(t *testing.T) {
 			namespace:      "test-ns",
 			labelSelector:  "app=nonexistent",
 			deployments:    []appsv1.Deployment{},
-			expectedScales: []DeploymentScale{},
+			expectedScales: []AppsScale{},
 			expectError:    false,
 		},
 		{
@@ -64,7 +64,7 @@ func TestClient_ScaleDownDeployments(t *testing.T) {
 				createDeployment("deploy1", "test-ns", map[string]string{"app": "test"}, 3),
 				createDeployment("deploy2", "test-ns", map[string]string{"app": "other"}, 2),
 			},
-			expectedScales: []DeploymentScale{
+			expectedScales: []AppsScale{
 				{Name: "deploy1", Replicas: 3},
 			},
 			expectError: false,
@@ -126,7 +126,7 @@ func TestClient_ScaleUpDeploymentsFromAnnotations(t *testing.T) {
 		namespace      string
 		labelSelector  string
 		deployments    []appsv1.Deployment
-		expectedScales []DeploymentScale
+		expectedScales []AppsScale
 		expectError    bool
 		errorContains  string
 	}{
@@ -146,7 +146,7 @@ func TestClient_ScaleUpDeploymentsFromAnnotations(t *testing.T) {
 					return d
 				}(),
 			},
-			expectedScales: []DeploymentScale{
+			expectedScales: []AppsScale{
 				{Name: "deploy1", Replicas: 3},
 				{Name: "deploy2", Replicas: 5},
 			},
@@ -159,7 +159,7 @@ func TestClient_ScaleUpDeploymentsFromAnnotations(t *testing.T) {
 			deployments: []appsv1.Deployment{
 				createDeployment("deploy1", "test-ns", map[string]string{"app": "test"}, 0),
 			},
-			expectedScales: []DeploymentScale{},
+			expectedScales: []AppsScale{},
 			expectError:    false,
 		},
 		{
@@ -174,7 +174,7 @@ func TestClient_ScaleUpDeploymentsFromAnnotations(t *testing.T) {
 				}(),
 				createDeployment("deploy2", "test-ns", map[string]string{"app": "test"}, 0),
 			},
-			expectedScales: []DeploymentScale{
+			expectedScales: []AppsScale{
 				{Name: "deploy1", Replicas: 3},
 			},
 			expectError: false,
@@ -190,7 +190,7 @@ func TestClient_ScaleUpDeploymentsFromAnnotations(t *testing.T) {
 					return d
 				}(),
 			},
-			expectedScales: []DeploymentScale{},
+			expectedScales: []AppsScale{},
 			expectError:    true,
 			errorContains:  "failed to parse replicas annotation",
 		},
@@ -205,7 +205,7 @@ func TestClient_ScaleUpDeploymentsFromAnnotations(t *testing.T) {
 					return d
 				}(),
 			},
-			expectedScales: []DeploymentScale{
+			expectedScales: []AppsScale{
 				{Name: "deploy1", Replicas: 0},
 			},
 			expectError: false,
@@ -215,7 +215,7 @@ func TestClient_ScaleUpDeploymentsFromAnnotations(t *testing.T) {
 			namespace:      "test-ns",
 			labelSelector:  "app=test",
 			deployments:    []appsv1.Deployment{},
-			expectedScales: []DeploymentScale{},
+			expectedScales: []AppsScale{},
 			expectError:    false,
 		},
 	}

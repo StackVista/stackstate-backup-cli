@@ -20,7 +20,8 @@ stackstate-backup-cli/
 │   ├── root.go              # Root command and global flags
 │   ├── version/             # Version information command
 │   ├── elasticsearch/       # Elasticsearch backup/restore commands
-│   └── stackgraph/          # Stackgraph backup/restore commands
+│   ├── stackgraph/          # Stackgraph backup/restore commands
+│   └── victoriametrics/     # VictoriaMetrics backup/restore commands
 │
 ├── internal/                # Internal packages (Layers 0-3)
 │   ├── foundation/          # Layer 0: Core utilities
@@ -35,7 +36,8 @@ stackstate-backup-cli/
 │   │
 │   ├── orchestration/       # Layer 2: Workflows
 │   │   ├── portforward/     # Port-forwarding orchestration
-│   │   └── scale/           # Deployment scaling workflows
+│   │   ├── scale/           # Deployment/StatefulSet scaling workflows
+│   │   └── restore/         # Restore job orchestration
 │   │
 │   ├── app/                 # Layer 3: Dependency Container
 │   │   └── app.go           # Application context and dependency injection
@@ -62,7 +64,8 @@ stackstate-backup-cli/
 
 **Key Packages**:
 - `cmd/elasticsearch/`: Elasticsearch snapshot/restore commands (configure, list-snapshots, list-indices, restore-snapshot)
-- `cmd/stackgraph/`: Stackgraph backup/restore commands (list, restore)
+- `cmd/stackgraph/`: Stackgraph backup/restore commands (list, restore, check-and-finalize)
+- `cmd/victoriametrics/`: VictoriaMetrics backup/restore commands (list, restore, check-and-finalize)
 - `cmd/version/`: Version information
 
 **Dependency Rules**:
@@ -117,7 +120,8 @@ appCtx.Formatter
 
 **Key Packages**:
 - `portforward/`: Manages Kubernetes port-forwarding lifecycle
-- `scale/`: Deployment scaling workflows with detailed logging
+- `scale/`: Deployment and StatefulSet scaling workflows with detailed logging
+- `restore/`: Restore job orchestration (confirmation, job lifecycle, finalization, resource management)
 
 **Dependency Rules**:
 - ✅ Can import: `internal/foundation/*`, `internal/clients/*`
@@ -167,7 +171,7 @@ appCtx.Formatter
 
 ```
 1. User invokes CLI command
-   └─> cmd/elasticsearch/restore-snapshot.go
+   └─> cmd/victoriametrics/restore.go (or stackgraph/restore.go)
        │
 2. Parse flags and validate input
    └─> Cobra command receives global flags
@@ -177,16 +181,17 @@ appCtx.Formatter
        ├─> internal/clients/k8s/ (K8s client)
        ├─> internal/foundation/config/ (Load from ConfigMap/Secret)
        ├─> internal/clients/s3/ (S3/Minio client)
-       ├─> internal/clients/elasticsearch/ (ES client)
        ├─> internal/foundation/logger/ (Logger)
        └─> internal/foundation/output/ (Formatter)
        │
 4. Execute business logic with injected dependencies
    └─> runRestore(appCtx)
-       ├─> internal/orchestration/scale/ (Scale down)
-       ├─> internal/orchestration/portforward/ (Port-forward)
-       ├─> internal/clients/elasticsearch/ (Restore snapshot)
-       └─> internal/orchestration/scale/ (Scale up)
+       ├─> internal/orchestration/restore/ (User confirmation)
+       ├─> internal/orchestration/scale/ (Scale down StatefulSets)
+       ├─> internal/orchestration/restore/ (Ensure resources: ConfigMaps, Secrets)
+       ├─> internal/clients/k8s/ (Create restore Job)
+       ├─> internal/orchestration/restore/ (Wait for completion & cleanup)
+       └─> internal/orchestration/scale/ (Scale up StatefulSets)
        │
 5. Format and display results
    └─> appCtx.Formatter.PrintTable() or PrintJSON()
@@ -262,15 +267,50 @@ defer close(pf.StopChan)  // Automatic cleanup
 
 ### 5. Scale Down/Up Pattern
 
-Deployments are scaled down before restore operations and scaled up afterward:
+Deployments and StatefulSets are scaled down before restore operations and scaled up afterward:
 
 ```go
 // Example usage
-scaledDeployments, _ := scale.ScaleDown(k8sClient, namespace, selector, log)
-defer scale.ScaleUp(k8sClient, namespace, scaledDeployments, log)
+scaledResources, _ := scale.ScaleDown(k8sClient, namespace, selector, log)
+defer scale.ScaleUpFromAnnotations(k8sClient, namespace, selector, log)
 ```
 
-### 6. Structured Logging
+**Note**: Scaling now supports both Deployments and StatefulSets through a unified interface.
+
+### 6. Restore Orchestration Pattern
+
+Common restore operations are centralized in the `restore` orchestration layer:
+
+```go
+// User confirmation
+if !restore.PromptForConfirmation() {
+return fmt.Errorf("operation cancelled")
+}
+
+// Wait for job completion and cleanup
+restore.PrintWaitingMessage(log, "service-name", jobName, namespace)
+err := restore.WaitAndCleanup(k8sClient, namespace, jobName, log, cleanupPVC)
+
+// Check and finalize background jobs
+err := restore.CheckAndFinalize(restore.CheckAndFinalizeParams{
+K8sClient:     k8sClient,
+Namespace:     namespace,
+JobName:       jobName,
+ServiceName:   "service-name",
+ScaleSelector: config.ScaleDownLabelSelector,
+CleanupPVC:    true,
+WaitForJob:    false,
+Log:           log,
+})
+```
+
+**Benefits**:
+
+- Eliminates duplicate code between Stackgraph and VictoriaMetrics restore commands
+- Consistent user experience across services
+- Centralized job lifecycle management and cleanup
+
+### 7. Structured Logging
 
 All operations use structured logging with consistent levels:
 

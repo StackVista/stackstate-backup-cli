@@ -16,10 +16,11 @@ import (
 
 // Config represents the merged configuration from ConfigMap and Secret
 type Config struct {
-	Kubernetes    KubernetesConfig    `yaml:"kubernetes"`
-	Elasticsearch ElasticsearchConfig `yaml:"elasticsearch" validate:"required"`
-	Minio         MinioConfig         `yaml:"minio" validate:"required"`
-	Stackgraph    StackgraphConfig    `yaml:"stackgraph" validate:"required"`
+	Kubernetes      KubernetesConfig      `yaml:"kubernetes"`
+	Elasticsearch   ElasticsearchConfig   `yaml:"elasticsearch" validate:"required"`
+	Minio           MinioConfig           `yaml:"minio" validate:"required"`
+	Stackgraph      StackgraphConfig      `yaml:"stackgraph" validate:"required"`
+	VictoriaMetrics VictoriaMetricsConfig `yaml:"victoriaMetrics" validate:"required"`
 }
 
 // KubernetesConfig holds Kubernetes-wide configuration
@@ -87,6 +88,24 @@ type StackgraphConfig struct {
 	S3Prefix         string                  `yaml:"s3Prefix"`
 	MultipartArchive bool                    `yaml:"multipartArchive" validate:"boolean"`
 	Restore          StackgraphRestoreConfig `yaml:"restore" validate:"required"`
+}
+
+type VictoriaMetricsConfig struct {
+	S3Locations []S3Location                 `yaml:"S3Locations" validate:"required"`
+	Restore     VictoriaMetricsRestoreConfig `yaml:"restore" validate:"required"`
+}
+
+// VictoriaMetricsRestoreConfig holds VictoriaMetrics restore-specific configuration
+type VictoriaMetricsRestoreConfig struct {
+	HaMode                      string    `yaml:"haMode" validate:"required"`
+	PersistentVolumeClaimPrefix string    `yaml:"persistentVolumeClaimPrefix" validate:"required"`
+	ScaleDownLabelSelector      string    `yaml:"scaleDownLabelSelector" validate:"required"`
+	Job                         JobConfig `yaml:"job" validate:"required"`
+}
+
+type S3Location struct {
+	Bucket string `yaml:"bucket" validate:"required"`
+	Prefix string `yaml:"prefix"`
 }
 
 // StackgraphRestoreConfig holds Stackgraph restore-specific configuration

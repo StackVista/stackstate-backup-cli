@@ -11,8 +11,8 @@ import (
 )
 
 const (
-	// defaultJobTTLSeconds is the time-to-live for completed/failed jobs (10 minutes)
-	defaultJobTTLSeconds = 600
+	// defaultJobTTLSeconds is the time-to-live for completed/failed jobs (1 day)
+	defaultJobTTLSeconds = 86400
 )
 
 // BackupJobSpec contains all parameters needed to create a backup/restore job
@@ -31,10 +31,10 @@ type BackupJobSpec struct {
 
 	// Container spec
 	Image          string
-	Command        []string
 	Env            []corev1.EnvVar
 	Resources      corev1.ResourceRequirements
 	VolumeMounts   []corev1.VolumeMount
+	Containers     []corev1.Container
 	InitContainers []corev1.Container
 
 	// Volumes
@@ -110,18 +110,8 @@ func (c *Client) CreateBackupJob(namespace string, spec BackupJobSpec) (*batchv1
 				Spec: corev1.PodSpec{
 					RestartPolicy:  corev1.RestartPolicyNever,
 					InitContainers: spec.InitContainers,
-					Containers: []corev1.Container{
-						{
-							Name:            "restore",
-							Image:           spec.Image,
-							ImagePullPolicy: corev1.PullIfNotPresent,
-							Command:         spec.Command,
-							Env:             spec.Env,
-							Resources:       spec.Resources,
-							VolumeMounts:    spec.VolumeMounts,
-						},
-					},
-					Volumes: spec.Volumes,
+					Containers:     spec.Containers,
+					Volumes:        spec.Volumes,
 				},
 			},
 		},
@@ -130,11 +120,6 @@ func (c *Client) CreateBackupJob(namespace string, spec BackupJobSpec) (*batchv1
 	// Apply security context if provided
 	if spec.SecurityContext != nil {
 		job.Spec.Template.Spec.SecurityContext = spec.SecurityContext
-	}
-
-	// Apply container security context if provided
-	if spec.ContainerSecurityContext != nil {
-		job.Spec.Template.Spec.Containers[0].SecurityContext = spec.ContainerSecurityContext
 	}
 
 	// Apply node selector if provided

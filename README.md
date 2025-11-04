@@ -9,8 +9,9 @@ This CLI tool replaces the legacy Bash-based backup/restore scripts with a singl
 **Current Support:**
 - Elasticsearch snapshots and restores
 - Stackgraph backups and restores
+- VictoriaMetrics backups and restores
 
-**Planned:** VictoriaMetrics, ClickHouse, Configuration backups
+**Planned:** ClickHouse, Configuration backups
 
 ## Installation
 
@@ -112,10 +113,75 @@ sts-backup stackgraph restore --namespace <namespace> [--archive <name> | --late
 **Flags:**
 - `--archive` - Specific archive name to restore (e.g., sts-backup-20210216-0300.graph)
 - `--latest` - Restore from the most recent backup
-- `--force` - Force delete existing data during restore
 - `--background` - Run restore job in background without waiting for completion
+- `--yes, -y` - Skip confirmation prompt
 
 **Note**: Either `--archive` or `--latest` must be specified (mutually exclusive).
+
+#### check-and-finalize
+
+Check the status of a background Stackgraph restore job and clean up resources.
+
+```bash
+sts-backup stackgraph check-and-finalize --namespace <namespace> --job <job-name> [--wait]
+```
+
+**Flags:**
+
+- `--job, -j` - Stackgraph restore job name (required)
+- `--wait, -w` - Wait for job to complete before cleanup
+
+**Use Case**: This command is useful when a restore job was started with `--background` flag or was interrupted (
+Ctrl+C).
+
+### victoriametrics
+
+Manage VictoriaMetrics backups and restores.
+
+#### list
+
+List available VictoriaMetrics backups from S3/Minio.
+
+```bash
+sts-backup victoriametrics list --namespace <namespace>
+```
+
+**Note**: In HA mode, backups from both instances (victoria-metrics-0 and victoria-metrics-1) are listed. The restore
+command accepts either backup to restore both instances.
+
+#### restore
+
+Restore VictoriaMetrics from a backup archive. Automatically scales down affected StatefulSets before restore and scales
+them back up afterward.
+
+```bash
+sts-backup victoriametrics restore --namespace <namespace> [--archive <name> | --latest] [flags]
+```
+
+**Flags:**
+
+- `--archive` - Specific backup name to restore (e.g., sts-victoria-metrics-backup/victoria-metrics-0-20251030143500)
+- `--latest` - Restore from the most recent backup
+- `--background` - Run restore job in background without waiting for completion
+- `--yes, -y` - Skip confirmation prompt
+
+**Note**: Either `--archive` or `--latest` must be specified (mutually exclusive).
+
+#### check-and-finalize
+
+Check the status of a background VictoriaMetrics restore job and clean up resources.
+
+```bash
+sts-backup victoriametrics check-and-finalize --namespace <namespace> --job <job-name> [--wait]
+```
+
+**Flags:**
+
+- `--job, -j` - VictoriaMetrics restore job name (required)
+- `--wait, -w` - Wait for job to complete before cleanup
+
+**Use Case**: This command is useful when a restore job was started with `--background` flag or was interrupted (
+Ctrl+C).
 
 ## Configuration
 
@@ -194,9 +260,14 @@ See [internal/foundation/config/testdata/validConfigMapConfig.yaml](internal/fou
 │   │   ├── list-indices.go       # List indices
 │   │   ├── list-snapshots.go     # List snapshots
 │   │   └── restore-snapshot.go   # Restore snapshot
-│   └── stackgraph/               # Stackgraph subcommands
+│   ├── stackgraph/               # Stackgraph subcommands
+│   │   ├── list.go               # List backups
+│   │   ├── restore.go            # Restore backup
+│   │   └── check-and-finalize.go # Check and finalize restore job
+│   └── victoriametrics/          # VictoriaMetrics subcommands
 │       ├── list.go               # List backups
-│       └── restore.go            # Restore backup
+│       ├── restore.go            # Restore backup
+│       └── check-and-finalize.go # Check and finalize restore job
 ├── internal/                     # Internal packages (Layers 0-3)
 │   ├── foundation/               # Layer 0: Core utilities
 │   │   ├── config/               # Configuration management
@@ -208,7 +279,12 @@ See [internal/foundation/config/testdata/validConfigMapConfig.yaml](internal/fou
 │   │   └── s3/                   # S3/Minio client
 │   ├── orchestration/            # Layer 2: Workflows
 │   │   ├── portforward/          # Port-forwarding lifecycle
-│   │   └── scale/                # Deployment scaling
+│   │   ├── scale/                # Deployment/StatefulSet scaling
+│   │   └── restore/              # Restore job orchestration
+│   │       ├── confirmation.go   # User confirmation prompts
+│   │       ├── finalize.go       # Job status check and cleanup
+│   │       ├── job.go            # Job lifecycle management
+│   │       └── resources.go      # Restore resource management
 │   ├── app/                      # Layer 3: Dependency container
 │   │   └── app.go                # Application context and DI
 │   └── scripts/                  # Embedded bash scripts
