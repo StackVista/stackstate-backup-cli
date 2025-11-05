@@ -213,7 +213,6 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 		NodeSelector:     config.VictoriaMetrics.Restore.Job.NodeSelector,
 		Tolerations:      k8s.ConvertTolerations(config.VictoriaMetrics.Restore.Job.Tolerations),
 		Affinity:         k8s.ConvertAffinity(config.VictoriaMetrics.Restore.Job.Affinity),
-		Image:            config.VictoriaMetrics.Restore.Job.Image,
 		Containers:       buildRestoreContainers(backupFile, config),
 		InitContainers:   buildRestoreInitContainers(config),
 		Volumes:          buildRestoreVolumes(config, defaultMode),

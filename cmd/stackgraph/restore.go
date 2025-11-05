@@ -237,19 +237,16 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 
 	// Build job spec using configuration
 	spec := k8s.BackupJobSpec{
-		Name:                     jobName,
-		Labels:                   jobLabels,
-		ImagePullSecrets:         k8s.ConvertImagePullSecrets(config.Stackgraph.Restore.Job.ImagePullSecrets),
-		SecurityContext:          k8s.ConvertPodSecurityContext(&config.Stackgraph.Restore.Job.SecurityContext),
-		NodeSelector:             config.Stackgraph.Restore.Job.NodeSelector,
-		Tolerations:              k8s.ConvertTolerations(config.Stackgraph.Restore.Job.Tolerations),
-		Affinity:                 k8s.ConvertAffinity(config.Stackgraph.Restore.Job.Affinity),
-		ContainerSecurityContext: k8s.ConvertSecurityContext(config.Stackgraph.Restore.Job.ContainerSecurityContext),
-		Image:                    config.Stackgraph.Restore.Job.Image,
-		VolumeMounts:             buildRestoreVolumeMounts(),
-		Containers:               buildRestoreContainers(backupFile, config),
-		InitContainers:           buildRestoreInitContainers(config),
-		Volumes:                  buildRestoreVolumes(jobName, config, defaultMode),
+		Name:             jobName,
+		Labels:           jobLabels,
+		ImagePullSecrets: k8s.ConvertImagePullSecrets(config.Stackgraph.Restore.Job.ImagePullSecrets),
+		SecurityContext:  k8s.ConvertPodSecurityContext(&config.Stackgraph.Restore.Job.SecurityContext),
+		NodeSelector:     config.Stackgraph.Restore.Job.NodeSelector,
+		Tolerations:      k8s.ConvertTolerations(config.Stackgraph.Restore.Job.Tolerations),
+		Affinity:         k8s.ConvertAffinity(config.Stackgraph.Restore.Job.Affinity),
+		Containers:       buildRestoreContainers(backupFile, config),
+		InitContainers:   buildRestoreInitContainers(config),
+		Volumes:          buildRestoreVolumes(jobName, config, defaultMode),
 	}
 
 	// Create job

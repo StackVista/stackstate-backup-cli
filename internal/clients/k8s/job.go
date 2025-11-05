@@ -30,10 +30,6 @@ type BackupJobSpec struct {
 	ContainerSecurityContext *corev1.SecurityContext
 
 	// Container spec
-	Image          string
-	Env            []corev1.EnvVar
-	Resources      corev1.ResourceRequirements
-	VolumeMounts   []corev1.VolumeMount
 	Containers     []corev1.Container
 	InitContainers []corev1.Container
 
