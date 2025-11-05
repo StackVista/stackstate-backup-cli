@@ -25,7 +25,7 @@ const (
 func listCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List available Stackgraph backups from S3/Minio",
+		Short: "List available VictoriaMetrics backups from S3/Minio",
 		Run: func(_ *cobra.Command, _ []string) {
 			appCtx, err := app.NewContext(globalFlags)
 			if err != nil {

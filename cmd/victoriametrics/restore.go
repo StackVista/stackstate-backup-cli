@@ -52,7 +52,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&archiveName, "archive", "", "Specific archive name to restore (e.g., sts-backup-20210216-0300.graph)")
+	cmd.Flags().StringVar(&archiveName, "archive", "", "Specific archive to restore (e.g., sts-victoria-metrics-backup/victoria-metrics-0-20251030152500)")
 	cmd.Flags().BoolVar(&useLatest, "latest", false, "Restore from the most recent backup")
 	cmd.Flags().BoolVar(&background, "background", false, "Run restore job in background without waiting for completion")
 	cmd.Flags().BoolVarP(&skipConfirmation, "yes", "y", false, "Skip confirmation prompt")
@@ -248,7 +248,7 @@ func buildRestoreInitContainers(config *config.Config) []corev1.Container {
 	return []corev1.Container{
 		{
 			Name:            "wait",
-			Image:           config.Stackgraph.Restore.Job.WaitImage,
+			Image:           config.VictoriaMetrics.Restore.Job.WaitImage,
 			ImagePullPolicy: corev1.PullIfNotPresent,
 			Command: []string{
 				"sh",
