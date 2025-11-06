@@ -13,8 +13,12 @@ type Interface interface {
 	PortForwardService(namespace, serviceName string, localPort, remotePort int) (stopChan chan struct{}, readyChan chan struct{}, err error)
 
 	// Deployment scaling operations
-	ScaleDownDeployments(namespace, labelSelector string) ([]DeploymentScale, error)
-	ScaleUpDeploymentsFromAnnotations(namespace, labelSelector string) ([]DeploymentScale, error)
+	ScaleDownDeployments(namespace, labelSelector string) ([]AppsScale, error)
+	ScaleUpDeploymentsFromAnnotations(namespace, labelSelector string) ([]AppsScale, error)
+
+	// StatefulSet scaling operations
+	ScaleDownStatefulSets(namespace, labelSelector string) ([]AppsScale, error)
+	ScaleUpStatefulSetsFromAnnotations(namespace, labelSelector string) ([]AppsScale, error)
 }
 
 // Ensure *Client implements Interface

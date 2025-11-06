@@ -49,6 +49,26 @@ stackgraph:
           memory: "2Gi"
     pvc:
       size: "10Gi"
+victoriaMetrics:
+  S3Locations:
+    - bucket: vm-backup
+      prefix: victoria-metrics-0
+    - bucket: vm-backup
+      prefix: victoria-metrics-1
+  restore:
+    haMode: "mirror"
+    persistentVolumeClaimPrefix: "database-victoria-metrics-"
+    scaleDownLabelSelector: "app=victoria-metrics"
+    job:
+      image: vm-backup:latest
+      waitImage: wait:latest
+      resources:
+        limits:
+          cpu: "1"
+          memory: "2Gi"
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
 `
 
 // mockESClient is a simple mock for testing commands

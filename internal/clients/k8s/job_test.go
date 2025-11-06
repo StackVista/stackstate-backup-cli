@@ -119,9 +119,11 @@ func TestClient_CreateBackupJob(t *testing.T) {
 			spec: BackupJobSpec{
 				Name:   "backup-job",
 				Labels: map[string]string{"app": "backup"},
-				Image:  "backup:latest",
-				Command: []string{
-					"/bin/sh", "-c", "echo 'backup complete'",
+				Containers: []corev1.Container{
+					{
+						Name:  "backup",
+						Image: "backup:latest",
+					},
 				},
 			},
 			expectError: false,
@@ -129,7 +131,7 @@ func TestClient_CreateBackupJob(t *testing.T) {
 				assert.Equal(t, "backup-job", job.Name)
 				assert.Equal(t, map[string]string{"app": "backup"}, job.Labels)
 				assert.Equal(t, int32(1), *job.Spec.BackoffLimit)
-				assert.Equal(t, int32(600), *job.Spec.TTLSecondsAfterFinished)
+				assert.Equal(t, int32(defaultJobTTLSeconds), *job.Spec.TTLSecondsAfterFinished)
 				assert.Equal(t, corev1.RestartPolicyNever, job.Spec.Template.Spec.RestartPolicy)
 			},
 		},
@@ -137,12 +139,16 @@ func TestClient_CreateBackupJob(t *testing.T) {
 			name:      "create job with environment variables",
 			namespace: "test-ns",
 			spec: BackupJobSpec{
-				Name:    "restore-job",
-				Image:   "restore:v1",
-				Command: []string{"/restore.sh"},
-				Env: []corev1.EnvVar{
-					{Name: "BACKUP_NAME", Value: "snapshot-123"},
-					{Name: "LOG_LEVEL", Value: "debug"},
+				Name: "restore-job",
+				Containers: []corev1.Container{
+					{
+						Name:  "restore",
+						Image: "restore:v1",
+						Env: []corev1.EnvVar{
+							{Name: "BACKUP_NAME", Value: "snapshot-123"},
+							{Name: "LOG_LEVEL", Value: "debug"},
+						},
+					},
 				},
 			},
 			expectError: false,
@@ -156,17 +162,21 @@ func TestClient_CreateBackupJob(t *testing.T) {
 			name:      "create job with resource requirements",
 			namespace: "test-ns",
 			spec: BackupJobSpec{
-				Name:    "resource-job",
-				Image:   "backup:latest",
-				Command: []string{"/backup.sh"},
-				Resources: corev1.ResourceRequirements{
-					Requests: corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("1"),
-						corev1.ResourceMemory: resource.MustParse("2Gi"),
-					},
-					Limits: corev1.ResourceList{
-						corev1.ResourceCPU:    resource.MustParse("2"),
-						corev1.ResourceMemory: resource.MustParse("4Gi"),
+				Name: "resource-job",
+				Containers: []corev1.Container{
+					{
+						Name:  "backup",
+						Image: "backup:latest",
+						Resources: corev1.ResourceRequirements{
+							Requests: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("1"),
+								corev1.ResourceMemory: resource.MustParse("2Gi"),
+							},
+							Limits: corev1.ResourceList{
+								corev1.ResourceCPU:    resource.MustParse("2"),
+								corev1.ResourceMemory: resource.MustParse("4Gi"),
+							},
+						},
 					},
 				},
 			},
@@ -181,9 +191,13 @@ func TestClient_CreateBackupJob(t *testing.T) {
 			name:      "create job with init containers",
 			namespace: "test-ns",
 			spec: BackupJobSpec{
-				Name:    "init-job",
-				Image:   "main:latest",
-				Command: []string{"/main.sh"},
+				Name: "init-job",
+				Containers: []corev1.Container{
+					{
+						Name:  "main",
+						Image: "main:latest",
+					},
+				},
 				InitContainers: []corev1.Container{
 					{
 						Name:    "wait-for-deps",
@@ -202,12 +216,16 @@ func TestClient_CreateBackupJob(t *testing.T) {
 			name:      "create job with volumes and mounts",
 			namespace: "test-ns",
 			spec: BackupJobSpec{
-				Name:    "volume-job",
-				Image:   "backup:latest",
-				Command: []string{"/backup.sh"},
-				VolumeMounts: []corev1.VolumeMount{
-					{Name: "data", MountPath: "/data"},
-					{Name: "config", MountPath: "/config"},
+				Name: "volume-job",
+				Containers: []corev1.Container{
+					{
+						Name:  "backup",
+						Image: "backup:latest",
+						VolumeMounts: []corev1.VolumeMount{
+							{Name: "data", MountPath: "/data"},
+							{Name: "config", MountPath: "/config"},
+						},
+					},
 				},
 				Volumes: []corev1.Volume{
 					{
@@ -240,17 +258,21 @@ func TestClient_CreateBackupJob(t *testing.T) {
 			name:      "create job with security context",
 			namespace: "test-ns",
 			spec: BackupJobSpec{
-				Name:    "secure-job",
-				Image:   "backup:latest",
-				Command: []string{"/backup.sh"},
+				Name: "secure-job",
+				Containers: []corev1.Container{
+					{
+						Name:  "backup",
+						Image: "backup:latest",
+						SecurityContext: &corev1.SecurityContext{
+							AllowPrivilegeEscalation: ptr(false),
+							ReadOnlyRootFilesystem:   ptr(true),
+						},
+					},
+				},
 				SecurityContext: &corev1.PodSecurityContext{
 					RunAsUser:  ptr(int64(1000)),
 					RunAsGroup: ptr(int64(2000)),
 					FSGroup:    ptr(int64(3000)),
-				},
-				ContainerSecurityContext: &corev1.SecurityContext{
-					AllowPrivilegeEscalation: ptr(false),
-					ReadOnlyRootFilesystem:   ptr(true),
 				},
 			},
 			expectError: false,
@@ -265,9 +287,13 @@ func TestClient_CreateBackupJob(t *testing.T) {
 			name:      "create job with node selector and tolerations",
 			namespace: "test-ns",
 			spec: BackupJobSpec{
-				Name:    "scheduled-job",
-				Image:   "backup:latest",
-				Command: []string{"/backup.sh"},
+				Name: "scheduled-job",
+				Containers: []corev1.Container{
+					{
+						Name:  "backup",
+						Image: "backup:latest",
+					},
+				},
 				NodeSelector: map[string]string{
 					"disktype": "ssd",
 					"zone":     "us-west-1a",
@@ -292,9 +318,13 @@ func TestClient_CreateBackupJob(t *testing.T) {
 			name:      "create job with image pull secrets",
 			namespace: "test-ns",
 			spec: BackupJobSpec{
-				Name:    "private-image-job",
-				Image:   "private-registry.com/backup:latest",
-				Command: []string{"/backup.sh"},
+				Name: "private-image-job",
+				Containers: []corev1.Container{
+					{
+						Name:  "backup",
+						Image: "private-registry.com/backup:latest",
+					},
+				},
 				ImagePullSecrets: []corev1.LocalObjectReference{
 					{Name: "registry-secret"},
 				},
@@ -428,5 +458,5 @@ func TestClient_GetJob_NotFound(t *testing.T) {
 
 // TestClient_DefaultJobTTL tests the default TTL constant
 func TestClient_DefaultJobTTL(t *testing.T) {
-	assert.Equal(t, int32(600), int32(defaultJobTTLSeconds))
+	assert.Equal(t, int32(86400), int32(defaultJobTTLSeconds))
 }

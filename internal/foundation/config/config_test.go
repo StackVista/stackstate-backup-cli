@@ -394,6 +394,37 @@ func TestConfig_StructValidation(t *testing.T) {
 						},
 					},
 				},
+				VictoriaMetrics: VictoriaMetricsConfig{
+					S3Locations: []S3Location{
+						{
+							Bucket: "vm-backup",
+							Prefix: "victoria-metrics-0",
+						},
+						{
+							Bucket: "vm-backup",
+							Prefix: "victoria-metrics-1",
+						},
+					},
+					Restore: VictoriaMetricsRestoreConfig{
+						HaMode:                      "mirror",
+						PersistentVolumeClaimPrefix: "database-victoria-metrics-",
+						ScaleDownLabelSelector:      "app=victoria-metrics",
+						Job: JobConfig{
+							Image:     "vm-backup:latest",
+							WaitImage: "wait:latest",
+							Resources: ResourceRequirements{
+								Limits: ResourceList{
+									CPU:    "1",
+									Memory: "2Gi",
+								},
+								Requests: ResourceList{
+									CPU:    "500m",
+									Memory: "1Gi",
+								},
+							},
+						},
+					},
+				},
 			},
 			expectError: false,
 		},

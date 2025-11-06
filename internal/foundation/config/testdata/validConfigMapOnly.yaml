@@ -102,3 +102,27 @@ stackgraph:
       size: "10Gi"
       accessModes:
         - ReadWriteOnce
+
+# VictoriaMetrics backup configuration
+victoriaMetrics:
+  S3Locations:
+    - bucket: sts-victoria-metrics-backup
+      prefix: victoria-metrics-0
+    - bucket: sts-victoria-metrics-backup
+      prefix: victoria-metrics-1
+  restore:
+    haMode: "mirror"
+    persistentVolumeClaimPrefix: "database-victoria-metrics-"
+    scaleDownLabelSelector: "observability.suse.com/scalable-during-vm-restore=true"
+    job:
+      labels:
+        app: victoria-metrics-restore
+      image: quay.io/stackstate/victoria-metrics-backup:latest
+      waitImage: quay.io/stackstate/wait:latest
+      resources:
+        limits:
+          cpu: "1"
+          memory: "2Gi"
+        requests:
+          cpu: "500m"
+          memory: "1Gi"

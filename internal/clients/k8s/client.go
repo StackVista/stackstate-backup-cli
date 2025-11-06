@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -151,68 +152,173 @@ const (
 	PreRestoreReplicasAnnotation = "stackstate.com/pre-restore-replicas"
 )
 
-// DeploymentScale holds the name and original replica count of a deployment
-type DeploymentScale struct {
+// AppsScale holds the name and original replica count of a scalable resource
+type AppsScale struct {
 	Name     string
 	Replicas int32
 }
 
-// ScaleDownDeployments scales down deployments matching a label selector to 0 replicas
-// Returns a map of deployment names to their original replica counts
-func (c *Client) ScaleDownDeployments(namespace, labelSelector string) ([]DeploymentScale, error) {
-	ctx := context.Background()
+// ScalableResource abstracts operations on resources that can be scaled
+type ScalableResource interface {
+	GetName() string
+	GetReplicas() int32
+	SetReplicas(replicas int32)
+	GetAnnotations() map[string]string
+	SetAnnotations(annotations map[string]string)
+	Update(ctx context.Context, client kubernetes.Interface, namespace string) error
+}
 
-	// List deployments matching the label selector
-	deployments, err := c.clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: labelSelector,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list deployments: %w", err)
+// deploymentAdapter adapts appsv1.Deployment to ScalableResource interface
+type deploymentAdapter struct {
+	deployment *appsv1.Deployment
+}
+
+func (d *deploymentAdapter) GetName() string {
+	return d.deployment.Name
+}
+
+func (d *deploymentAdapter) GetReplicas() int32 {
+	if d.deployment.Spec.Replicas == nil {
+		return 0
+	}
+	return *d.deployment.Spec.Replicas
+}
+
+func (d *deploymentAdapter) SetReplicas(replicas int32) {
+	d.deployment.Spec.Replicas = &replicas
+}
+
+func (d *deploymentAdapter) GetAnnotations() map[string]string {
+	return d.deployment.Annotations
+}
+
+func (d *deploymentAdapter) SetAnnotations(annotations map[string]string) {
+	d.deployment.Annotations = annotations
+}
+
+func (d *deploymentAdapter) Update(ctx context.Context, client kubernetes.Interface, namespace string) error {
+	_, err := client.AppsV1().Deployments(namespace).Update(ctx, d.deployment, metav1.UpdateOptions{})
+	return err
+}
+
+// statefulSetAdapter adapts appsv1.StatefulSet to ScalableResource interface
+type statefulSetAdapter struct {
+	statefulSet *appsv1.StatefulSet
+}
+
+func (s *statefulSetAdapter) GetName() string {
+	return s.statefulSet.Name
+}
+
+func (s *statefulSetAdapter) GetReplicas() int32 {
+	if s.statefulSet.Spec.Replicas == nil {
+		return 0
+	}
+	return *s.statefulSet.Spec.Replicas
+}
+
+func (s *statefulSetAdapter) SetReplicas(replicas int32) {
+	s.statefulSet.Spec.Replicas = &replicas
+}
+
+func (s *statefulSetAdapter) GetAnnotations() map[string]string {
+	return s.statefulSet.Annotations
+}
+
+func (s *statefulSetAdapter) SetAnnotations(annotations map[string]string) {
+	s.statefulSet.Annotations = annotations
+}
+
+func (s *statefulSetAdapter) Update(ctx context.Context, client kubernetes.Interface, namespace string) error {
+	_, err := client.AppsV1().StatefulSets(namespace).Update(ctx, s.statefulSet, metav1.UpdateOptions{})
+	return err
+}
+
+// scaleDownResources is a generic function that scales down resources to 0 replicas
+func scaleDownResources(ctx context.Context, client kubernetes.Interface, namespace string, resources []ScalableResource) ([]AppsScale, error) {
+	if len(resources) == 0 {
+		return []AppsScale{}, nil
 	}
 
-	if len(deployments.Items) == 0 {
-		return []DeploymentScale{}, nil
-	}
+	var scaledResources []AppsScale
 
-	var scaledDeployments []DeploymentScale
-
-	// Scale down each deployment
-	for _, deployment := range deployments.Items {
-		originalReplicas := int32(0)
-		if deployment.Spec.Replicas != nil {
-			originalReplicas = *deployment.Spec.Replicas
-		}
+	for _, resource := range resources {
+		originalReplicas := resource.GetReplicas()
 
 		// Store original replica count
-		scaledDeployments = append(scaledDeployments, DeploymentScale{
-			Name:     deployment.Name,
+		scaledResources = append(scaledResources, AppsScale{
+			Name:     resource.GetName(),
 			Replicas: originalReplicas,
 		})
 
 		// Scale to 0 if not already at 0
 		if originalReplicas > 0 {
 			// Add annotation with original replica count
-			if deployment.Annotations == nil {
-				deployment.Annotations = make(map[string]string)
+			annotations := resource.GetAnnotations()
+			if annotations == nil {
+				annotations = make(map[string]string)
 			}
-			deployment.Annotations[PreRestoreReplicasAnnotation] = fmt.Sprintf("%d", originalReplicas)
+			annotations[PreRestoreReplicasAnnotation] = fmt.Sprintf("%d", originalReplicas)
+			resource.SetAnnotations(annotations)
+			resource.SetReplicas(0)
 
-			replicas := int32(0)
-			deployment.Spec.Replicas = &replicas
-
-			_, err := c.clientset.AppsV1().Deployments(namespace).Update(ctx, &deployment, metav1.UpdateOptions{})
-			if err != nil {
-				return scaledDeployments, fmt.Errorf("failed to scale down deployment %s: %w", deployment.Name, err)
+			if err := resource.Update(ctx, client, namespace); err != nil {
+				return scaledResources, fmt.Errorf("failed to scale down resource %s: %w", resource.GetName(), err)
 			}
 		}
 	}
 
-	return scaledDeployments, nil
+	return scaledResources, nil
 }
 
-// ScaleUpDeploymentsFromAnnotations scales up deployments that have the pre-restore-replicas annotation
-// Returns a list of deployments that were scaled up with their replica counts
-func (c *Client) ScaleUpDeploymentsFromAnnotations(namespace, labelSelector string) ([]DeploymentScale, error) {
+// scaleUpResourcesFromAnnotations is a generic function that scales up resources based on annotations
+func scaleUpResourcesFromAnnotations(ctx context.Context, client kubernetes.Interface, namespace string, resources []ScalableResource) ([]AppsScale, error) {
+	if len(resources) == 0 {
+		return []AppsScale{}, nil
+	}
+
+	var scaledResources []AppsScale
+
+	for _, resource := range resources {
+		annotations := resource.GetAnnotations()
+		if annotations == nil {
+			continue
+		}
+
+		replicasStr, exists := annotations[PreRestoreReplicasAnnotation]
+		if !exists {
+			continue
+		}
+
+		var originalReplicas int32
+		if _, err := fmt.Sscanf(replicasStr, "%d", &originalReplicas); err != nil {
+			return scaledResources, fmt.Errorf("failed to parse replicas annotation for resource %s: %w", resource.GetName(), err)
+		}
+
+		// Scale up to original replica count
+		resource.SetReplicas(originalReplicas)
+
+		// Remove the annotation
+		delete(annotations, PreRestoreReplicasAnnotation)
+		resource.SetAnnotations(annotations)
+
+		if err := resource.Update(ctx, client, namespace); err != nil {
+			return scaledResources, fmt.Errorf("failed to scale up resource %s: %w", resource.GetName(), err)
+		}
+
+		// Record scaled resource
+		scaledResources = append(scaledResources, AppsScale{
+			Name:     resource.GetName(),
+			Replicas: originalReplicas,
+		})
+	}
+
+	return scaledResources, nil
+}
+
+// ScaleDownDeployments scales down deployments matching a label selector to 0 replicas
+// Returns a list of deployment names and their original replica counts
+func (c *Client) ScaleDownDeployments(namespace, labelSelector string) ([]AppsScale, error) {
 	ctx := context.Background()
 
 	// List deployments matching the label selector
@@ -223,47 +329,79 @@ func (c *Client) ScaleUpDeploymentsFromAnnotations(namespace, labelSelector stri
 		return nil, fmt.Errorf("failed to list deployments: %w", err)
 	}
 
-	if len(deployments.Items) == 0 {
-		return []DeploymentScale{}, nil
+	// Convert to ScalableResource slice
+	resources := make([]ScalableResource, len(deployments.Items))
+	for i := range deployments.Items {
+		resources[i] = &deploymentAdapter{deployment: &deployments.Items[i]}
 	}
 
-	var scaledDeployments []DeploymentScale
+	return scaleDownResources(ctx, c.clientset, namespace, resources)
+}
 
-	// Scale up each deployment that has the annotation
-	for _, deployment := range deployments.Items {
-		if deployment.Annotations == nil {
-			continue
-		}
+// ScaleUpDeploymentsFromAnnotations scales up deployments that have the pre-restore-replicas annotation
+// Returns a list of deployments that were scaled up with their replica counts
+func (c *Client) ScaleUpDeploymentsFromAnnotations(namespace, labelSelector string) ([]AppsScale, error) {
+	ctx := context.Background()
 
-		replicasStr, exists := deployment.Annotations[PreRestoreReplicasAnnotation]
-		if !exists {
-			continue
-		}
-
-		var originalReplicas int32
-		if _, err := fmt.Sscanf(replicasStr, "%d", &originalReplicas); err != nil {
-			return scaledDeployments, fmt.Errorf("failed to parse replicas annotation for deployment %s: %w", deployment.Name, err)
-		}
-
-		// Scale up to original replica count
-		deployment.Spec.Replicas = &originalReplicas
-
-		// Remove the annotation
-		delete(deployment.Annotations, PreRestoreReplicasAnnotation)
-
-		_, err := c.clientset.AppsV1().Deployments(namespace).Update(ctx, &deployment, metav1.UpdateOptions{})
-		if err != nil {
-			return scaledDeployments, fmt.Errorf("failed to scale up deployment %s: %w", deployment.Name, err)
-		}
-
-		// Record scaled deployment
-		scaledDeployments = append(scaledDeployments, DeploymentScale{
-			Name:     deployment.Name,
-			Replicas: originalReplicas,
-		})
+	// List deployments matching the label selector
+	deployments, err := c.clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list deployments: %w", err)
 	}
 
-	return scaledDeployments, nil
+	// Convert to ScalableResource slice
+	resources := make([]ScalableResource, len(deployments.Items))
+	for i := range deployments.Items {
+		resources[i] = &deploymentAdapter{deployment: &deployments.Items[i]}
+	}
+
+	return scaleUpResourcesFromAnnotations(ctx, c.clientset, namespace, resources)
+}
+
+// ScaleDownStatefulSets scales down statefulsets matching a label selector to 0 replicas
+// Returns a list of statefulset names and their original replica counts
+func (c *Client) ScaleDownStatefulSets(namespace, labelSelector string) ([]AppsScale, error) {
+	ctx := context.Background()
+
+	// List statefulsets matching the label selector
+	statefulSets, err := c.clientset.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list statefulsets: %w", err)
+	}
+
+	// Convert to ScalableResource slice
+	resources := make([]ScalableResource, len(statefulSets.Items))
+	for i := range statefulSets.Items {
+		resources[i] = &statefulSetAdapter{statefulSet: &statefulSets.Items[i]}
+	}
+
+	return scaleDownResources(ctx, c.clientset, namespace, resources)
+}
+
+// ScaleUpStatefulSetsFromAnnotations scales up statefulsets that have the pre-restore-replicas annotation
+// Returns a list of statefulsets that were scaled up with their replica counts
+func (c *Client) ScaleUpStatefulSetsFromAnnotations(namespace, labelSelector string) ([]AppsScale, error) {
+	ctx := context.Background()
+
+	// List statefulsets matching the label selector
+	statefulSets, err := c.clientset.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list statefulsets: %w", err)
+	}
+
+	// Convert to ScalableResource slice
+	resources := make([]ScalableResource, len(statefulSets.Items))
+	for i := range statefulSets.Items {
+		resources[i] = &statefulSetAdapter{statefulSet: &statefulSets.Items[i]}
+	}
+
+	return scaleUpResourcesFromAnnotations(ctx, c.clientset, namespace, resources)
 }
 
 // NewTestClient creates a k8s Client for testing with a fake clientset.

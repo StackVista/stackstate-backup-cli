@@ -21,7 +21,7 @@ const (
 // It waits for all pods to terminate before returning.
 //
 //nolint:revive // Package name "scale" with function "ScaleDown" is intentionally verbose for clarity
-func ScaleDown(k8sClient *k8s.Client, namespace, labelSelector string, log *logger.Logger) ([]k8s.DeploymentScale, error) {
+func ScaleDown(k8sClient *k8s.Client, namespace, labelSelector string, log *logger.Logger) ([]k8s.AppsScale, error) {
 	log.Infof("Scaling down deployments (selector: %s)...", labelSelector)
 
 	scaledDeployments, err := k8sClient.ScaleDownDeployments(namespace, labelSelector)
@@ -29,9 +29,18 @@ func ScaleDown(k8sClient *k8s.Client, namespace, labelSelector string, log *logg
 		return nil, fmt.Errorf("failed to scale down deployments: %w", err)
 	}
 
-	if len(scaledDeployments) == 0 {
-		log.Infof("No deployments found to scale down")
-		return scaledDeployments, nil
+	scaledApps := scaledDeployments
+
+	scaledStatefulSets, err := k8sClient.ScaleDownStatefulSets(namespace, labelSelector)
+	if err != nil {
+		return nil, fmt.Errorf("failed to scale down statefulsets: %w", err)
+	}
+
+	scaledApps = append(scaledApps, scaledStatefulSets...)
+
+	if len(scaledApps) == 0 {
+		log.Infof("No deployments or statefulsets found to scale down")
+		return scaledApps, nil
 	}
 
 	log.Successf("Scaled down %d deployment(s):", len(scaledDeployments))
@@ -39,12 +48,17 @@ func ScaleDown(k8sClient *k8s.Client, namespace, labelSelector string, log *logg
 		log.Infof("  - %s (replicas: %d -> 0)", dep.Name, dep.Replicas)
 	}
 
-	// Wait for pods to terminate
-	if err := waitForPodsToTerminate(k8sClient, namespace, labelSelector, log); err != nil {
-		return scaledDeployments, fmt.Errorf("failed waiting for pods to terminate: %w", err)
+	log.Successf("Scaled down %d statefulsets(s):", len(scaledStatefulSets))
+	for _, dep := range scaledStatefulSets {
+		log.Infof("  - %s (replicas: %d -> 0)", dep.Name, dep.Replicas)
 	}
 
-	return scaledDeployments, nil
+	// Wait for pods to terminate
+	if err := waitForPodsToTerminate(k8sClient, namespace, labelSelector, log); err != nil {
+		return scaledApps, fmt.Errorf("failed waiting for pods to terminate: %w", err)
+	}
+
+	return scaledApps, nil
 }
 
 // waitForPodsToTerminate polls for pod termination until all pods matching the label selector are gone
@@ -101,13 +115,23 @@ func ScaleUpFromAnnotations(k8sClient *k8s.Client, namespace, labelSelector stri
 		return fmt.Errorf("failed to scale up deployments from annotations: %w", err)
 	}
 
-	if len(scaledDeployments) == 0 {
-		log.Infof("No deployments found with pre-restore annotations to scale up")
+	scaledStatefulSets, err := k8sClient.ScaleUpStatefulSetsFromAnnotations(namespace, labelSelector)
+	if err != nil {
+		return fmt.Errorf("failed to scale up statefulsets from annotations: %w", err)
+	}
+
+	if len(scaledDeployments) == 0 && len(scaledStatefulSets) == 0 {
+		log.Infof("No statefulsets found with pre-restore annotations to scale up")
 		return nil
 	}
 
 	log.Successf("Scaled up %d deployment(s) successfully:", len(scaledDeployments))
 	for _, dep := range scaledDeployments {
+		log.Infof("  - %s (replicas: 0 -> %d)", dep.Name, dep.Replicas)
+	}
+
+	log.Successf("Scaled up %d statefulset(s) successfully:", len(scaledStatefulSets))
+	for _, dep := range scaledStatefulSets {
 		log.Infof("  - %s (replicas: 0 -> %d)", dep.Name, dep.Replicas)
 	}
 

@@ -140,3 +140,19 @@ func getBaseName(key string) (string, bool) {
 
 	return key, false
 }
+
+func FilterByCommonPrefix(objects []s3types.CommonPrefix) []Object {
+	var filteredObjects []Object
+
+	for _, obj := range objects {
+		key := aws.ToString(obj.Prefix)
+		key = strings.TrimSuffix(key, "/")
+		filteredObjects = append(filteredObjects, Object{
+			Key:          key,
+			LastModified: aws.ToTime(nil),
+			Size:         0,
+		})
+	}
+
+	return filteredObjects
+}
