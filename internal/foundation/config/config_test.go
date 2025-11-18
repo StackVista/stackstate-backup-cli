@@ -425,6 +425,32 @@ func TestConfig_StructValidation(t *testing.T) {
 						},
 					},
 				},
+				Settings: SettingsConfig{
+					Bucket:   "settings-backup",
+					S3Prefix: "",
+					Restore: SettingsRestoreConfig{
+						ScaleDownLabelSelector:     "app=settings",
+						LoggingConfigConfigMapName: "logging-config",
+						BaseURL:                    "http://server:7070",
+						ReceiverBaseURL:            "http://receiver:7077",
+						PlatformVersion:            "5.2.0",
+						ZookeeperQuorum:            "zookeeper:2181",
+						Job: JobConfig{
+							Image:     "settings-backup:latest",
+							WaitImage: "wait:latest",
+							Resources: ResourceRequirements{
+								Limits: ResourceList{
+									CPU:    "1",
+									Memory: "2Gi",
+								},
+								Requests: ResourceList{
+									CPU:    "500m",
+									Memory: "1Gi",
+								},
+							},
+						},
+					},
+				},
 			},
 			expectError: false,
 		},

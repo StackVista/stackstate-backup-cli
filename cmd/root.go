@@ -5,6 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/stackvista/stackstate-backup-cli/cmd/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/cmd/settings"
 	"github.com/stackvista/stackstate-backup-cli/cmd/stackgraph"
 	"github.com/stackvista/stackstate-backup-cli/cmd/version"
 	"github.com/stackvista/stackstate-backup-cli/cmd/victoriametrics"
@@ -39,6 +40,10 @@ func init() {
 	stackgraphCmd := stackgraph.Cmd(flags)
 	addBackupConfigFlags(stackgraphCmd)
 	rootCmd.AddCommand(stackgraphCmd)
+
+	settingsCmd := settings.Cmd(flags)
+	addBackupConfigFlags(settingsCmd)
+	rootCmd.AddCommand(settingsCmd)
 
 	victoriaMetricsCmd := victoriametrics.Cmd(flags)
 	addBackupConfigFlags(victoriaMetricsCmd)

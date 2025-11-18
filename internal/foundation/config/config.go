@@ -20,6 +20,7 @@ type Config struct {
 	Elasticsearch   ElasticsearchConfig   `yaml:"elasticsearch" validate:"required"`
 	Minio           MinioConfig           `yaml:"minio" validate:"required"`
 	Stackgraph      StackgraphConfig      `yaml:"stackgraph" validate:"required"`
+	Settings        SettingsConfig        `yaml:"settings" validate:"required"`
 	VictoriaMetrics VictoriaMetricsConfig `yaml:"victoriaMetrics" validate:"required"`
 }
 
@@ -115,6 +116,22 @@ type StackgraphRestoreConfig struct {
 	ZookeeperQuorum            string    `yaml:"zookeeperQuorum" validate:"required"`
 	Job                        JobConfig `yaml:"job" validate:"required"`
 	PVC                        PVCConfig `yaml:"pvc" validate:"required"`
+}
+
+type SettingsConfig struct {
+	Bucket   string                `yaml:"bucket" validate:"required"`
+	S3Prefix string                `yaml:"s3Prefix"`
+	Restore  SettingsRestoreConfig `yaml:"restore" validate:"required"`
+}
+
+type SettingsRestoreConfig struct {
+	ScaleDownLabelSelector     string    `yaml:"scaleDownLabelSelector" validate:"required"`
+	LoggingConfigConfigMapName string    `yaml:"loggingConfigConfigMap" validate:"required"`
+	BaseURL                    string    `yaml:"baseUrl" validate:"required"`
+	ReceiverBaseURL            string    `yaml:"receiverBaseUrl" validate:"required"`
+	PlatformVersion            string    `yaml:"platformVersion" validate:"required"`
+	ZookeeperQuorum            string    `yaml:"zookeeperQuorum" validate:"required"`
+	Job                        JobConfig `yaml:"job" validate:"required"`
 }
 
 // PVCConfig holds PersistentVolumeClaim configuration

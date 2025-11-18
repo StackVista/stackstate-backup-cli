@@ -1,4 +1,4 @@
-package stackgraph
+package settings
 
 import (
 	"context"
@@ -16,10 +16,14 @@ import (
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/portforward"
 )
 
+const (
+	isMultiPartArchive = false
+)
+
 func listCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List available Stackgraph backups from S3/Minio",
+		Short: "List available Settings backups from S3/Minio",
 		Run: func(_ *cobra.Command, _ []string) {
 			appCtx, err := app.NewContext(globalFlags)
 			if err != nil {
@@ -47,11 +51,10 @@ func runList(appCtx *app.Context) error {
 	defer close(pf.StopChan)
 
 	// List objects in bucket
-	bucket := appCtx.Config.Stackgraph.Bucket
-	prefix := appCtx.Config.Stackgraph.S3Prefix
-	multipartArchive := appCtx.Config.Stackgraph.MultipartArchive
+	bucket := appCtx.Config.Settings.Bucket
+	prefix := appCtx.Config.Settings.S3Prefix
 
-	appCtx.Logger.Infof("Listing Stackgraph backups in bucket '%s'...", bucket)
+	appCtx.Logger.Infof("Listing Settings backups in bucket '%s'...", bucket)
 
 	input := &s3.ListObjectsV2Input{
 		Bucket: aws.String(bucket),
@@ -64,7 +67,7 @@ func runList(appCtx *app.Context) error {
 	}
 
 	// Filter objects based on whether the archive is split or not
-	filteredObjects := s3client.FilterBackupObjects(result.Contents, multipartArchive)
+	filteredObjects := s3client.FilterBackupObjects(result.Contents, isMultiPartArchive)
 
 	// Sort by LastModified time (most recent first)
 	sort.Slice(filteredObjects, func(i, j int) bool {

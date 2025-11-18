@@ -69,6 +69,26 @@ victoriaMetrics:
         requests:
           cpu: "500m"
           memory: "1Gi"
+settings:
+  bucket: sts-settings-backup
+  s3Prefix: ""
+  restore:
+    scaleDownLabelSelector: "app=settings"
+    loggingConfigConfigMap: logging-config
+    baseUrl: "http://server:7070"
+    receiverBaseUrl: "http://receiver:7077"
+    platformVersion: "5.2.0"
+    zookeeperQuorum: "zookeeper:2181"
+    job:
+      image: settings-backup:latest
+      waitImage: wait:latest
+      resources:
+        limits:
+          cpu: "1"
+          memory: "2Gi"
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
 `
 
 // mockESClient is a simple mock for testing commands
