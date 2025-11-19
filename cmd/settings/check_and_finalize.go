@@ -58,7 +58,7 @@ func runCheckAndFinalize(appCtx *app.Context) error {
 		JobName:       checkJobName,
 		ServiceName:   "settings",
 		ScaleSelector: appCtx.Config.Settings.Restore.ScaleDownLabelSelector,
-		CleanupPVC:    true,
+		CleanupPVC:    false,
 		WaitForJob:    waitForJob,
 		Log:           appCtx.Logger,
 	})

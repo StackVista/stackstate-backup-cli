@@ -10,8 +10,9 @@ This CLI tool replaces the legacy Bash-based backup/restore scripts with a singl
 - Elasticsearch snapshots and restores
 - Stackgraph backups and restores
 - VictoriaMetrics backups and restores
+- Settings backups and restores
 
-**Planned:** ClickHouse, Configuration backups
+**Planned:** ClickHouse backups
 
 ## Installation
 
@@ -183,6 +184,52 @@ sts-backup victoriametrics check-and-finalize --namespace <namespace> --job <job
 **Use Case**: This command is useful when a restore job was started with `--background` flag or was interrupted (
 Ctrl+C).
 
+### settings
+
+Manage Settings backups and restores.
+
+#### list
+
+List available Settings backups from S3/Minio.
+
+```bash
+sts-backup settings list --namespace <namespace>
+```
+
+#### restore
+
+Restore Settings from a backup archive. Automatically scales down affected deployments before restore and scales them
+back up afterward.
+
+```bash
+sts-backup settings restore --namespace <namespace> [--archive <name> | --latest] [flags]
+```
+
+**Flags:**
+
+- `--archive` - Specific archive name to restore (e.g., sts-backup-20251117-1404.sty)
+- `--latest` - Restore from the most recent backup
+- `--background` - Run restore job in background without waiting for completion
+- `--yes, -y` - Skip confirmation prompt
+
+**Note**: Either `--archive` or `--latest` must be specified (mutually exclusive).
+
+#### check-and-finalize
+
+Check the status of a background Settings restore job and clean up resources.
+
+```bash
+sts-backup settings check-and-finalize --namespace <namespace> --job <job-name> [--wait]
+```
+
+**Flags:**
+
+- `--job, -j` - Settings restore job name (required)
+- `--wait, -w` - Wait for job to complete before cleanup
+
+**Use Case**: This command is useful when a restore job was started with `--background` flag or was interrupted (
+Ctrl+C).
+
 ## Configuration
 
 The CLI uses configuration from Kubernetes ConfigMaps and Secrets with the following precedence:
@@ -264,7 +311,11 @@ See [internal/foundation/config/testdata/validConfigMapConfig.yaml](internal/fou
 │   │   ├── list.go               # List backups
 │   │   ├── restore.go            # Restore backup
 │   │   └── check-and-finalize.go # Check and finalize restore job
-│   └── victoriametrics/          # VictoriaMetrics subcommands
+│   ├── victoriametrics/          # VictoriaMetrics subcommands
+│   │   ├── list.go               # List backups
+│   │   ├── restore.go            # Restore backup
+│   │   └── check-and-finalize.go # Check and finalize restore job
+│   └── settings/                 # Settings subcommands
 │       ├── list.go               # List backups
 │       ├── restore.go            # Restore backup
 │       └── check-and-finalize.go # Check and finalize restore job
