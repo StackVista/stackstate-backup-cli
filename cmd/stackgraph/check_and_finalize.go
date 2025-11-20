@@ -8,6 +8,7 @@ import (
 	"github.com/stackvista/stackstate-backup-cli/internal/app"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/restore"
+	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/scale"
 )
 
 // Check and finalize command flags
@@ -57,6 +58,8 @@ func runCheckAndFinalize(appCtx *app.Context) error {
 		Namespace:     appCtx.Namespace,
 		JobName:       checkJobName,
 		ServiceName:   "stackgraph",
+		ScaleUpFn:     scale.ScaleUpFromAnnotations,
+		ScaleDownFn:   scale.ScaleDown,
 		ScaleSelector: appCtx.Config.Stackgraph.Restore.ScaleDownLabelSelector,
 		CleanupPVC:    true,
 		WaitForJob:    waitForJob,
