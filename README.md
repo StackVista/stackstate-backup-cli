@@ -8,11 +8,10 @@ This CLI tool replaces the legacy Bash-based backup/restore scripts with a singl
 
 **Current Support:**
 - Elasticsearch snapshots and restores
+- ClickHouse backups and restores
 - Stackgraph backups and restores
 - VictoriaMetrics backups and restores
 - Settings backups and restores
-
-**Planned:** ClickHouse backups
 
 ## Installation
 
@@ -70,26 +69,43 @@ List Elasticsearch indices.
 sts-backup elasticsearch list-indices --namespace <namespace>
 ```
 
-#### list-snapshots
+#### list
 
 List available Elasticsearch snapshots.
 
 ```bash
-sts-backup elasticsearch list-snapshots --namespace <namespace>
+sts-backup elasticsearch list --namespace <namespace>
 ```
 
-#### restore-snapshot
+#### restore
 
 Restore Elasticsearch snapshot. Automatically scales down affected deployments before restore and scales them back up afterward.
 
 ```bash
-sts-backup elasticsearch restore-snapshot --namespace <namespace> --snapshot-name <name> [flags]
+sts-backup elasticsearch restore --namespace <namespace> [--snapshot <name> | --latest] [flags]
 ```
 
 **Flags:**
-- `--snapshot-name, -s` - Name of snapshot to restore (required)
-- `--drop-all-indices, -r` - Delete all existing STS indices before restore
-- `--yes` - Skip confirmation prompt
+- `--snapshot, -s` - Name of snapshot to restore (mutually exclusive with --latest)
+- `--latest` - Restore from the most recent snapshot (mutually exclusive with --snapshot)
+- `--background` - Run restore in background without waiting for completion
+- `--yes, -y` - Skip confirmation prompt
+
+**Note**: Either `--snapshot` or `--latest` must be specified (mutually exclusive).
+
+#### check-and-finalize
+
+Check the status of a restore operation and finalize if complete.
+
+```bash
+sts-backup elasticsearch check-and-finalize --namespace <namespace> --operation-id <snapshot> [--wait]
+```
+
+**Flags:**
+- `--operation-id` - Operation ID of the restore operation (snapshot name) (required)
+- `--wait` - Wait for restore to complete if still running
+
+**Use Case**: This command is useful when a restore was started with `--background` flag or was interrupted (Ctrl+C).
 
 ### stackgraph
 
@@ -230,6 +246,44 @@ sts-backup settings check-and-finalize --namespace <namespace> --job <job-name> 
 **Use Case**: This command is useful when a restore job was started with `--background` flag or was interrupted (
 Ctrl+C).
 
+### clickhouse
+
+Manage ClickHouse backups and restores.
+
+#### list
+
+List available ClickHouse backups from the backup API.
+
+```bash
+sts-backup clickhouse list --namespace <namespace>
+```
+
+#### restore
+
+Restore ClickHouse from a backup. Automatically scales down affected StatefulSets before restore and scales them back up afterward.
+
+```bash
+sts-backup clickhouse restore --namespace <namespace> --backup-name <name> [flags]
+```
+
+**Flags:**
+- `--backup-name` - Name of the backup to restore (required)
+- `--wait` - Wait for restore to complete (default: true)
+
+#### check-and-finalize
+
+Check the status of a ClickHouse restore operation and finalize if complete.
+
+```bash
+sts-backup clickhouse check-and-finalize --namespace <namespace> --operation-id <id> [--wait]
+```
+
+**Flags:**
+- `--operation-id` - Operation ID of the restore operation (required)
+- `--wait` - Wait for restore to complete if still running
+
+**Use Case**: This command is useful when checking the status of a restore operation or finalizing after completion.
+
 ## Configuration
 
 The CLI uses configuration from Kubernetes ConfigMaps and Secrets with the following precedence:
@@ -305,8 +359,13 @@ See [internal/foundation/config/testdata/validConfigMapConfig.yaml](internal/fou
 │   ├── elasticsearch/            # Elasticsearch subcommands
 │   │   ├── configure.go          # Configure snapshot repository
 │   │   ├── list-indices.go       # List indices
-│   │   ├── list-snapshots.go     # List snapshots
-│   │   └── restore-snapshot.go   # Restore snapshot
+│   │   ├── list.go               # List snapshots
+│   │   ├── restore.go            # Restore snapshot
+│   │   └── check-and-finalize.go # Check and finalize restore
+│   ├── clickhouse/               # ClickHouse subcommands
+│   │   ├── list.go               # List backups
+│   │   ├── restore.go            # Restore backup
+│   │   └── check-and-finalize.go # Check and finalize restore
 │   ├── stackgraph/               # Stackgraph subcommands
 │   │   ├── list.go               # List backups
 │   │   ├── restore.go            # Restore backup
@@ -327,6 +386,7 @@ See [internal/foundation/config/testdata/validConfigMapConfig.yaml](internal/fou
 │   ├── clients/                  # Layer 1: Service clients
 │   │   ├── k8s/                  # Kubernetes client
 │   │   ├── elasticsearch/        # Elasticsearch client
+│   │   ├── clickhouse/           # ClickHouse client
 │   │   └── s3/                   # S3/Minio client
 │   ├── orchestration/            # Layer 2: Workflows
 │   │   ├── portforward/          # Port-forwarding lifecycle

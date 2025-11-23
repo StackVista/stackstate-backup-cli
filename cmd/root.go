@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/stackvista/stackstate-backup-cli/cmd/clickhouse"
 	"github.com/stackvista/stackstate-backup-cli/cmd/elasticsearch"
 	"github.com/stackvista/stackstate-backup-cli/cmd/settings"
 	"github.com/stackvista/stackstate-backup-cli/cmd/stackgraph"
@@ -48,6 +49,10 @@ func init() {
 	victoriaMetricsCmd := victoriametrics.Cmd(flags)
 	addBackupConfigFlags(victoriaMetricsCmd)
 	rootCmd.AddCommand(victoriaMetricsCmd)
+
+	clickhouseCmd := clickhouse.NewClickhouseCmd(flags)
+	addBackupConfigFlags(clickhouseCmd)
+	rootCmd.AddCommand(clickhouseCmd)
 
 	// Add commands that don't need backup config flags
 	rootCmd.AddCommand(version.Cmd())

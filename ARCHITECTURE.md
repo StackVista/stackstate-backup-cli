@@ -20,8 +20,10 @@ stackstate-backup-cli/
 │   ├── root.go              # Root command and global flags
 │   ├── version/             # Version information command
 │   ├── elasticsearch/       # Elasticsearch backup/restore commands
+│   ├── clickhouse/          # ClickHouse backup/restore commands
 │   ├── stackgraph/          # Stackgraph backup/restore commands
-│   └── victoriametrics/     # VictoriaMetrics backup/restore commands
+│   ├── victoriametrics/     # VictoriaMetrics backup/restore commands
+│   └── settings/            # Settings backup/restore commands
 │
 ├── internal/                # Internal packages (Layers 0-3)
 │   ├── foundation/          # Layer 0: Core utilities
@@ -63,9 +65,11 @@ stackstate-backup-cli/
 - Formats output for end users
 
 **Key Packages**:
-- `cmd/elasticsearch/`: Elasticsearch snapshot/restore commands (configure, list-snapshots, list-indices, restore-snapshot)
+- `cmd/elasticsearch/`: Elasticsearch snapshot/restore commands (configure, list, list-indices, restore, check-and-finalize)
+- `cmd/clickhouse/`: ClickHouse backup/restore commands (list, restore, check-and-finalize)
 - `cmd/stackgraph/`: Stackgraph backup/restore commands (list, restore, check-and-finalize)
 - `cmd/victoriametrics/`: VictoriaMetrics backup/restore commands (list, restore, check-and-finalize)
+- `cmd/settings/`: Settings backup/restore commands (list, restore, check-and-finalize)
 - `cmd/version/`: Version information
 
 **Dependency Rules**:
@@ -140,6 +144,7 @@ appCtx.Formatter
 **Key Packages**:
 - `k8s/`: Kubernetes API operations (Jobs, Pods, Deployments, ConfigMaps, Secrets, Logs)
 - `elasticsearch/`: Elasticsearch HTTP API (snapshots, indices, datastreams)
+- `clickhouse/`: ClickHouse Backup API and SQL operations (backups, restore operations, status tracking)
 - `s3/`: S3/Minio operations (client creation, object filtering)
 
 **Dependency Rules**:
@@ -407,7 +412,7 @@ endpoint := "http://localhost:9200"
 ### ❌ Don't: Create Clients Directly in Commands
 
 ```go
-// BAD: cmd/elasticsearch/list-snapshots.go
+// BAD: cmd/elasticsearch/list.go
 func runListSnapshots(globalFlags *config.CLIGlobalFlags) error {
     k8sClient, _ := k8s.NewClient(globalFlags.Kubeconfig, globalFlags.Debug)
     esClient, _ := elasticsearch.NewClient("http://localhost:9200")

@@ -89,6 +89,20 @@ settings:
         requests:
           cpu: "500m"
           memory: "1Gi"
+clickhouse:
+  service:
+    name: "clickhouse"
+    port: 9000
+    localPortForwardPort: 9000
+  backupService:
+    name: "clickhouse"
+    port: 7171
+    localPortForwardPort: 7171
+  database: "default"
+  username: "default"
+  password: "password"
+  restore:
+    scaleDownLabelSelector: "app=clickhouse"
 `
 
 // mockESClient is a simple mock for testing commands
@@ -140,9 +154,9 @@ func (m *mockESClient) RolloverDatastream(_ string) error {
 	return fmt.Errorf("not implemented")
 }
 
-// TestListSnapshotsCmd_Integration demonstrates an integration-style test
+// TestListCmd_Integration demonstrates an integration-style test
 // This test uses real fake.Clientset to test the full command flow
-func TestListSnapshotsCmd_Integration(t *testing.T) {
+func TestListCmd_Integration(t *testing.T) {
 	// Skip this test in short mode as it requires more setup
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
@@ -202,18 +216,18 @@ elasticsearch:
 	assert.Equal(t, "elasticsearch-master", cfg.Elasticsearch.Service.Name)
 }
 
-// TestListSnapshotsCmd_Unit demonstrates a unit-style test
+// TestListCmd_Unit demonstrates a unit-style test
 // This test focuses on the command structure and basic behavior
-func TestListSnapshotsCmd_Unit(t *testing.T) {
+func TestListCmd_Unit(t *testing.T) {
 	flags := config.NewCLIGlobalFlags()
 	flags.Namespace = testNamespace
 	flags.ConfigMapName = testConfigMapName
 	flags.OutputFormat = "table"
 
-	cmd := listSnapshotsCmd(flags)
+	cmd := listCmd(flags)
 
 	// Test command metadata
-	assert.Equal(t, "list-snapshots", cmd.Use)
+	assert.Equal(t, "list", cmd.Use)
 	assert.Equal(t, "List available Elasticsearch snapshots", cmd.Short)
 	assert.NotNil(t, cmd.Run)
 }

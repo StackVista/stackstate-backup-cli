@@ -12,6 +12,17 @@ import (
 	"github.com/elastic/go-elasticsearch/v8"
 )
 
+// Restore status constants
+const (
+	StatusSuccess    = "SUCCESS"
+	StatusFailed     = "FAILED"
+	StatusInProgress = "IN_PROGRESS"
+	StatusNotFound   = "NOT_FOUND"
+	StatusPartial    = "PARTIAL"
+	StatusStarted    = "STARTED"
+	StatusInit       = "INIT"
+)
+
 // Client represents an Elasticsearch client
 type Client struct {
 	es *elasticsearch.Client
@@ -319,8 +330,10 @@ func (c *Client) ConfigureSLMPolicy(name, schedule, snapshotName, repository, in
 	return nil
 }
 
-// RestoreSnapshot restores a snapshot from a repository
-func (c *Client) RestoreSnapshot(repository, snapshotName, indicesPattern string, waitForCompletion bool) error {
+// RestoreSnapshot restores a snapshot from a repository asynchronously
+// The restore is triggered and returns immediately (waitForCompletion=false)
+// Use GetRestoreStatus to check the progress of the restore operation
+func (c *Client) RestoreSnapshot(repository, snapshotName, indicesPattern string) error {
 	body := map[string]interface{}{
 		"indices": indicesPattern,
 	}
@@ -335,7 +348,7 @@ func (c *Client) RestoreSnapshot(repository, snapshotName, indicesPattern string
 		snapshotName,
 		c.es.Snapshot.Restore.WithContext(context.Background()),
 		c.es.Snapshot.Restore.WithBody(strings.NewReader(string(bodyJSON))),
-		c.es.Snapshot.Restore.WithWaitForCompletion(waitForCompletion),
+		c.es.Snapshot.Restore.WithWaitForCompletion(false),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to restore snapshot: %w", err)
@@ -347,4 +360,81 @@ func (c *Client) RestoreSnapshot(repository, snapshotName, indicesPattern string
 	}
 
 	return nil
+}
+
+// RestoreStatusResponse represents the response from Elasticsearch restore status API
+type RestoreStatusResponse struct {
+	Snapshots []struct {
+		Snapshot string `json:"snapshot"`
+		State    string `json:"state"`
+		Shards   struct {
+			Total      int `json:"total"`
+			Failed     int `json:"failed"`
+			Successful int `json:"successful"`
+		} `json:"shards_stats"`
+	} `json:"snapshots"`
+}
+
+// GetRestoreStatus checks the status of a restore operation
+// Returns: (statusMessage, isComplete, error)
+// Status can be: "IN_PROGRESS", "SUCCESS", "FAILED", "NOT_FOUND"
+func (c *Client) GetRestoreStatus(repository, snapshotName string) (string, bool, error) {
+	res, err := c.es.Snapshot.Status(
+		c.es.Snapshot.Status.WithContext(context.Background()),
+		c.es.Snapshot.Status.WithRepository(repository),
+		c.es.Snapshot.Status.WithSnapshot(snapshotName),
+	)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to get restore status: %w", err)
+	}
+	defer res.Body.Close()
+
+	// 404 means no restore is in progress
+	if res.StatusCode == http.StatusNotFound {
+		return StatusNotFound, true, nil
+	}
+
+	if res.IsError() {
+		return "", false, fmt.Errorf("elasticsearch returned error: %s", res.String())
+	}
+
+	var statusResp RestoreStatusResponse
+	if err := json.NewDecoder(res.Body).Decode(&statusResp); err != nil {
+		return "", false, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	// If no snapshots are being restored, it's complete
+	if len(statusResp.Snapshots) == 0 {
+		return StatusSuccess, true, nil
+	}
+
+	// Check the state of the snapshot
+	snapshotStatus := statusResp.Snapshots[0]
+	state := snapshotStatus.State
+
+	switch state {
+	case StatusSuccess, StatusPartial:
+		return StatusSuccess, true, nil
+	case StatusFailed:
+		return StatusFailed, true, nil
+	case StatusInProgress, StatusStarted, StatusInit:
+		return StatusInProgress, false, nil
+	default:
+		return state, false, nil
+	}
+}
+
+// IsRestoreInProgress checks if a restore operation is currently in progress
+func (c *Client) IsRestoreInProgress(repository, snapshotName string) (bool, error) {
+	status, isComplete, err := c.GetRestoreStatus(repository, snapshotName)
+	if err != nil {
+		return false, err
+	}
+
+	// If status is NOT_FOUND or complete, no restore in progress
+	if status == "NOT_FOUND" || isComplete {
+		return false, nil
+	}
+
+	return true, nil
 }

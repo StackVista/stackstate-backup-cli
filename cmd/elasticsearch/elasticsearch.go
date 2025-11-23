@@ -11,9 +11,10 @@ func Cmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		Short: "Elasticsearch backup and restore operations",
 	}
 
-	cmd.AddCommand(listSnapshotsCmd(globalFlags))
+	cmd.AddCommand(listCmd(globalFlags))
 	cmd.AddCommand(listIndicesCmd(globalFlags))
 	cmd.AddCommand(restoreCmd(globalFlags))
+	cmd.AddCommand(checkAndFinalizeCmd(globalFlags))
 	cmd.AddCommand(configureCmd(globalFlags))
 
 	return cmd

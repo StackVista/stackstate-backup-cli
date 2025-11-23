@@ -1,9 +1,11 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"os"
 
+	"github.com/stackvista/stackstate-backup-cli/internal/clients/clickhouse"
 	"github.com/stackvista/stackstate-backup-cli/internal/clients/elasticsearch"
 	"github.com/stackvista/stackstate-backup-cli/internal/clients/k8s"
 	"github.com/stackvista/stackstate-backup-cli/internal/clients/s3"
@@ -18,9 +20,11 @@ type Context struct {
 	Namespace string
 	S3Client  s3.Interface
 	ESClient  elasticsearch.Interface
+	CHClient  clickhouse.Interface
 	Config    *config.Config
 	Logger    *logger.Logger
 	Formatter *output.Formatter
+	Context   context.Context
 }
 
 // NewContext creates production dependencies
@@ -49,6 +53,17 @@ func NewContext(flags *config.CLIGlobalFlags) (*Context, error) {
 		return nil, fmt.Errorf("failed to create Elasticsearch client: %w", err)
 	}
 
+	// Create ClickHouse client
+	chClient, err := clickhouse.NewClient(
+		fmt.Sprintf("http://localhost:%d", cfg.Clickhouse.BackupService.LocalPortForwardPort),
+		fmt.Sprintf("localhost:%d", cfg.Clickhouse.Service.LocalPortForwardPort),
+		cfg.Clickhouse.Database,
+		cfg.Clickhouse.Username,
+		cfg.Clickhouse.Password)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create ClickHouse client: %w", err)
+	}
+
 	// Format and print backups
 	formatter := output.NewFormatter(os.Stdout, flags.OutputFormat)
 
@@ -58,7 +73,9 @@ func NewContext(flags *config.CLIGlobalFlags) (*Context, error) {
 		Config:    cfg,
 		S3Client:  s3Client,
 		ESClient:  esClient,
+		CHClient:  chClient,
 		Logger:    logger.New(flags.Quiet, flags.Debug),
 		Formatter: formatter,
+		Context:   context.Background(),
 	}, nil
 }
