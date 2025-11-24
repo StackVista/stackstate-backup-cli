@@ -54,7 +54,52 @@ It will check the restore status and if complete, execute post-restore tasks and
 }
 
 func runCheckAndFinalize(appCtx *app.Context) error {
+	// Setup port-forward
+	pf, err := portforward.SetupPortForward(
+		appCtx.K8sClient,
+		appCtx.Namespace,
+		appCtx.Config.Clickhouse.BackupService.Name,
+		appCtx.Config.Clickhouse.BackupService.LocalPortForwardPort,
+		appCtx.Config.Clickhouse.BackupService.Port,
+		appCtx.Logger,
+	)
+	if err != nil {
+		return err
+	}
+	defer close(pf.StopChan)
 	return checkAndFinalize(appCtx, checkOperationID, waitForRestore)
+}
+
+// checkAndFinalize checks restore status and finalizes if complete
+func checkAndFinalize(appCtx *app.Context, operationID string, waitForComplete bool) error {
+	// Check status
+	appCtx.Logger.Println()
+	appCtx.Logger.Infof("Checking restore status for operation: %s", operationID)
+	status, err := appCtx.CHClient.GetRestoreStatus(appCtx.Context, operationID)
+	if err != nil {
+		return err
+	}
+
+	if status.Status == "error" {
+		return fmt.Errorf("restore failed: %s", status.Error)
+	}
+
+	if status.Status == "success" {
+		appCtx.Logger.Successf("Restore completed successfully")
+		return finalizeRestore(appCtx)
+	}
+
+	// Status is "in progress" or other
+	if waitForComplete {
+		// Still running - wait
+		appCtx.Logger.Infof("Restore is in progress, waiting for completion...")
+		return waitAndFinalize(appCtx, appCtx.CHClient, operationID)
+	}
+	// Just print status
+	appCtx.Logger.Println()
+	appCtx.Logger.Infof("Restore is in progress (status: %s)", status.Status)
+	restore.PrintAPIRunningRestoreStatus("clickhouse", operationID, appCtx.Namespace, appCtx.Logger)
+	return nil
 }
 
 // waitAndFinalize waits for restore completion and finalizes
@@ -86,53 +131,6 @@ func waitAndFinalize(appCtx *app.Context, chClient clickhouse.Interface, operati
 
 	// Finalize
 	return finalizeRestore(appCtx)
-}
-
-// checkAndFinalize checks restore status and finalizes if complete
-func checkAndFinalize(appCtx *app.Context, operationID string, waitForComplete bool) error {
-	// Setup port-forward
-	pf, err := portforward.SetupPortForward(
-		appCtx.K8sClient,
-		appCtx.Namespace,
-		appCtx.Config.Clickhouse.BackupService.Name,
-		appCtx.Config.Clickhouse.BackupService.LocalPortForwardPort,
-		appCtx.Config.Clickhouse.BackupService.Port,
-		appCtx.Logger,
-	)
-	if err != nil {
-		return err
-	}
-	defer close(pf.StopChan)
-
-	// Check status
-	appCtx.Logger.Println()
-	appCtx.Logger.Infof("Checking restore status for operation: %s", operationID)
-	status, err := appCtx.CHClient.GetRestoreStatus(appCtx.Context, operationID)
-	if err != nil {
-		return err
-	}
-
-	// Handle based on status
-	switch status.Status {
-	case "success":
-		// Already complete - finalize
-		appCtx.Logger.Successf("Restore completed successfully")
-		return finalizeRestore(appCtx)
-	case "error":
-		return fmt.Errorf("restore failed: %s", status.Error)
-	default:
-		// Status is "in progress" or other
-		if waitForComplete {
-			// Still running - wait
-			appCtx.Logger.Infof("Restore is in progress, waiting for completion...")
-			return waitAndFinalize(appCtx, appCtx.CHClient, operationID)
-		}
-		// Just print status
-		appCtx.Logger.Println()
-		appCtx.Logger.Infof("Restore is in progress (status: %s)", status.Status)
-		restore.PrintAPIRunningRestoreStatus("clickhouse", operationID, appCtx.Namespace, appCtx.Logger)
-		return nil
-	}
 }
 
 // finalizeRestore finalizes the restore by executing SQL and scaling up

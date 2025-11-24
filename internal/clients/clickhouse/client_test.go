@@ -124,5 +124,5 @@ func TestListBackups_InvalidJSON(t *testing.T) {
 	backups, err := client.ListBackups(ctx)
 	assert.Error(t, err)
 	assert.Nil(t, backups)
-	assert.Contains(t, err.Error(), "failed to decode response")
+	assert.Contains(t, err.Error(), "failed to decode NDJSON")
 }

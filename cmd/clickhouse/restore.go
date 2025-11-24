@@ -86,7 +86,8 @@ func runRestore(appCtx *app.Context) error {
 	}
 
 	// Execute restore workflow
-	return executeRestore(appCtx, backupName, !restoreBackground)
+	waitForComplete := !restoreBackground
+	return executeRestore(appCtx, backupName, waitForComplete)
 }
 
 // executeRestore orchestrates the complete ClickHouse restore workflow
@@ -114,14 +115,12 @@ func executeRestore(appCtx *app.Context, backupName string, waitForComplete bool
 	}
 	appCtx.Logger.Successf("Restore triggered successfully (operation ID: %s)", operationID)
 
-	// Wait for completion if requested
-	if waitForComplete {
-		return waitAndFinalize(appCtx, appCtx.CHClient, operationID)
+	if !waitForComplete {
+		restore.PrintAPIRunningRestoreStatus("clickhouse", operationID, appCtx.Namespace, appCtx.Logger)
+		return nil
 	}
 
-	// Print background status
-	restore.PrintAPIRunningRestoreStatus("clickhouse", operationID, appCtx.Namespace, appCtx.Logger)
-	return nil
+	return checkAndFinalize(appCtx, operationID, waitForComplete)
 }
 
 // getLatestBackupForRestore retrieves the most recent backup
