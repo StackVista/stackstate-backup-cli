@@ -108,7 +108,7 @@ func executeRestore(appCtx *app.Context, backupName string, waitForComplete bool
 	// Trigger restore
 	appCtx.Logger.Println()
 	appCtx.Logger.Infof("Triggering restore for backup: %s", backupName)
-	operationID, err := appCtx.CHClient.TriggerRestore(backupName)
+	operationID, err := appCtx.CHClient.TriggerRestore(appCtx.Context, backupName)
 	if err != nil {
 		return fmt.Errorf("failed to trigger restore: %w", err)
 	}
@@ -141,7 +141,7 @@ func getLatestBackupForRestore(appCtx *app.Context) (string, error) {
 	defer close(pf.StopChan)
 
 	// List backups
-	backups, err := appCtx.CHClient.ListBackups()
+	backups, err := appCtx.CHClient.ListBackups(appCtx.Context)
 	if err != nil {
 		return "", fmt.Errorf("failed to list backups: %w", err)
 	}

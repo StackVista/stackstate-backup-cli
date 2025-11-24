@@ -85,10 +85,9 @@ func NewClient(backupAPI, addr, db, username, password string) (*Client, error) 
 
 // ListBackups retrieves all backups from ClickHouse Backup API
 // The API returns newline-delimited JSON (NDJSON) format
-func (c *Client) ListBackups() ([]Backup, error) {
+func (c *Client) ListBackups(ctx context.Context) ([]Backup, error) {
 	url := fmt.Sprintf("%s/backup/list", c.backupAPIURL)
 
-	ctx := context.Background()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -123,11 +122,10 @@ func (c *Client) ListBackups() ([]Backup, error) {
 // TriggerRestore initiates a restore operation via HTTP POST and returns the restore operation ID
 // POST /backup/download/${BACKUP_NAME}?callback=http://localhost:{port}/backup/restore/${BACKUP_NAME}
 // Note: The initial response contains the download operation ID, but we need to poll for the restore operation ID
-func (c *Client) TriggerRestore(backupName string) (string, error) {
+func (c *Client) TriggerRestore(ctx context.Context, backupName string) (string, error) {
 	callbackURL := fmt.Sprintf("%s/backup/restore/%s", c.backupAPIURL, backupName)
 	reqURL := fmt.Sprintf("%s/backup/download/%s?callback=%s", c.backupAPIURL, backupName, url.QueryEscape(callbackURL))
 
-	ctx := context.Background()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, reqURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
@@ -151,11 +149,11 @@ func (c *Client) TriggerRestore(backupName string) (string, error) {
 
 	// Poll for the restore operation (command contains "restore" not "download")
 	// The restore is triggered via callback after download completes, so we need to wait
-	return c.waitForRestoreOperationID(backupName, defaultRestoreOperationTimeout, defaultRestoreOperationPollInterval)
+	return c.waitForRestoreOperationID(ctx, backupName, defaultRestoreOperationTimeout, defaultRestoreOperationPollInterval)
 }
 
 // waitForRestoreOperationID polls for the restore operation ID with timeout and retry
-func (c *Client) waitForRestoreOperationID(backupName string, timeout, pollInterval time.Duration) (string, error) {
+func (c *Client) waitForRestoreOperationID(ctx context.Context, backupName string, timeout, pollInterval time.Duration) (string, error) {
 	deadline := time.After(timeout)
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -165,7 +163,7 @@ func (c *Client) waitForRestoreOperationID(backupName string, timeout, pollInter
 		case <-deadline:
 			return "", fmt.Errorf("timeout waiting for restore operation to be created for backup: %s", backupName)
 		case <-ticker.C:
-			operationID, err := c.getRestoreOperationID(backupName)
+			operationID, err := c.getRestoreOperationID(ctx, backupName)
 			if err == nil {
 				return operationID, nil
 			}
@@ -176,10 +174,9 @@ func (c *Client) waitForRestoreOperationID(backupName string, timeout, pollInter
 
 // getRestoreOperationID polls for the restore operation ID for a given backup
 // It looks for the most recent restore action (not download) matching the backup name
-func (c *Client) getRestoreOperationID(backupName string) (string, error) {
+func (c *Client) getRestoreOperationID(ctx context.Context, backupName string) (string, error) {
 	reqURL := fmt.Sprintf("%s/backup/actions?filter=restore", c.backupAPIURL)
 
-	ctx := context.Background()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return "", fmt.Errorf("failed to create request: %w", err)
@@ -222,10 +219,9 @@ func (c *Client) getRestoreOperationID(backupName string) (string, error) {
 // GetRestoreStatus retrieves the current restore status for a specific backup
 // GET /backup/actions?filter=restore
 // Returns the most recent restore action matching the operation id
-func (c *Client) GetRestoreStatus(operationID string) (*RestoreAction, error) {
+func (c *Client) GetRestoreStatus(ctx context.Context, operationID string) (*RestoreAction, error) {
 	reqURL := fmt.Sprintf("%s/backup/actions?filter=restore", c.backupAPIURL)
 
-	ctx := context.Background()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -266,7 +262,7 @@ func (c *Client) GetRestoreStatus(operationID string) (*RestoreAction, error) {
 }
 
 // WaitForRestoreCompletion polls until restore completes or times out
-func (c *Client) WaitForRestoreCompletion(operationID string, timeout, pollInterval time.Duration) error {
+func (c *Client) WaitForRestoreCompletion(ctx context.Context, operationID string, timeout, pollInterval time.Duration) error {
 	deadline := time.After(timeout)
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -276,7 +272,7 @@ func (c *Client) WaitForRestoreCompletion(operationID string, timeout, pollInter
 		case <-deadline:
 			return fmt.Errorf("timeout waiting for restore to complete")
 		case <-ticker.C:
-			status, err := c.GetRestoreStatus(operationID)
+			status, err := c.GetRestoreStatus(ctx, operationID)
 			if err != nil {
 				// Continue polling on error (might be transient)
 				continue

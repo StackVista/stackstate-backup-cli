@@ -50,7 +50,7 @@ func runList(appCtx *app.Context) error {
 	appCtx.Logger.Infof("Listing Clickhouse backups...")
 	appCtx.Logger.Println()
 
-	backups, err := appCtx.CHClient.ListBackups()
+	backups, err := appCtx.CHClient.ListBackups(appCtx.Context)
 	if err != nil {
 		return fmt.Errorf("failed to list backups: %w", err)
 	}

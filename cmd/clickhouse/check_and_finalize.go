@@ -63,7 +63,7 @@ func waitAndFinalize(appCtx *app.Context, chClient clickhouse.Interface, operati
 
 	// Wait for restore using shared utility
 	checkStatusFn := func() (string, bool, error) {
-		status, err := chClient.GetRestoreStatus(operationID)
+		status, err := chClient.GetRestoreStatus(appCtx.Context, operationID)
 		if err != nil {
 			return "", false, err
 		}
@@ -107,7 +107,7 @@ func checkAndFinalize(appCtx *app.Context, operationID string, waitForComplete b
 	// Check status
 	appCtx.Logger.Println()
 	appCtx.Logger.Infof("Checking restore status for operation: %s", operationID)
-	status, err := appCtx.CHClient.GetRestoreStatus(operationID)
+	status, err := appCtx.CHClient.GetRestoreStatus(appCtx.Context, operationID)
 	if err != nil {
 		return err
 	}

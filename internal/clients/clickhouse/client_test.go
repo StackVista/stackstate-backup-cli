@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -60,7 +61,8 @@ func TestListBackups_Success(t *testing.T) {
 	client, err := NewClient(server.URL, "localhost:9000", "default", "default", "password")
 	require.NoError(t, err)
 
-	backups, err := client.ListBackups()
+	ctx := context.Background()
+	backups, err := client.ListBackups(ctx)
 	require.NoError(t, err)
 	assert.Len(t, backups, 2)
 
@@ -85,7 +87,8 @@ func TestListBackups_EmptyList(t *testing.T) {
 	client, err := NewClient(server.URL, "localhost:9000", "default", "default", "password")
 	require.NoError(t, err)
 
-	backups, err := client.ListBackups()
+	ctx := context.Background()
+	backups, err := client.ListBackups(ctx)
 	require.NoError(t, err)
 	assert.Empty(t, backups)
 }
@@ -99,7 +102,8 @@ func TestListBackups_ServerError(t *testing.T) {
 	client, err := NewClient(server.URL, "localhost:9000", "default", "default", "password")
 	require.NoError(t, err)
 
-	backups, err := client.ListBackups()
+	ctx := context.Background()
+	backups, err := client.ListBackups(ctx)
 	assert.Error(t, err)
 	assert.Nil(t, backups)
 	assert.Contains(t, err.Error(), "backup API returned status 500")
@@ -116,7 +120,8 @@ func TestListBackups_InvalidJSON(t *testing.T) {
 	client, err := NewClient(server.URL, "localhost:9000", "default", "default", "password")
 	require.NoError(t, err)
 
-	backups, err := client.ListBackups()
+	ctx := context.Background()
+	backups, err := client.ListBackups(ctx)
 	assert.Error(t, err)
 	assert.Nil(t, backups)
 	assert.Contains(t, err.Error(), "failed to decode response")
