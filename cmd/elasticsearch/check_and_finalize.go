@@ -61,7 +61,7 @@ func runCheckAndFinalize(appCtx *app.Context) error {
 	return checkAndFinalize(appCtx, repository, checkOperationID, checkWait)
 }
 
-func checkAndFinalize(appCtx *app.Context, repository, snapshotName string, wait bool) error {
+func checkAndFinalize(appCtx *app.Context, repository, snapshotName string, waitForComplete bool) error {
 	// Get restore status
 	appCtx.Logger.Infof("Checking restore status for snapshot: %s", snapshotName)
 	status, isComplete, err := appCtx.ESClient.GetRestoreStatus(repository, snapshotName)
@@ -93,7 +93,7 @@ func checkAndFinalize(appCtx *app.Context, repository, snapshotName string, wait
 	// Restore still running
 	appCtx.Logger.Infof("Restore is still in progress (status: %s)", status)
 
-	if wait {
+	if waitForComplete {
 		appCtx.Logger.Println()
 		return waitAndFinalize(appCtx, repository, snapshotName)
 	}

@@ -210,6 +210,9 @@ func (c *Client) GetRestoreStatus(ctx context.Context, operationID string) (*Act
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse operation status response: %w", err)
 	}
+	if err = resp.Body.Close(); err != nil {
+		return nil, fmt.Errorf("failed to close response body: %w", err)
+	}
 
 	// It should be exactly one action
 	if lenActions := len(allActions); lenActions != 1 {

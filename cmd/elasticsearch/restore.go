@@ -120,14 +120,12 @@ func runRestore(appCtx *app.Context) error {
 	}
 	appCtx.Logger.Successf("Restore triggered successfully")
 
-	// Wait for completion unless background mode requested
-	if !runBackground {
-		return waitAndFinalize(appCtx, repository, selectedSnapshot)
+	if runBackground {
+		restore.PrintAPIRunningRestoreStatus("elasticsearch", selectedSnapshot, appCtx.Namespace, appCtx.Logger)
+		return nil
 	}
 
-	// Print background status
-	restore.PrintAPIRunningRestoreStatus("elasticsearch", selectedSnapshot, appCtx.Namespace, appCtx.Logger)
-	return nil
+	return checkAndFinalize(appCtx, repository, selectedSnapshot, !runBackground)
 }
 
 // getLatestSnapshot retrieves the most recent snapshot from the repository

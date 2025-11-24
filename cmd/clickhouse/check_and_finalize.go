@@ -89,6 +89,9 @@ func checkAndFinalize(appCtx *app.Context, operationID string, waitForComplete b
 		return finalizeRestore(appCtx)
 	}
 
+	// Restore still running
+	appCtx.Logger.Infof("Restore is still in progress (status: %s)", status)
+
 	// Status is "in progress" or other
 	if waitForComplete {
 		// Still running - wait
@@ -97,7 +100,6 @@ func checkAndFinalize(appCtx *app.Context, operationID string, waitForComplete b
 	}
 	// Just print status
 	appCtx.Logger.Println()
-	appCtx.Logger.Infof("Restore is in progress (status: %s)", status.Status)
 	restore.PrintAPIRunningRestoreStatus("clickhouse", operationID, appCtx.Namespace, appCtx.Logger)
 	return nil
 }
