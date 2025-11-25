@@ -160,3 +160,19 @@ settings:
         requests:
           cpu: "500m"
           memory: "1Gi"
+
+# ClickHouse backup configuration
+clickhouse:
+  service:
+    name: "suse-observability-clickhouse-shard0-0"
+    port: 9000
+    localPortForwardPort: 9000
+  backupService:
+    name: "suse-observability-clickhouse-shard0-0"
+    port: 7171
+    localPortForwardPort: 7171
+  database: "default"
+  username: "default"
+  password: "password"
+  restore:
+    scaleDownLabelSelector: "observability.suse.com/scalable-during-clickhouse-restore=true"

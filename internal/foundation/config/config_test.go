@@ -451,6 +451,24 @@ func TestConfig_StructValidation(t *testing.T) {
 						},
 					},
 				},
+				Clickhouse: ClickhouseConfig{
+					Service: ServiceConfig{
+						Name:                 "clickhouse",
+						Port:                 9000,
+						LocalPortForwardPort: 9000,
+					},
+					BackupService: ServiceConfig{
+						Name:                 "clickhouse",
+						Port:                 7171,
+						LocalPortForwardPort: 7171,
+					},
+					Database: "default",
+					Username: "default",
+					Password: "password",
+					Restore: ClickhouseRestoreConfig{
+						ScaleDownLabelSelector: "app=clickhouse",
+					},
+				},
 			},
 			expectError: false,
 		},

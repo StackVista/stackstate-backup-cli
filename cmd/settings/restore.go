@@ -78,7 +78,7 @@ func runRestore(appCtx *app.Context) error {
 	// Warn user and ask for confirmation
 	if !skipConfirmation {
 		appCtx.Logger.Println()
-		appCtx.Logger.Warningf("WARNING: Restoring from backup will PURGE all existing Settings data!")
+		appCtx.Logger.Warningf("WARNING: Restoring from backup will PURGE all existing Stackgraph (Topology) data!")
 		appCtx.Logger.Warningf("This operation cannot be undone.")
 		appCtx.Logger.Println()
 		appCtx.Logger.Infof("Backup to restore: %s", backupFile)

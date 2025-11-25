@@ -60,7 +60,7 @@ func (m *mockESClientForRestore) IndexExists(index string) (bool, error) {
 	return exists, nil
 }
 
-func (m *mockESClientForRestore) RestoreSnapshot(_, snapshotName, _ string, _ bool) error {
+func (m *mockESClientForRestore) RestoreSnapshot(_, snapshotName, _ string) error {
 	if m.restoreErr != nil {
 		return m.restoreErr
 	}
@@ -92,6 +92,14 @@ func (m *mockESClientForRestore) ConfigureSLMPolicy(_, _, _, _, _, _ string, _, 
 	return fmt.Errorf("not implemented")
 }
 
+func (m *mockESClientForRestore) GetRestoreStatus(_, _ string) (string, bool, error) {
+	return "NOT_FOUND", true, nil
+}
+
+func (m *mockESClientForRestore) IsRestoreInProgress(_, _ string) (bool, error) {
+	return false, nil
+}
+
 // TestRestoreCmd_Unit tests the command structure
 func TestRestoreCmd_Unit(t *testing.T) {
 	flags := config.NewCLIGlobalFlags()
@@ -100,22 +108,22 @@ func TestRestoreCmd_Unit(t *testing.T) {
 	cmd := restoreCmd(flags)
 
 	// Test command metadata
-	assert.Equal(t, "restore-snapshot", cmd.Use)
+	assert.Equal(t, "restore", cmd.Use)
 	assert.Equal(t, "Restore Elasticsearch from a snapshot", cmd.Short)
 	assert.NotEmpty(t, cmd.Long)
 	assert.NotNil(t, cmd.Run)
 
 	// Test flags
-	snapshotFlag := cmd.Flags().Lookup("snapshot-name")
+	snapshotFlag := cmd.Flags().Lookup("snapshot")
 	require.NotNil(t, snapshotFlag)
 	assert.Equal(t, "s", snapshotFlag.Shorthand)
 
-	dropFlag := cmd.Flags().Lookup("drop-all-indices")
-	require.NotNil(t, dropFlag)
-	assert.Equal(t, "r", dropFlag.Shorthand)
+	backgroundFlag := cmd.Flags().Lookup("background")
+	require.NotNil(t, backgroundFlag)
 
 	yesFlag := cmd.Flags().Lookup("yes")
 	require.NotNil(t, yesFlag)
+	assert.Equal(t, "y", yesFlag.Shorthand)
 }
 
 // TestFilterSTSIndices tests the index filtering logic
@@ -344,7 +352,7 @@ func TestMockESClientForRestore(t *testing.T) {
 			}
 
 			// Test restore
-			err := mockClient.RestoreSnapshot("backup-repo", "test-snapshot", "sts_*", true)
+			err := mockClient.RestoreSnapshot("backup-repo", "test-snapshot", "sts_*")
 			if tt.expectRestoreOK {
 				assert.NoError(t, err)
 				assert.Equal(t, "test-snapshot", mockClient.restoredSnapshot)

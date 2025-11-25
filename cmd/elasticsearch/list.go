@@ -3,6 +3,7 @@ package elasticsearch
 import (
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/spf13/cobra"
 	"github.com/stackvista/stackstate-backup-cli/internal/app"
@@ -11,9 +12,9 @@ import (
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/portforward"
 )
 
-func listSnapshotsCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
+func listCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	return &cobra.Command{
-		Use:   "list-snapshots",
+		Use:   "list",
 		Short: "List available Elasticsearch snapshots",
 		Run: func(_ *cobra.Command, _ []string) {
 			appCtx, err := app.NewContext(globalFlags)
@@ -54,6 +55,11 @@ func runListSnapshots(appCtx *app.Context) error {
 		appCtx.Formatter.PrintMessage("No snapshots found")
 		return nil
 	}
+
+	// Sort snapshots by start time in descending order (newest first)
+	sort.Slice(snapshots, func(i, j int) bool {
+		return snapshots[i].StartTimeMillis > snapshots[j].StartTimeMillis
+	})
 
 	table := output.Table{
 		Headers: []string{"SNAPSHOT", "STATE", "START TIME", "DURATION (ms)", "FAILURES"},

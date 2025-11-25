@@ -391,11 +391,6 @@ func TestClient_RestoreSnapshot(t *testing.T) {
 				expectedPath := "/_snapshot/" + tt.repository + "/" + tt.snapshotName + "/_restore"
 				assert.Equal(t, expectedPath, r.URL.Path)
 				assert.Equal(t, http.MethodPost, r.Method)
-
-				if tt.waitForCompletion {
-					assert.Equal(t, "true", r.URL.Query().Get("wait_for_completion"))
-				}
-
 				w.WriteHeader(tt.responseStatus)
 			}))
 			defer server.Close()
@@ -405,7 +400,7 @@ func TestClient_RestoreSnapshot(t *testing.T) {
 			require.NoError(t, err)
 
 			// Execute test
-			err = client.RestoreSnapshot(tt.repository, tt.snapshotName, tt.indicesPattern, tt.waitForCompletion)
+			err = client.RestoreSnapshot(tt.repository, tt.snapshotName, tt.indicesPattern)
 
 			// Assertions
 			if tt.expectError {

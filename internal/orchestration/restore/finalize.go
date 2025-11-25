@@ -5,7 +5,6 @@ import (
 
 	"github.com/stackvista/stackstate-backup-cli/internal/clients/k8s"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
-	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/scale"
 	batchv1 "k8s.io/api/batch/v1"
 )
 
@@ -29,6 +28,8 @@ type HandleCompletedJobParams struct {
 	Namespace     string
 	JobName       string
 	ServiceName   string
+	ScaleUpFn     func(k8sClient *k8s.Client, namespace, labelSelector string, log *logger.Logger) error
+	ScaleDownFn   func(k8sClient *k8s.Client, namespace, labelSelector string, log *logger.Logger) ([]k8s.AppsScale, error)
 	ScaleSelector string
 	CleanupPVC    bool
 	Log           *logger.Logger
@@ -44,7 +45,7 @@ func HandleCompletedJob(params HandleCompletedJobParams) error {
 		params.Log.Println()
 
 		// Scale up deployments that were scaled down before restore
-		if err := scale.ScaleUpFromAnnotations(params.K8sClient, params.Namespace, params.ScaleSelector, params.Log); err != nil {
+		if err := params.ScaleUpFn(params.K8sClient, params.Namespace, params.ScaleSelector, params.Log); err != nil {
 			params.Log.Warningf("Failed to scale up workload: %v", err)
 		}
 	} else {
@@ -68,6 +69,8 @@ type WaitAndFinalizeParams struct {
 	Namespace     string
 	JobName       string
 	ServiceName   string
+	ScaleUpFn     func(k8sClient *k8s.Client, namespace, labelSelector string, log *logger.Logger) error
+	ScaleDownFn   func(k8sClient *k8s.Client, namespace, labelSelector string, log *logger.Logger) ([]k8s.AppsScale, error)
 	ScaleSelector string
 	CleanupPVC    bool
 	Log           *logger.Logger
@@ -90,7 +93,7 @@ func WaitAndFinalize(params WaitAndFinalizeParams) error {
 	params.Log.Println()
 
 	// Scale up deployments that were scaled down before restore
-	if err := scale.ScaleUpFromAnnotations(params.K8sClient, params.Namespace, params.ScaleSelector, params.Log); err != nil {
+	if err := params.ScaleUpFn(params.K8sClient, params.Namespace, params.ScaleSelector, params.Log); err != nil {
 		params.Log.Warningf("Failed to scale up workload: %v", err)
 	}
 
@@ -104,6 +107,8 @@ type CheckAndFinalizeParams struct {
 	Namespace     string
 	JobName       string
 	ServiceName   string
+	ScaleUpFn     func(k8sClient *k8s.Client, namespace, labelSelector string, log *logger.Logger) error
+	ScaleDownFn   func(k8sClient *k8s.Client, namespace, labelSelector string, log *logger.Logger) ([]k8s.AppsScale, error)
 	ScaleSelector string
 	CleanupPVC    bool
 	WaitForJob    bool
@@ -130,6 +135,8 @@ func CheckAndFinalize(params CheckAndFinalizeParams) error {
 			Namespace:     params.Namespace,
 			JobName:       params.JobName,
 			ServiceName:   params.ServiceName,
+			ScaleUpFn:     params.ScaleUpFn,
+			ScaleDownFn:   params.ScaleDownFn,
 			ScaleSelector: params.ScaleSelector,
 			CleanupPVC:    params.CleanupPVC,
 			Log:           params.Log,
@@ -145,6 +152,8 @@ func CheckAndFinalize(params CheckAndFinalizeParams) error {
 			Namespace:     params.Namespace,
 			JobName:       params.JobName,
 			ServiceName:   params.ServiceName,
+			ScaleUpFn:     params.ScaleUpFn,
+			ScaleDownFn:   params.ScaleDownFn,
 			ScaleSelector: params.ScaleSelector,
 			CleanupPVC:    params.CleanupPVC,
 			Log:           params.Log,

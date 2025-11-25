@@ -22,6 +22,7 @@ type Config struct {
 	Stackgraph      StackgraphConfig      `yaml:"stackgraph" validate:"required"`
 	Settings        SettingsConfig        `yaml:"settings" validate:"required"`
 	VictoriaMetrics VictoriaMetricsConfig `yaml:"victoriaMetrics" validate:"required"`
+	Clickhouse      ClickhouseConfig      `yaml:"clickhouse" validate:"required"`
 }
 
 // KubernetesConfig holds Kubernetes-wide configuration
@@ -132,6 +133,21 @@ type SettingsRestoreConfig struct {
 	PlatformVersion            string    `yaml:"platformVersion" validate:"required"`
 	ZookeeperQuorum            string    `yaml:"zookeeperQuorum" validate:"required"`
 	Job                        JobConfig `yaml:"job" validate:"required"`
+}
+
+// ClickhouseConfig holds Clickhouse-specific configuration
+type ClickhouseConfig struct {
+	Service       ServiceConfig           `yaml:"service" validate:"required"`
+	BackupService ServiceConfig           `yaml:"backupService" validate:"required"`
+	Database      string                  `yaml:"database" validate:"required"`
+	Username      string                  `yaml:"username" validate:"required"`
+	Password      string                  `yaml:"password" validate:"required"`
+	Restore       ClickhouseRestoreConfig `yaml:"restore" validate:"required"`
+}
+
+// ClickhouseRestoreConfig holds Clickhouse restore-specific configuration
+type ClickhouseRestoreConfig struct {
+	ScaleDownLabelSelector string `yaml:"scaleDownLabelSelector" validate:"required"`
 }
 
 // PVCConfig holds PersistentVolumeClaim configuration
