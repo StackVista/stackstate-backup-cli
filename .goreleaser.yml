@@ -17,9 +17,9 @@ builds:
   - windows_amd64
   main: .
   ldflags:
-  - -s -w -X github.com/stackvista/stackstate-backup-cli/cmd/version/version.Version={{.Version}}
-    -X github.com/stackvista/stackstate-backup-cli/cmd/version/version.Commit={{.Commit}}
-    -X github.com/stackvista/stackstate-backup-cli/cmd/version/version.BuildDate={{.Date}}
+  - -s -w -X github.com/stackvista/stackstate-backup-cli/cmd/version.Version={{.Version}}
+    -X github.com/stackvista/stackstate-backup-cli/cmd/version.Commit={{.Commit}}
+    -X github.com/stackvista/stackstate-backup-cli/cmd/version.Date={{.Date}}
   binary: sts-backup
   env:
   - CGO_ENABLED=0
