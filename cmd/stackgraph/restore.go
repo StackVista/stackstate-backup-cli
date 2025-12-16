@@ -236,7 +236,7 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 	}
 
 	// Build job spec using configuration
-	spec := k8s.BackupJobSpec{
+	spec := k8s.JobSpec{
 		Name:             jobName,
 		Labels:           jobLabels,
 		ImagePullSecrets: k8s.ConvertImagePullSecrets(config.Stackgraph.Restore.Job.ImagePullSecrets),
@@ -250,7 +250,7 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 	}
 
 	// Create job
-	_, err = k8sClient.CreateBackupJob(namespace, spec)
+	_, err = k8sClient.CreateJob(namespace, spec)
 	if err != nil {
 		// Cleanup PVC if job creation fails
 		_ = k8sClient.DeletePVC(namespace, pvc.Name)

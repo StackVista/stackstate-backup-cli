@@ -205,7 +205,7 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 	jobLabels := k8s.MergeLabels(config.Kubernetes.CommonLabels, config.VictoriaMetrics.Restore.Job.Labels)
 
 	// Build job spec using configuration
-	spec := k8s.BackupJobSpec{
+	spec := k8s.JobSpec{
 		Name:             jobName,
 		Labels:           jobLabels,
 		ImagePullSecrets: k8s.ConvertImagePullSecrets(config.VictoriaMetrics.Restore.Job.ImagePullSecrets),
@@ -219,7 +219,7 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 	}
 
 	// Create job
-	_, err := k8sClient.CreateBackupJob(namespace, spec)
+	_, err := k8sClient.CreateJob(namespace, spec)
 	if err != nil {
 		return fmt.Errorf("failed to create job: %w", err)
 	}

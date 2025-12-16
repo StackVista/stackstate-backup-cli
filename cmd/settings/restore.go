@@ -197,7 +197,7 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 	jobLabels := k8s.MergeLabels(config.Kubernetes.CommonLabels, config.Settings.Restore.Job.Labels)
 
 	// Build job spec using configuration
-	spec := k8s.BackupJobSpec{
+	spec := k8s.JobSpec{
 		Name:             jobName,
 		Labels:           jobLabels,
 		ImagePullSecrets: k8s.ConvertImagePullSecrets(config.Settings.Restore.Job.ImagePullSecrets),
@@ -205,21 +205,21 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 		NodeSelector:     config.Settings.Restore.Job.NodeSelector,
 		Tolerations:      k8s.ConvertTolerations(config.Settings.Restore.Job.Tolerations),
 		Affinity:         k8s.ConvertAffinity(config.Settings.Restore.Job.Affinity),
-		Containers:       buildRestoreContainers(backupFile, config),
-		InitContainers:   buildRestoreInitContainers(config),
-		Volumes:          buildRestoreVolumes(config, defaultMode),
+		Containers:       buildContainers(backupFile, []string{"/backup-restore-scripts/restore-settings-backup.sh"}, config),
+		InitContainers:   buildInitContainers(config),
+		Volumes:          buildVolumes(config, defaultMode),
 	}
 
 	// Create job
-	if _, err := k8sClient.CreateBackupJob(namespace, spec); err != nil {
+	if _, err := k8sClient.CreateJob(namespace, spec); err != nil {
 		return fmt.Errorf("failed to create job: %w", err)
 	}
 
 	return nil
 }
 
-// buildRestoreEnvVars constructs environment variables for the restore job
-func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvVar {
+// buildEnvVars constructs environment variables for the restore job
+func buildEnvVars(backupFile string, config *config.Config) []corev1.EnvVar {
 	return []corev1.EnvVar{
 		{Name: "BACKUP_FILE", Value: backupFile},
 		{Name: "BACKUP_CONFIGURATION_BUCKET_NAME", Value: config.Settings.Bucket},
@@ -232,8 +232,8 @@ func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvV
 	}
 }
 
-// buildRestoreVolumeMounts constructs volume mounts for the restore job container
-func buildRestoreVolumeMounts() []corev1.VolumeMount {
+// buildVolumeMounts constructs volume mounts for the restore job container
+func buildVolumeMounts() []corev1.VolumeMount {
 	return []corev1.VolumeMount{
 		{Name: "backup-log", MountPath: "/opt/docker/etc_log"},
 		{Name: "backup-restore-scripts", MountPath: "/backup-restore-scripts"},
@@ -242,8 +242,8 @@ func buildRestoreVolumeMounts() []corev1.VolumeMount {
 	}
 }
 
-// buildRestoreInitContainers constructs init containers for the restore job
-func buildRestoreInitContainers(config *config.Config) []corev1.Container {
+// buildInitContainers constructs init containers for the restore job
+func buildInitContainers(config *config.Config) []corev1.Container {
 	return []corev1.Container{
 		{
 			Name:            "wait",
@@ -259,8 +259,8 @@ func buildRestoreInitContainers(config *config.Config) []corev1.Container {
 	}
 }
 
-// buildRestoreVolumes constructs volumes for the restore job pod
-func buildRestoreVolumes(config *config.Config, defaultMode int32) []corev1.Volume {
+// buildVolumes constructs volumes for the restore job pod
+func buildVolumes(config *config.Config, defaultMode int32) []corev1.Volume {
 	return []corev1.Volume{
 		{
 			Name: "backup-log",
@@ -300,18 +300,18 @@ func buildRestoreVolumes(config *config.Config, defaultMode int32) []corev1.Volu
 	}
 }
 
-// buildRestoreContainers constructs containers for the restore job
-func buildRestoreContainers(backupFile string, config *config.Config) []corev1.Container {
+// buildContainers constructs containers for the restore job
+func buildContainers(backupFile string, command []string, config *config.Config) []corev1.Container {
 	return []corev1.Container{
 		{
 			Name:            "restore",
 			Image:           config.Settings.Restore.Job.Image,
 			ImagePullPolicy: corev1.PullIfNotPresent,
 			SecurityContext: k8s.ConvertSecurityContext(config.Settings.Restore.Job.ContainerSecurityContext),
-			Command:         []string{"/backup-restore-scripts/restore-settings-backup.sh"},
-			Env:             buildRestoreEnvVars(backupFile, config),
+			Command:         command,
+			Env:             buildEnvVars(backupFile, config),
 			Resources:       k8s.ConvertResources(config.Settings.Restore.Job.Resources),
-			VolumeMounts:    buildRestoreVolumeMounts(),
+			VolumeMounts:    buildVolumeMounts(),
 		},
 	}
 }

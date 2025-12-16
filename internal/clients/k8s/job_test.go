@@ -102,21 +102,21 @@ func TestClient_CreatePVC(t *testing.T) {
 	}
 }
 
-// TestClient_CreateBackupJob tests Job creation for backup/restore operations
+// TestClient_CreateJob tests Job creation for backup/restore operations
 //
 //nolint:funlen
-func TestClient_CreateBackupJob(t *testing.T) {
+func TestClient_CreateJob(t *testing.T) {
 	tests := []struct {
 		name         string
 		namespace    string
-		spec         BackupJobSpec
+		spec         JobSpec
 		expectError  bool
 		validateFunc func(*testing.T, *batchv1.Job)
 	}{
 		{
 			name:      "create minimal job",
 			namespace: "test-ns",
-			spec: BackupJobSpec{
+			spec: JobSpec{
 				Name:   "backup-job",
 				Labels: map[string]string{"app": "backup"},
 				Containers: []corev1.Container{
@@ -138,7 +138,7 @@ func TestClient_CreateBackupJob(t *testing.T) {
 		{
 			name:      "create job with environment variables",
 			namespace: "test-ns",
-			spec: BackupJobSpec{
+			spec: JobSpec{
 				Name: "restore-job",
 				Containers: []corev1.Container{
 					{
@@ -161,7 +161,7 @@ func TestClient_CreateBackupJob(t *testing.T) {
 		{
 			name:      "create job with resource requirements",
 			namespace: "test-ns",
-			spec: BackupJobSpec{
+			spec: JobSpec{
 				Name: "resource-job",
 				Containers: []corev1.Container{
 					{
@@ -190,7 +190,7 @@ func TestClient_CreateBackupJob(t *testing.T) {
 		{
 			name:      "create job with init containers",
 			namespace: "test-ns",
-			spec: BackupJobSpec{
+			spec: JobSpec{
 				Name: "init-job",
 				Containers: []corev1.Container{
 					{
@@ -215,7 +215,7 @@ func TestClient_CreateBackupJob(t *testing.T) {
 		{
 			name:      "create job with volumes and mounts",
 			namespace: "test-ns",
-			spec: BackupJobSpec{
+			spec: JobSpec{
 				Name: "volume-job",
 				Containers: []corev1.Container{
 					{
@@ -257,7 +257,7 @@ func TestClient_CreateBackupJob(t *testing.T) {
 		{
 			name:      "create job with security context",
 			namespace: "test-ns",
-			spec: BackupJobSpec{
+			spec: JobSpec{
 				Name: "secure-job",
 				Containers: []corev1.Container{
 					{
@@ -286,7 +286,7 @@ func TestClient_CreateBackupJob(t *testing.T) {
 		{
 			name:      "create job with node selector and tolerations",
 			namespace: "test-ns",
-			spec: BackupJobSpec{
+			spec: JobSpec{
 				Name: "scheduled-job",
 				Containers: []corev1.Container{
 					{
@@ -317,7 +317,7 @@ func TestClient_CreateBackupJob(t *testing.T) {
 		{
 			name:      "create job with image pull secrets",
 			namespace: "test-ns",
-			spec: BackupJobSpec{
+			spec: JobSpec{
 				Name: "private-image-job",
 				Containers: []corev1.Container{
 					{
@@ -342,7 +342,7 @@ func TestClient_CreateBackupJob(t *testing.T) {
 			fakeClient := fake.NewSimpleClientset()
 			client := &Client{clientset: fakeClient}
 
-			job, err := client.CreateBackupJob(tt.namespace, tt.spec)
+			job, err := client.CreateJob(tt.namespace, tt.spec)
 
 			if tt.expectError {
 				assert.Error(t, err)
