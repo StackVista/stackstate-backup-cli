@@ -2,9 +2,9 @@ package elasticsearch
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/stackvista/stackstate-backup-cli/cmd/cmdutils"
 	"github.com/stackvista/stackstate-backup-cli/internal/app"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/portforward"
@@ -25,15 +25,7 @@ func checkAndFinalizeCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		Long: `Check the status of a restore operation and perform finalization (scale up deployments) if complete.
 If the restore is still running and --wait is specified, wait for completion before finalizing.`,
 		Run: func(_ *cobra.Command, _ []string) {
-			appCtx, err := app.NewContext(globalFlags)
-			if err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-			if err := runCheckAndFinalize(appCtx); err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
+			cmdutils.Run(globalFlags, runCheckAndFinalize, cmdutils.MinioIsRequired)
 		},
 	}
 

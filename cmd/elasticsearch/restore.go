@@ -2,12 +2,12 @@ package elasticsearch
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/stackvista/stackstate-backup-cli/cmd/cmdutils"
 	"github.com/stackvista/stackstate-backup-cli/internal/app"
 	es "github.com/stackvista/stackstate-backup-cli/internal/clients/elasticsearch"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
@@ -38,15 +38,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		Short: "Restore Elasticsearch from a snapshot",
 		Long:  `Restore Elasticsearch indices from a snapshot. Deletes existing STS indices before restore. Waits for completion by default; use --background to run asynchronously.`,
 		Run: func(_ *cobra.Command, _ []string) {
-			appCtx, err := app.NewContext(globalFlags)
-			if err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-			if err := runRestore(appCtx); err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
+			cmdutils.Run(globalFlags, runRestore, cmdutils.MinioIsRequired)
 		}}
 
 	cmd.Flags().StringVarP(&snapshotName, "snapshot", "s", "", "Snapshot name to restore (mutually exclusive with --latest)")

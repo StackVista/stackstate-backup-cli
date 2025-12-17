@@ -70,6 +70,7 @@ elasticsearch:
 
 # Minio configuration for S3-compatible storage
 minio:
+  enabled: true
   service:
     name: suse-observability-minio
     port: 9000
@@ -138,6 +139,7 @@ settings:
     receiverBaseUrl: "http://suse-observability-receiver:7077"
     platformVersion: "5.2.0"
     zookeeperQuorum: "suse-observability-zookeeper:2181"
+    pvc: "suse-observability-settings-backup-data"
     job:
       labels:
         app: settings-restore
