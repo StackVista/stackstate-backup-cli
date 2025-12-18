@@ -15,7 +15,7 @@ import (
 
 const (
 	defaultHTTPClientTimeout     = 30 * time.Second
-	defaultOperationTimeout      = 30 * time.Second
+	defaultOperationTimeout      = 900 * time.Second
 	defaultOperationPollInterval = 2 * time.Second
 )
 
@@ -182,7 +182,7 @@ func (c *Client) waitForAction(ctx context.Context, operationID string, timeout,
 		case <-ticker.C:
 			action, err := c.GetRestoreStatus(ctx, operationID)
 			if err != nil {
-				return nil, fmt.Errorf("fail to get action with operation id: %s", operationID)
+				return nil, fmt.Errorf("fail to get action with operation id=%s : %w", operationID, err)
 			}
 			if action.Status == "success" || action.Status == "error" {
 				return action, nil

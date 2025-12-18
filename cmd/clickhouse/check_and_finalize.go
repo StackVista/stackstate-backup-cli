@@ -82,7 +82,7 @@ func checkAndFinalize(appCtx *app.Context, operationID string, waitForComplete b
 	}
 
 	// Restore still running
-	appCtx.Logger.Infof("Restore is still in progress (status: %s)", status)
+	appCtx.Logger.Infof("Restore is still in progress (status: %s)", status.Status)
 
 	// Status is "in progress" or other
 	if waitForComplete {
