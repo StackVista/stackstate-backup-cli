@@ -2,6 +2,7 @@ package settings
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -124,7 +125,7 @@ func runRestore(appCtx *app.Context) error {
 // waitAndCleanupRestoreJob waits for job completion and cleans up resources
 func waitAndCleanupRestoreJob(k8sClient *k8s.Client, namespace, jobName string, log *logger.Logger) error {
 	restore.PrintWaitingMessage(log, "settings", jobName, namespace)
-	return restore.WaitAndCleanup(k8sClient, namespace, jobName, log, true)
+	return restore.WaitAndCleanup(k8sClient, namespace, jobName, log, false)
 }
 
 // getLatestBackup retrieves the most recent backup from all sources (S3 and PVC)
@@ -161,7 +162,6 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 		Tolerations:      k8s.ConvertTolerations(config.Settings.Restore.Job.Tolerations),
 		Affinity:         k8s.ConvertAffinity(config.Settings.Restore.Job.Affinity),
 		Containers:       []corev1.Container{buildContainer(restoreEnvVar, []string{"/backup-restore-scripts/restore-settings-backup.sh"}, config)},
-		InitContainers:   buildInitContainers(config),
 		Volumes:          buildVolumes(config, defaultMode),
 	}
 
@@ -183,6 +183,7 @@ func buildEnvVar(extraEnvVar []corev1.EnvVar, config *config.Config) []corev1.En
 		{Name: "RECEIVER_BASE_URL", Value: config.Settings.Restore.ReceiverBaseURL},
 		{Name: "PLATFORM_VERSION", Value: config.Settings.Restore.PlatformVersion},
 		{Name: "ZOOKEEPER_QUORUM", Value: config.Settings.Restore.ZookeeperQuorum},
+		{Name: "BACKUP_CONFIGURATION_UPLOAD_REMOTE", Value: strconv.FormatBool(config.Minio.Enabled)},
 	}
 	commonVar = append(commonVar, extraEnvVar...)
 	return commonVar
@@ -196,23 +197,6 @@ func buildVolumeMounts() []corev1.VolumeMount {
 		{Name: "minio-keys", MountPath: "/aws-keys"},
 		{Name: "tmp-data", MountPath: "/tmp-data"},
 		{Name: "settings-backup-data", MountPath: "/settings-backup-data"},
-	}
-}
-
-// buildInitContainers constructs init containers for the restore job
-func buildInitContainers(config *config.Config) []corev1.Container {
-	return []corev1.Container{
-		{
-			Name:            "wait",
-			Image:           config.Settings.Restore.Job.WaitImage,
-			ImagePullPolicy: corev1.PullIfNotPresent,
-			Command: []string{
-				"sh",
-				"-c",
-				fmt.Sprintf("/entrypoint -c %s:%d -t 300", config.Minio.Service.Name, config.Minio.Service.Port),
-			},
-			SecurityContext: k8s.ConvertSecurityContext(config.Settings.Restore.Job.ContainerSecurityContext),
-		},
 	}
 }
 

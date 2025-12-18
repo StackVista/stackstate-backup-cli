@@ -28,7 +28,7 @@ import (
 const (
 	isMultiPartArchive            = false
 	expectedListJobPodCount       = 1
-	expectedListJobContainerCount = 2
+	expectedListJobContainerCount = 1
 )
 
 func listCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
@@ -203,7 +203,7 @@ func getBackupListFromPVC(appCtx *app.Context) ([]BackupFileInfo, error) {
 		return nil, errors.New("fail to get backups from the list job")
 	}
 
-	files, err := ParseListJobOutput(jobPodLogs[0].ContainerLogs[1].Logs)
+	files, err := ParseListJobOutput(jobPodLogs[0].ContainerLogs[0].Logs)
 	if err != nil {
 		fmt.Printf("Error parsing files: %v\n", err)
 		return nil, fmt.Errorf("failed to parse list job output: %w", err)
@@ -231,7 +231,6 @@ func createListJob(k8sClient *k8s.Client, namespace string, jobName string, conf
 		Tolerations:      k8s.ConvertTolerations(config.Settings.Restore.Job.Tolerations),
 		Affinity:         k8s.ConvertAffinity(config.Settings.Restore.Job.Affinity),
 		Containers:       []corev1.Container{buildContainer(listEnvVar, []string{"bash", "-c", "find /settings-backup-data/ -maxdepth 1 -type f -printf '%T@ %f %s\n'"}, config)},
-		InitContainers:   buildInitContainers(config),
 		Volumes:          buildVolumes(config, defaultMode),
 	}
 
