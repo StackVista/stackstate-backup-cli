@@ -15,8 +15,8 @@ const (
 	defaultJobTTLSeconds = 86400
 )
 
-// BackupJobSpec contains all parameters needed to create a backup/restore job
-type BackupJobSpec struct {
+// JobSpec contains all parameters needed to create a backup/restore job
+type JobSpec struct {
 	// Job metadata
 	Name   string
 	Labels map[string]string
@@ -84,10 +84,10 @@ func (c *Client) CreatePVC(namespace string, spec PVCSpec) (*corev1.PersistentVo
 	return createdPVC, nil
 }
 
-// CreateBackupJob creates a Kubernetes Job for backup/restore operations
+// CreateJob creates a Kubernetes Job for backup/restore operations
 // Note: PVC must be created separately if needed using CreatePVC
 // Returns the created Job and any error
-func (c *Client) CreateBackupJob(namespace string, spec BackupJobSpec) (*batchv1.Job, error) {
+func (c *Client) CreateJob(namespace string, spec JobSpec) (*batchv1.Job, error) {
 	ctx := context.Background()
 
 	// Build Job spec

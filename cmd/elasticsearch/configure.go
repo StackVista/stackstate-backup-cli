@@ -2,9 +2,9 @@ package elasticsearch
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
+	"github.com/stackvista/stackstate-backup-cli/cmd/cmdutils"
 	"github.com/stackvista/stackstate-backup-cli/internal/app"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/portforward"
@@ -16,15 +16,7 @@ func configureCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		Short: "Configure Elasticsearch snapshot repository and SLM policy",
 		Long:  `Configure Elasticsearch snapshot repository and Snapshot Lifecycle Management (SLM) policy for automated backups.`,
 		Run: func(_ *cobra.Command, _ []string) {
-			appCtx, err := app.NewContext(globalFlags)
-			if err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-			if err := runConfigure(appCtx); err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
+			cmdutils.Run(globalFlags, runConfigure, cmdutils.MinioIsRequired)
 		},
 	}
 }

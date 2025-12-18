@@ -3,12 +3,12 @@ package stackgraph
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/spf13/cobra"
+	"github.com/stackvista/stackstate-backup-cli/cmd/cmdutils"
 	"github.com/stackvista/stackstate-backup-cli/internal/app"
 	s3client "github.com/stackvista/stackstate-backup-cli/internal/clients/s3"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
@@ -21,15 +21,7 @@ func listCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		Use:   "list",
 		Short: "List available Stackgraph backups from S3/Minio",
 		Run: func(_ *cobra.Command, _ []string) {
-			appCtx, err := app.NewContext(globalFlags)
-			if err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-			if err := runList(appCtx); err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
+			cmdutils.Run(globalFlags, runList, cmdutils.MinioIsRequired)
 		},
 	}
 }

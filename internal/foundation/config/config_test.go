@@ -359,6 +359,7 @@ func TestConfig_StructValidation(t *testing.T) {
 					},
 				},
 				Minio: MinioConfig{
+					Enabled: true,
 					Service: ServiceConfig{
 						Name:                 "minio",
 						Port:                 9000,
@@ -435,6 +436,7 @@ func TestConfig_StructValidation(t *testing.T) {
 						ReceiverBaseURL:            "http://receiver:7077",
 						PlatformVersion:            "5.2.0",
 						ZookeeperQuorum:            "zookeeper:2181",
+						PVC:                        "suse-observability-settings-backup-data",
 						Job: JobConfig{
 							Image:     "settings-backup:latest",
 							WaitImage: "wait:latest",

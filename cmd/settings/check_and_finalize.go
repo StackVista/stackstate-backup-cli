@@ -1,10 +1,8 @@
 package settings
 
 import (
-	"fmt"
-	"os"
-
 	"github.com/spf13/cobra"
+	"github.com/stackvista/stackstate-backup-cli/cmd/cmdutils"
 	"github.com/stackvista/stackstate-backup-cli/internal/app"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/restore"
@@ -33,15 +31,7 @@ Examples:
   # Wait for job completion and cleanup
   sts-backup settings check-and-finalize --job settings-restore-20250128t143000 --wait -n my-namespace`,
 		Run: func(_ *cobra.Command, _ []string) {
-			appCtx, err := app.NewContext(globalFlags)
-			if err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-			if err := runCheckAndFinalize(appCtx); err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
+			cmdutils.Run(globalFlags, runCheckAndFinalize, cmdutils.MinioIsNotRequired)
 		},
 	}
 

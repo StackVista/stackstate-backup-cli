@@ -24,6 +24,7 @@ const (
 // minimalMinioStackgraphConfig provides the required Minio and Stackgraph configuration for tests
 const minimalMinioStackgraphConfig = `
 minio:
+  enabled: true
   service:
     name: minio
     port: 9000
@@ -79,6 +80,7 @@ settings:
     receiverBaseUrl: "http://receiver:7077"
     platformVersion: "5.2.0"
     zookeeperQuorum: "zookeeper:2181"
+    pvc: "suse-observability-settings-backup-data"
     job:
       image: settings-backup:latest
       waitImage: wait:latest

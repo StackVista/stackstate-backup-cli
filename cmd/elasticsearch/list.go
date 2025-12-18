@@ -2,10 +2,10 @@ package elasticsearch
 
 import (
 	"fmt"
-	"os"
 	"sort"
 
 	"github.com/spf13/cobra"
+	"github.com/stackvista/stackstate-backup-cli/cmd/cmdutils"
 	"github.com/stackvista/stackstate-backup-cli/internal/app"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/output"
@@ -17,15 +17,7 @@ func listCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		Use:   "list",
 		Short: "List available Elasticsearch snapshots",
 		Run: func(_ *cobra.Command, _ []string) {
-			appCtx, err := app.NewContext(globalFlags)
-			if err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-			if err := runListSnapshots(appCtx); err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
+			cmdutils.Run(globalFlags, runListSnapshots, cmdutils.MinioIsRequired)
 		},
 	}
 }

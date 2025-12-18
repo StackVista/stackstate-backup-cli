@@ -3,13 +3,13 @@ package victoriametrics
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/spf13/cobra"
+	"github.com/stackvista/stackstate-backup-cli/cmd/cmdutils"
 	"github.com/stackvista/stackstate-backup-cli/internal/app"
 	"github.com/stackvista/stackstate-backup-cli/internal/clients/k8s"
 	s3client "github.com/stackvista/stackstate-backup-cli/internal/clients/s3"
@@ -40,15 +40,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		Short: "Restore VictoriaMetrics from a backup archive",
 		Long:  `Restore VictoriaMetrics data from a backup archive stored in S3/Minio. Can use --latest or --archive to specify which backup to restore.`,
 		Run: func(_ *cobra.Command, _ []string) {
-			appCtx, err := app.NewContext(globalFlags)
-			if err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-			if err := runRestore(appCtx); err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
+			cmdutils.Run(globalFlags, runRestore, cmdutils.MinioIsRequired)
 		},
 	}
 
@@ -205,7 +197,7 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 	jobLabels := k8s.MergeLabels(config.Kubernetes.CommonLabels, config.VictoriaMetrics.Restore.Job.Labels)
 
 	// Build job spec using configuration
-	spec := k8s.BackupJobSpec{
+	spec := k8s.JobSpec{
 		Name:             jobName,
 		Labels:           jobLabels,
 		ImagePullSecrets: k8s.ConvertImagePullSecrets(config.VictoriaMetrics.Restore.Job.ImagePullSecrets),
@@ -219,7 +211,7 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 	}
 
 	// Create job
-	_, err := k8sClient.CreateBackupJob(namespace, spec)
+	_, err := k8sClient.CreateJob(namespace, spec)
 	if err != nil {
 		return fmt.Errorf("failed to create job: %w", err)
 	}

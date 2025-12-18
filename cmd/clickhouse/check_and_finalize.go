@@ -2,10 +2,10 @@ package clickhouse
 
 import (
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/stackvista/stackstate-backup-cli/cmd/cmdutils"
 	"github.com/stackvista/stackstate-backup-cli/internal/app"
 	"github.com/stackvista/stackstate-backup-cli/internal/clients/clickhouse"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
@@ -34,15 +34,7 @@ func checkAndFinalizeCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 This command is useful when a restore was started without --wait flag or was interrupted.
 It will check the restore status and if complete, execute post-restore tasks and scale up resources.`,
 		Run: func(_ *cobra.Command, _ []string) {
-			appCtx, err := app.NewContext(globalFlags)
-			if err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
-			if err := runCheckAndFinalize(appCtx); err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
-				os.Exit(1)
-			}
+			cmdutils.Run(globalFlags, runCheckAndFinalize, cmdutils.MinioIsRequired)
 		},
 	}
 

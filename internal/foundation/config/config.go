@@ -79,6 +79,7 @@ type ServiceConfig struct {
 
 // MinioConfig holds Minio-specific configuration
 type MinioConfig struct {
+	Enabled   bool          `yaml:"enabled" validate:"boolean"`
 	Service   ServiceConfig `yaml:"service" validate:"required"`
 	AccessKey string        `yaml:"accessKey" validate:"required"` // From secret
 	SecretKey string        `yaml:"secretKey" validate:"required"` // From secret
@@ -133,6 +134,7 @@ type SettingsRestoreConfig struct {
 	PlatformVersion            string    `yaml:"platformVersion" validate:"required"`
 	ZookeeperQuorum            string    `yaml:"zookeeperQuorum" validate:"required"`
 	Job                        JobConfig `yaml:"job" validate:"required"`
+	PVC                        string    `yaml:"pvc" validate:"required"`
 }
 
 // ClickhouseConfig holds Clickhouse-specific configuration
