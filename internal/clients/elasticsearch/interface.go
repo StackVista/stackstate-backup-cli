@@ -8,7 +8,6 @@ type Interface interface {
 	GetSnapshot(repository, snapshotName string) (*Snapshot, error)
 	RestoreSnapshot(repository, snapshotName, indicesPattern string) error
 	GetRestoreStatus(repository, snapshotName string) (string, bool, error)
-	IsRestoreInProgress(repository, snapshotName string) (bool, error)
 
 	// Index operations
 	ListIndices(pattern string) ([]string, error)

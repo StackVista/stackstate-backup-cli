@@ -93,11 +93,7 @@ func (m *mockESClientForRestore) ConfigureSLMPolicy(_, _, _, _, _, _ string, _, 
 }
 
 func (m *mockESClientForRestore) GetRestoreStatus(_, _ string) (string, bool, error) {
-	return "NOT_FOUND", true, nil
-}
-
-func (m *mockESClientForRestore) IsRestoreInProgress(_, _ string) (bool, error) {
-	return false, nil
+	return "SUCCESS", true, nil
 }
 
 // TestRestoreCmd_Unit tests the command structure

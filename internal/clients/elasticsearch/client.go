@@ -15,12 +15,7 @@ import (
 // Restore status constants
 const (
 	StatusSuccess    = "SUCCESS"
-	StatusFailed     = "FAILED"
 	StatusInProgress = "IN_PROGRESS"
-	StatusNotFound   = "NOT_FOUND"
-	StatusPartial    = "PARTIAL"
-	StatusStarted    = "STARTED"
-	StatusInit       = "INIT"
 )
 
 // Client represents an Elasticsearch client
@@ -362,79 +357,52 @@ func (c *Client) RestoreSnapshot(repository, snapshotName, indicesPattern string
 	return nil
 }
 
-// RestoreStatusResponse represents the response from Elasticsearch restore status API
-type RestoreStatusResponse struct {
-	Snapshots []struct {
-		Snapshot string `json:"snapshot"`
-		State    string `json:"state"`
-		Shards   struct {
-			Total      int `json:"total"`
-			Failed     int `json:"failed"`
-			Successful int `json:"successful"`
-		} `json:"shards_stats"`
-	} `json:"snapshots"`
+// RecoveryInfo represents the recovery status of a shard from _cat/recovery API
+type RecoveryInfo struct {
+	Index      string `json:"index"`
+	Shard      string `json:"shard"`
+	Type       string `json:"type"`
+	Stage      string `json:"stage"`
+	Repository string `json:"repository"`
+	Snapshot   string `json:"snapshot"`
 }
 
-// GetRestoreStatus checks the status of a restore operation
+// GetRestoreStatus checks the status of a restore operation by examining active shard recoveries.
+// When a snapshot is being restored, shards are recovered with type "snapshot".
 // Returns: (statusMessage, isComplete, error)
-// Status can be: "IN_PROGRESS", "SUCCESS", "FAILED", "NOT_FOUND"
+// Status can be: "IN_PROGRESS", "SUCCESS"
 func (c *Client) GetRestoreStatus(repository, snapshotName string) (string, bool, error) {
-	res, err := c.es.Snapshot.Status(
-		c.es.Snapshot.Status.WithContext(context.Background()),
-		c.es.Snapshot.Status.WithRepository(repository),
-		c.es.Snapshot.Status.WithSnapshot(snapshotName),
+	// Use _cat/recovery API to check for active snapshot recoveries.
+	// This shows shards that are currently being recovered from a snapshot.
+	res, err := c.es.Cat.Recovery(
+		c.es.Cat.Recovery.WithContext(context.Background()),
+		c.es.Cat.Recovery.WithFormat("json"),
+		c.es.Cat.Recovery.WithActiveOnly(true),
+		c.es.Cat.Recovery.WithH("index,shard,type,stage,repository,snapshot"),
 	)
 	if err != nil {
-		return "", false, fmt.Errorf("failed to get restore status: %w", err)
+		return "", false, fmt.Errorf("failed to get recovery status: %w", err)
 	}
 	defer res.Body.Close()
-
-	// 404 means no restore is in progress
-	if res.StatusCode == http.StatusNotFound {
-		return StatusNotFound, true, nil
-	}
 
 	if res.IsError() {
 		return "", false, fmt.Errorf("elasticsearch returned error: %s", res.String())
 	}
 
-	var statusResp RestoreStatusResponse
-	if err := json.NewDecoder(res.Body).Decode(&statusResp); err != nil {
+	var recoveries []RecoveryInfo
+	if err := json.NewDecoder(res.Body).Decode(&recoveries); err != nil {
 		return "", false, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// If no snapshots are being restored, it's complete
-	if len(statusResp.Snapshots) == 0 {
-		return StatusSuccess, true, nil
+	// Check if any active recovery is from the specified snapshot
+	for _, recovery := range recoveries {
+		if recovery.Type == "snapshot" &&
+			recovery.Repository == repository &&
+			recovery.Snapshot == snapshotName {
+			return StatusInProgress, false, nil
+		}
 	}
 
-	// Check the state of the snapshot
-	snapshotStatus := statusResp.Snapshots[0]
-	state := snapshotStatus.State
-
-	switch state {
-	case StatusSuccess, StatusPartial:
-		return StatusSuccess, true, nil
-	case StatusFailed:
-		return StatusFailed, true, nil
-	case StatusInProgress, StatusStarted, StatusInit:
-		return StatusInProgress, false, nil
-	default:
-		return state, false, nil
-	}
-}
-
-// IsRestoreInProgress checks if a restore operation is currently in progress
-func (c *Client) IsRestoreInProgress(repository, snapshotName string) (bool, error) {
-	status, isComplete, err := c.GetRestoreStatus(repository, snapshotName)
-	if err != nil {
-		return false, err
-	}
-
-	// If status is NOT_FOUND or complete, no restore in progress
-	if status == "NOT_FOUND" || isComplete {
-		return false, nil
-	}
-
-	return true, nil
+	// No active recoveries from this snapshot - restore is complete
+	return StatusSuccess, true, nil
 }
