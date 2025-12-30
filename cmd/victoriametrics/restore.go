@@ -102,7 +102,7 @@ func runRestore(appCtx *app.Context) error {
 
 	// Setup Kubernetes resources for restore job
 	appCtx.Logger.Println()
-	if err := restore.EnsureRestoreResources(appCtx.K8sClient, appCtx.Namespace, appCtx.Config, appCtx.Logger); err != nil {
+	if err := restore.EnsureResources(appCtx.K8sClient, appCtx.Namespace, appCtx.Config, appCtx.Logger); err != nil {
 		return err
 	}
 
