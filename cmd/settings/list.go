@@ -160,6 +160,13 @@ func getBackupListFromS3(appCtx *app.Context) ([]BackupFileInfo, error) {
 }
 
 func getBackupListFromPVC(appCtx *app.Context) ([]BackupFileInfo, error) {
+
+	// Setup Kubernetes resources for list job
+	appCtx.Logger.Println()
+	if err := restore.EnsureResources(appCtx.K8sClient, appCtx.Namespace, appCtx.Config, appCtx.Logger); err != nil {
+		return nil, err
+	}
+
 	// Create list job
 	appCtx.Logger.Println()
 	appCtx.Logger.Infof("Creating job to list Settings backups stored on PVC...")

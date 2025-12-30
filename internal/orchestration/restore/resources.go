@@ -16,8 +16,8 @@ const (
 	RestoreScriptsConfigMap = "suse-observability-backup-cli-restore-scripts"
 )
 
-// EnsureRestoreResources ensures that required Kubernetes resources exist for the restore job
-func EnsureRestoreResources(k8sClient *k8s.Client, namespace string, config *config.Config, log *logger.Logger) error {
+// EnsureResources ensures that required Kubernetes resources exist for the restore job
+func EnsureResources(k8sClient *k8s.Client, namespace string, config *config.Config, log *logger.Logger) error {
 	// Ensure backup scripts ConfigMap exists
 	log.Infof("Ensuring backup scripts ConfigMap exists...")
 
