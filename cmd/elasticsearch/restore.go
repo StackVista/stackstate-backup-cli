@@ -14,6 +14,7 @@ import (
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/portforward"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/restore"
+	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/restorelock"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/scale"
 )
 
@@ -91,9 +92,17 @@ func runRestore(appCtx *app.Context) error {
 		}
 	}
 
-	// Scale down deployments before restore
+	// Scale down deployments before restore (with lock protection)
 	appCtx.Logger.Println()
-	_, err = scale.ScaleDown(appCtx.K8sClient, appCtx.Namespace, appCtx.Config.Elasticsearch.Restore.ScaleDownLabelSelector, appCtx.Logger)
+	scaleDownLabelSelector := appCtx.Config.Elasticsearch.Restore.ScaleDownLabelSelector
+	_, err = scale.ScaleDownWithLock(scale.ScaleDownWithLockParams{
+		K8sClient:     appCtx.K8sClient,
+		Namespace:     appCtx.Namespace,
+		LabelSelector: scaleDownLabelSelector,
+		Datastore:     restorelock.DatastoreElasticsearch,
+		AllSelectors:  appCtx.Config.GetAllScaleDownSelectors(),
+		Log:           appCtx.Logger,
+	})
 	if err != nil {
 		return err
 	}

@@ -391,11 +391,12 @@ See [internal/foundation/config/testdata/validConfigMapConfig.yaml](internal/fou
 │   ├── orchestration/            # Layer 2: Workflows
 │   │   ├── portforward/          # Port-forwarding lifecycle
 │   │   ├── scale/                # Deployment/StatefulSet scaling
-│   │   └── restore/              # Restore job orchestration
-│   │       ├── confirmation.go   # User confirmation prompts
-│   │       ├── finalize.go       # Job status check and cleanup
-│   │       ├── job.go            # Job lifecycle management
-│   │       └── resources.go      # Restore resource management
+│   │   ├── restore/              # Restore job orchestration
+│   │   │   ├── confirmation.go   # User confirmation prompts
+│   │   │   ├── finalize.go       # Job status check and cleanup
+│   │   │   ├── job.go            # Job lifecycle management
+│   │   │   └── resources.go      # Restore resource management
+│   │   └── restorelock/          # Parallel restore prevention
 │   ├── app/                      # Layer 3: Dependency container
 │   │   └── app.go                # Application context and DI
 │   └── scripts/                  # Embedded bash scripts
@@ -409,6 +410,24 @@ See [internal/foundation/config/testdata/validConfigMapConfig.yaml](internal/fou
 - **Dependency Injection**: Centralized dependency creation via `internal/app/` eliminates boilerplate from commands
 - **Testability**: All layers use interfaces for external dependencies, enabling comprehensive unit testing
 - **Clean Commands**: Commands are thin (50-100 lines) and focused on business logic
+- **Restore Lock Protection**: Prevents parallel restore operations that could corrupt data
+
+### Restore Lock Protection
+
+The CLI prevents parallel restore operations that could corrupt data by using Kubernetes annotations on Deployments and StatefulSets. When a restore starts:
+
+1. The CLI checks for existing restore locks before proceeding
+2. If another restore is in progress for the same datastore, the operation is blocked
+3. Mutually exclusive datastores are also protected (e.g., Stackgraph and Settings cannot restore simultaneously because they share HBase data)
+
+If a restore operation is interrupted or fails, the lock annotations may remain. To manually remove a stuck lock:
+
+```bash
+kubectl annotate deployment,statefulset -l <label-selector> \
+  stackstate.com/restore-in-progress- \
+  stackstate.com/restore-started-at- \
+  -n <namespace>
+```
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed information about the layered architecture and design patterns.
 

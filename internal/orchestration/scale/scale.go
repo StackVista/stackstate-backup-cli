@@ -10,6 +10,7 @@ import (
 
 	"github.com/stackvista/stackstate-backup-cli/internal/clients/k8s"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
+	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/restorelock"
 )
 
 const (
@@ -59,6 +60,75 @@ func ScaleDown(k8sClient *k8s.Client, namespace, labelSelector string, log *logg
 	}
 
 	return scaledApps, nil
+}
+
+// ScaleDownWithLockParams contains parameters for ScaleDownWithLock
+//
+//nolint:revive // Keeping full name for clarity as this is a parameter struct for ScaleDownWithLock
+type ScaleDownWithLockParams struct {
+	K8sClient     *k8s.Client
+	Namespace     string
+	LabelSelector string
+	Datastore     string
+	AllSelectors  restorelock.LabelSelectors
+	Log           *logger.Logger
+}
+
+// ScaleDownWithLock scales down deployments and statefulsets with restore lock protection.
+// It first checks for conflicting restore operations, acquires a lock, then scales down.
+// Returns the list of scaled resources that can be used for scale-up later.
+//
+//nolint:revive // Package name "scale" with function "ScaleDownWithLock" is intentionally verbose for clarity
+func ScaleDownWithLock(params ScaleDownWithLockParams) ([]k8s.AppsScale, error) {
+	// Check for conflicting restore operations
+	if err := restorelock.CheckForConflicts(
+		params.K8sClient,
+		params.Namespace,
+		params.Datastore,
+		params.AllSelectors,
+		params.Log,
+	); err != nil {
+		return nil, err
+	}
+
+	// Acquire restore lock before scaling down
+	if err := restorelock.AcquireLock(
+		params.K8sClient,
+		params.Namespace,
+		params.LabelSelector,
+		params.Datastore,
+		params.Log,
+	); err != nil {
+		return nil, err
+	}
+
+	// Scale down (the lock will be released when scaling up or on cleanup)
+	scaledApps, err := ScaleDown(params.K8sClient, params.Namespace, params.LabelSelector, params.Log)
+	if err != nil {
+		// Release lock on scale-down failure
+		_ = restorelock.ReleaseLock(params.K8sClient, params.Namespace, params.LabelSelector, params.Log)
+		return nil, err
+	}
+
+	return scaledApps, nil
+}
+
+// ScaleUpAndReleaseLock scales up resources from annotations and releases the restore lock
+//
+//nolint:revive // Package name "scale" with function "ScaleUpAndReleaseLock" is intentionally verbose for clarity
+func ScaleUpAndReleaseLock(k8sClient *k8s.Client, namespace, labelSelector string, log *logger.Logger) error {
+	// Scale up first
+	if err := ScaleUpFromAnnotations(k8sClient, namespace, labelSelector, log); err != nil {
+		return err
+	}
+
+	// Release restore lock
+	if err := restorelock.ReleaseLock(k8sClient, namespace, labelSelector, log); err != nil {
+		log.Warningf("Failed to release restore lock: %v", err)
+		// Don't return error - scale up succeeded, lock release is secondary
+	}
+
+	return nil
 }
 
 // waitForPodsToTerminate polls for pod termination until all pods matching the label selector are gone

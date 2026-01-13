@@ -39,7 +39,8 @@ stackstate-backup-cli/
 │   ├── orchestration/       # Layer 2: Workflows
 │   │   ├── portforward/     # Port-forwarding orchestration
 │   │   ├── scale/           # Deployment/StatefulSet scaling workflows
-│   │   └── restore/         # Restore job orchestration
+│   │   ├── restore/         # Restore job orchestration
+│   │   └── restorelock/     # Restore lock mechanism (prevents parallel restores)
 │   │
 │   ├── app/                 # Layer 3: Dependency Container
 │   │   └── app.go           # Application context and dependency injection
@@ -126,6 +127,7 @@ appCtx.Formatter
 - `portforward/`: Manages Kubernetes port-forwarding lifecycle
 - `scale/`: Deployment and StatefulSet scaling workflows with detailed logging
 - `restore/`: Restore job orchestration (confirmation, job lifecycle, finalization, resource management)
+- `restorelock/`: Prevents parallel restore operations using Kubernetes annotations
 
 **Dependency Rules**:
 - ✅ Can import: `internal/foundation/*`, `internal/clients/*`
@@ -317,15 +319,44 @@ Log:           log,
 
 ### 7. Structured Logging
 
-All operations use structured logging with consistent levels:
+All operations use structured logging with consistent levels and emoji prefixes for visual clarity:
 
 ```go
-log.Infof("Starting operation...")
-log.Debugf("Detail: %v", detail)
-log.Warningf("Non-fatal issue: %v", warning)
-log.Errorf("Operation failed: %v", err)
-log.Successf("Operation completed successfully")
+log.Infof("Starting operation...")           // No prefix
+log.Debugf("Detail: %v", detail)             // 🛠️ DEBUG:
+log.Warningf("Non-fatal issue: %v", warning) // ⚠️ Warning:
+log.Errorf("Operation failed: %v", err)      // ❌ Error:
+log.Successf("Operation completed")          // ✅
 ```
+
+### 8. Restore Lock Pattern
+
+The `restorelock` package prevents parallel restore operations that could corrupt data:
+
+```go
+// Scale down with automatic lock acquisition
+scaledApps, err := scale.ScaleDownWithLock(scale.ScaleDownWithLockParams{
+    K8sClient:     k8sClient,
+    Namespace:     namespace,
+    LabelSelector: selector,
+    Datastore:     restorelock.DatastoreStackgraph,
+    AllSelectors:  config.GetAllScaleDownSelectors(),
+    Log:           log,
+})
+
+// Scale up and release lock
+defer scale.ScaleUpAndReleaseLock(k8sClient, namespace, selector, log)
+```
+
+**How it works**:
+1. Before scaling down, checks for existing restore locks on Deployments/StatefulSets
+2. Detects conflicts for the same datastore or mutually exclusive datastores (e.g., Stackgraph and Settings)
+3. Sets annotations (`stackstate.com/restore-in-progress`, `stackstate.com/restore-started-at`) on resources
+4. Releases locks when scaling up or on failure
+
+**Mutual Exclusion Groups**:
+- Stackgraph and Settings restores are mutually exclusive (both modify HBase data)
+- Other datastores (Elasticsearch, ClickHouse, VictoriaMetrics) are independent
 
 ## Testing Strategy
 

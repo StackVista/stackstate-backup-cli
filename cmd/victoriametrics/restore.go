@@ -17,6 +17,7 @@ import (
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/portforward"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/restore"
+	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/restorelock"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/scale"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -82,19 +83,26 @@ func runRestore(appCtx *app.Context) error {
 		}
 	}
 
-	// Scale down workload before restore
+	// Scale down workload before restore (with lock protection)
 	appCtx.Logger.Println()
 	scaleDownLabelSelector := appCtx.Config.VictoriaMetrics.Restore.ScaleDownLabelSelector
-	scaledStatefulSets, err := scale.ScaleDown(appCtx.K8sClient, appCtx.Namespace, scaleDownLabelSelector, appCtx.Logger)
+	scaledStatefulSets, err := scale.ScaleDownWithLock(scale.ScaleDownWithLockParams{
+		K8sClient:     appCtx.K8sClient,
+		Namespace:     appCtx.Namespace,
+		LabelSelector: scaleDownLabelSelector,
+		Datastore:     restorelock.DatastoreVictoriaMetrics,
+		AllSelectors:  appCtx.Config.GetAllScaleDownSelectors(),
+		Log:           appCtx.Logger,
+	})
 	if err != nil {
 		return err
 	}
 
-	// Ensure workload are scaled back up on exit (even if restore fails)
+	// Ensure workload are scaled back up and lock released on exit (even if restore fails)
 	defer func() {
 		if len(scaledStatefulSets) > 0 && !background {
 			appCtx.Logger.Println()
-			if err := scale.ScaleUpFromAnnotations(appCtx.K8sClient, appCtx.Namespace, scaleDownLabelSelector, appCtx.Logger); err != nil {
+			if err := scale.ScaleUpAndReleaseLock(appCtx.K8sClient, appCtx.Namespace, scaleDownLabelSelector, appCtx.Logger); err != nil {
 				appCtx.Logger.Warningf("Failed to scale up workload: %v", err)
 			}
 		}

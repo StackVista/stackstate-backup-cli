@@ -134,7 +134,7 @@ func TestLogger_Successf(t *testing.T) {
 				output := buf.String()
 				assert.Contains(t, output, "Completed task")
 				if tt.containsSymbol {
-					assert.Contains(t, output, "✓")
+					assert.Contains(t, output, "✅")
 				}
 			} else {
 				assert.Empty(t, buf.String())
@@ -329,7 +329,7 @@ func TestLogger_MultipleCalls(t *testing.T) {
 	assert.Len(t, lines, 4)
 
 	assert.Contains(t, output, "Starting process")
-	assert.Contains(t, output, "DEBUG: Debug details")
-	assert.Contains(t, output, "✓ Process completed")
-	assert.Contains(t, output, "Warning: Cleanup recommended")
+	assert.Contains(t, output, "🛠️ DEBUG: Debug details")
+	assert.Contains(t, output, "✅ Process completed")
+	assert.Contains(t, output, "⚠️ Warning: Cleanup recommended")
 }

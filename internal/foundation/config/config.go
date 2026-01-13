@@ -354,3 +354,24 @@ type CLIGlobalFlags struct {
 func NewCLIGlobalFlags() *CLIGlobalFlags {
 	return &CLIGlobalFlags{}
 }
+
+// Datastore identifiers (must match restorelock package constants)
+const (
+	DatastoreElasticsearch   = "elasticsearch"
+	DatastoreClickhouse      = "clickhouse"
+	DatastoreVictoriaMetrics = "victoriametrics"
+	DatastoreStackgraph      = "stackgraph"
+	DatastoreSettings        = "settings"
+)
+
+// GetAllScaleDownSelectors returns a map of all datastore scale-down label selectors.
+// This is used by the restore lock mechanism to check for conflicting operations.
+func (c *Config) GetAllScaleDownSelectors() map[string]string {
+	return map[string]string{
+		DatastoreElasticsearch:   c.Elasticsearch.Restore.ScaleDownLabelSelector,
+		DatastoreClickhouse:      c.Clickhouse.Restore.ScaleDownLabelSelector,
+		DatastoreVictoriaMetrics: c.VictoriaMetrics.Restore.ScaleDownLabelSelector,
+		DatastoreStackgraph:      c.Stackgraph.Restore.ScaleDownLabelSelector,
+		DatastoreSettings:        c.Settings.Restore.ScaleDownLabelSelector,
+	}
+}

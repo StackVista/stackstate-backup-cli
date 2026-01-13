@@ -48,7 +48,7 @@ func runCheckAndFinalize(appCtx *app.Context) error {
 		Namespace:     appCtx.Namespace,
 		JobName:       checkJobName,
 		ServiceName:   "victoria-metrics",
-		ScaleUpFn:     scale.ScaleUpFromAnnotations,
+		ScaleUpFn:     scale.ScaleUpAndReleaseLock,
 		ScaleDownFn:   scale.ScaleDown,
 		ScaleSelector: appCtx.Config.VictoriaMetrics.Restore.ScaleDownLabelSelector,
 		CleanupPVC:    false,
