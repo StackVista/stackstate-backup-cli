@@ -3,6 +3,7 @@ package restorelock
 import (
 	"testing"
 
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -14,27 +15,27 @@ func TestGetMutualExclusionGroup(t *testing.T) {
 	}{
 		{
 			name:      "elasticsearch has no exclusion group",
-			datastore: DatastoreElasticsearch,
+			datastore: config.DatastoreElasticsearch,
 			want:      "",
 		},
 		{
 			name:      "clickhouse has no exclusion group",
-			datastore: DatastoreClickhouse,
+			datastore: config.DatastoreClickhouse,
 			want:      "",
 		},
 		{
 			name:      "victoriametrics has no exclusion group",
-			datastore: DatastoreVictoriaMetrics,
+			datastore: config.DatastoreVictoriaMetrics,
 			want:      "",
 		},
 		{
 			name:      "stackgraph has stackgraph group",
-			datastore: DatastoreStackgraph,
+			datastore: config.DatastoreStackgraph,
 			want:      ExclusionGroupStackgraph,
 		},
 		{
 			name:      "settings has stackgraph group",
-			datastore: DatastoreSettings,
+			datastore: config.DatastoreSettings,
 			want:      ExclusionGroupStackgraph,
 		},
 		{
@@ -66,7 +67,7 @@ func TestGetDatastoresInGroup(t *testing.T) {
 		{
 			name:  "stackgraph group contains stackgraph and settings",
 			group: ExclusionGroupStackgraph,
-			want:  []string{DatastoreStackgraph, DatastoreSettings},
+			want:  []string{config.DatastoreStackgraph, config.DatastoreSettings},
 		},
 		{
 			name:  "unknown group returns nil",
@@ -96,38 +97,38 @@ func TestAreDatastoresMutuallyExclusive(t *testing.T) {
 	}{
 		{
 			name:       "stackgraph and settings are mutually exclusive",
-			datastore1: DatastoreStackgraph,
-			datastore2: DatastoreSettings,
+			datastore1: config.DatastoreStackgraph,
+			datastore2: config.DatastoreSettings,
 			want:       true,
 		},
 		{
 			name:       "settings and stackgraph are mutually exclusive (reversed)",
-			datastore1: DatastoreSettings,
-			datastore2: DatastoreStackgraph,
+			datastore1: config.DatastoreSettings,
+			datastore2: config.DatastoreStackgraph,
 			want:       true,
 		},
 		{
 			name:       "elasticsearch and clickhouse are not mutually exclusive",
-			datastore1: DatastoreElasticsearch,
-			datastore2: DatastoreClickhouse,
+			datastore1: config.DatastoreElasticsearch,
+			datastore2: config.DatastoreClickhouse,
 			want:       false,
 		},
 		{
 			name:       "stackgraph and elasticsearch are not mutually exclusive",
-			datastore1: DatastoreStackgraph,
-			datastore2: DatastoreElasticsearch,
+			datastore1: config.DatastoreStackgraph,
+			datastore2: config.DatastoreElasticsearch,
 			want:       false,
 		},
 		{
 			name:       "same datastore (stackgraph) is technically mutually exclusive with itself",
-			datastore1: DatastoreStackgraph,
-			datastore2: DatastoreStackgraph,
+			datastore1: config.DatastoreStackgraph,
+			datastore2: config.DatastoreStackgraph,
 			want:       true,
 		},
 		{
 			name:       "same datastore (elasticsearch) without group is not mutually exclusive",
-			datastore1: DatastoreElasticsearch,
-			datastore2: DatastoreElasticsearch,
+			datastore1: config.DatastoreElasticsearch,
+			datastore2: config.DatastoreElasticsearch,
 			want:       false,
 		},
 	}

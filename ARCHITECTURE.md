@@ -339,7 +339,7 @@ scaledApps, err := scale.ScaleDownWithLock(scale.ScaleDownWithLockParams{
     K8sClient:     k8sClient,
     Namespace:     namespace,
     LabelSelector: selector,
-    Datastore:     restorelock.DatastoreStackgraph,
+    Datastore:     config.DatastoreStackgraph,
     AllSelectors:  config.GetAllScaleDownSelectors(),
     Log:           log,
 })

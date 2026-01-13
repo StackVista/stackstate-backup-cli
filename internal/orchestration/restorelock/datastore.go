@@ -2,14 +2,7 @@
 // for the same datastore or mutually exclusive datastores.
 package restorelock
 
-// Datastore identifiers used for restore lock tracking
-const (
-	DatastoreElasticsearch   = "elasticsearch"
-	DatastoreClickhouse      = "clickhouse"
-	DatastoreVictoriaMetrics = "victoriametrics"
-	DatastoreStackgraph      = "stackgraph"
-	DatastoreSettings        = "settings"
-)
+import "github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 
 // MutualExclusionGroup identifies a group of datastores that cannot be restored concurrently.
 // Datastores in the same group share underlying data or have dependencies that make
@@ -23,11 +16,11 @@ const (
 // datastoreMutualExclusion maps each datastore to its mutual exclusion group.
 // Empty string means no mutual exclusion (datastore is independent).
 var datastoreMutualExclusion = map[string]string{
-	DatastoreElasticsearch:   "", // Independent
-	DatastoreClickhouse:      "", // Independent
-	DatastoreVictoriaMetrics: "", // Independent
-	DatastoreStackgraph:      ExclusionGroupStackgraph,
-	DatastoreSettings:        ExclusionGroupStackgraph,
+	config.DatastoreElasticsearch:   "", // Independent
+	config.DatastoreClickhouse:      "", // Independent
+	config.DatastoreVictoriaMetrics: "", // Independent
+	config.DatastoreStackgraph:      ExclusionGroupStackgraph,
+	config.DatastoreSettings:        ExclusionGroupStackgraph,
 }
 
 // GetMutualExclusionGroup returns the mutual exclusion group for a datastore.

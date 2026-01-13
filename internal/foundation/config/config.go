@@ -355,7 +355,7 @@ func NewCLIGlobalFlags() *CLIGlobalFlags {
 	return &CLIGlobalFlags{}
 }
 
-// Datastore identifiers (must match restorelock package constants)
+// Datastore identifiers used across the application
 const (
 	DatastoreElasticsearch   = "elasticsearch"
 	DatastoreClickhouse      = "clickhouse"

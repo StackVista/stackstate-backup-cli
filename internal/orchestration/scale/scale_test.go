@@ -6,7 +6,9 @@ import (
 	"time"
 
 	"github.com/stackvista/stackstate-backup-cli/internal/clients/k8s"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
+	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/restorelock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
@@ -584,4 +586,570 @@ func createPod(name string, labels map[string]string, phase corev1.PodPhase) cor
 			Phase: phase,
 		},
 	}
+}
+
+// Helper function to create a statefulset for testing
+func createStatefulSet(name string, labels map[string]string, replicas int32) appsv1.StatefulSet {
+	return appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "test-ns",
+			Labels:    labels,
+		},
+		Spec: appsv1.StatefulSetSpec{
+			Replicas: &replicas,
+			Selector: &metav1.LabelSelector{
+				MatchLabels: labels,
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: labels,
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "test-container",
+							Image: "test:latest",
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+// TestScaleDownWithLock_Success tests successful lock acquisition and scale down
+func TestScaleDownWithLock_Success(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	client := k8s.NewTestClient(fakeClient)
+	log := logger.New(true, false)
+
+	// Create test deployment
+	deploy := createDeployment("api-server", map[string]string{"app": "test"}, 3)
+	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(
+		context.Background(), &deploy, metav1.CreateOptions{},
+	)
+	require.NoError(t, err)
+
+	allSelectors := restorelock.LabelSelectors{
+		config.DatastoreElasticsearch: "app=test",
+	}
+
+	// Execute scale down with lock
+	scaledApps, err := ScaleDownWithLock(ScaleDownWithLockParams{
+		K8sClient:     client,
+		Namespace:     "test-ns",
+		LabelSelector: "app=test",
+		Datastore:     config.DatastoreElasticsearch,
+		AllSelectors:  allSelectors,
+		Log:           log,
+	})
+
+	// Assertions
+	require.NoError(t, err)
+	require.Len(t, scaledApps, 1)
+	assert.Equal(t, "api-server", scaledApps[0].Name)
+	assert.Equal(t, int32(3), scaledApps[0].Replicas)
+
+	// Verify deployment was scaled to 0
+	deployAfter, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "api-server", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(0), *deployAfter.Spec.Replicas)
+
+	// Verify lock was acquired on deployment
+	assert.Equal(t, config.DatastoreElasticsearch, deployAfter.Annotations[k8s.RestoreInProgressAnnotation])
+	assert.NotEmpty(t, deployAfter.Annotations[k8s.RestoreStartedAtAnnotation])
+}
+
+// TestScaleDownWithLock_ConflictSameDatastore tests conflict detection for same datastore
+func TestScaleDownWithLock_ConflictSameDatastore(t *testing.T) {
+	// Create deployment with existing lock
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "api-server",
+			Namespace: "test-ns",
+			Labels: map[string]string{
+				"app": "test",
+			},
+			Annotations: map[string]string{
+				k8s.RestoreInProgressAnnotation: config.DatastoreElasticsearch,
+				k8s.RestoreStartedAtAnnotation:  "2025-01-01T12:00:00Z",
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: new(int32),
+		},
+	}
+
+	fakeClient := fake.NewSimpleClientset(deploy)
+	client := k8s.NewTestClient(fakeClient)
+	log := logger.New(true, false)
+
+	allSelectors := restorelock.LabelSelectors{
+		config.DatastoreElasticsearch: "app=test",
+	}
+
+	// Execute scale down with lock - should fail due to existing lock
+	scaledApps, err := ScaleDownWithLock(ScaleDownWithLockParams{
+		K8sClient:     client,
+		Namespace:     "test-ns",
+		LabelSelector: "app=test",
+		Datastore:     config.DatastoreElasticsearch,
+		AllSelectors:  allSelectors,
+		Log:           log,
+	})
+
+	// Assertions
+	require.Error(t, err)
+	assert.Nil(t, scaledApps)
+	assert.Contains(t, err.Error(), "cannot start elasticsearch restore")
+	assert.Contains(t, err.Error(), "another elasticsearch restore is already in progress")
+}
+
+// TestScaleDownWithLock_MutualExclusionConflict tests mutual exclusion between stackgraph and settings
+func TestScaleDownWithLock_MutualExclusionConflict(t *testing.T) {
+	// Create stackgraph deployment with existing lock
+	stackgraphDeploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "stackgraph-server",
+			Namespace: "test-ns",
+			Labels: map[string]string{
+				"app": "stackgraph",
+			},
+			Annotations: map[string]string{
+				k8s.RestoreInProgressAnnotation: config.DatastoreStackgraph,
+				k8s.RestoreStartedAtAnnotation:  "2025-01-01T12:00:00Z",
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: new(int32),
+		},
+	}
+
+	// Settings deployment without lock
+	settingsDeploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "settings-server",
+			Namespace: "test-ns",
+			Labels: map[string]string{
+				"app": "settings",
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: new(int32),
+		},
+	}
+
+	fakeClient := fake.NewSimpleClientset(stackgraphDeploy, settingsDeploy)
+	client := k8s.NewTestClient(fakeClient)
+	log := logger.New(true, false)
+
+	allSelectors := restorelock.LabelSelectors{
+		config.DatastoreStackgraph: "app=stackgraph",
+		config.DatastoreSettings:   "app=settings",
+	}
+
+	// Try to start settings restore when stackgraph is running
+	scaledApps, err := ScaleDownWithLock(ScaleDownWithLockParams{
+		K8sClient:     client,
+		Namespace:     "test-ns",
+		LabelSelector: "app=settings",
+		Datastore:     config.DatastoreSettings,
+		AllSelectors:  allSelectors,
+		Log:           log,
+	})
+
+	// Assertions
+	require.Error(t, err)
+	assert.Nil(t, scaledApps)
+	assert.Contains(t, err.Error(), "cannot start settings restore")
+	assert.Contains(t, err.Error(), "stackgraph restore is in progress")
+	assert.Contains(t, err.Error(), "mutually exclusive")
+}
+
+// TestScaleDownWithLock_NoConflictIndependentDatastores tests that independent datastores don't block each other
+func TestScaleDownWithLock_NoConflictIndependentDatastores(t *testing.T) {
+	// Create elasticsearch deployment with existing lock
+	esDeploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "es-master",
+			Namespace: "test-ns",
+			Labels: map[string]string{
+				"app": "elasticsearch",
+			},
+			Annotations: map[string]string{
+				k8s.RestoreInProgressAnnotation: config.DatastoreElasticsearch,
+				k8s.RestoreStartedAtAnnotation:  "2025-01-01T12:00:00Z",
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: new(int32),
+		},
+	}
+
+	// Clickhouse deployment without lock
+	chDeploy := createDeployment("clickhouse", map[string]string{"app": "clickhouse"}, 2)
+
+	fakeClient := fake.NewSimpleClientset(esDeploy, &chDeploy)
+	client := k8s.NewTestClient(fakeClient)
+	log := logger.New(true, false)
+
+	allSelectors := restorelock.LabelSelectors{
+		config.DatastoreElasticsearch: "app=elasticsearch",
+		config.DatastoreClickhouse:    "app=clickhouse",
+	}
+
+	// Clickhouse restore should succeed even though elasticsearch is running
+	scaledApps, err := ScaleDownWithLock(ScaleDownWithLockParams{
+		K8sClient:     client,
+		Namespace:     "test-ns",
+		LabelSelector: "app=clickhouse",
+		Datastore:     config.DatastoreClickhouse,
+		AllSelectors:  allSelectors,
+		Log:           log,
+	})
+
+	// Assertions
+	require.NoError(t, err)
+	assert.Len(t, scaledApps, 1)
+	assert.Equal(t, "clickhouse", scaledApps[0].Name)
+}
+
+// TestScaleDownWithLock_WithStatefulSet tests lock acquisition with statefulsets
+func TestScaleDownWithLock_WithStatefulSet(t *testing.T) {
+	// Setup fake client and create statefulset
+	sts := createStatefulSet("victoria-metrics", map[string]string{"app": "vm"}, 2)
+	fakeClient := fake.NewSimpleClientset(&sts)
+	client := k8s.NewTestClient(fakeClient)
+	log := logger.New(true, false)
+
+	allSelectors := restorelock.LabelSelectors{config.DatastoreVictoriaMetrics: "app=vm"}
+
+	// Execute scale down with lock and verify success
+	scaledApps, err := ScaleDownWithLock(ScaleDownWithLockParams{
+		K8sClient:     client,
+		Namespace:     "test-ns",
+		LabelSelector: "app=vm",
+		Datastore:     config.DatastoreVictoriaMetrics,
+		AllSelectors:  allSelectors,
+		Log:           log,
+	})
+	require.NoError(t, err)
+	require.Len(t, scaledApps, 1)
+	assert.Equal(t, "victoria-metrics", scaledApps[0].Name)
+
+	// Verify statefulset state after scale down
+	stsAfter, err := fakeClient.AppsV1().StatefulSets("test-ns").Get(
+		context.Background(), "victoria-metrics", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+
+	// StatefulSet-specific assertions
+	assert.Equal(t, int32(0), *stsAfter.Spec.Replicas, "StatefulSet should be scaled to 0")
+	assert.Equal(t, config.DatastoreVictoriaMetrics, stsAfter.Annotations[k8s.RestoreInProgressAnnotation])
+	assert.Equal(t, "2", stsAfter.Annotations[k8s.PreRestoreReplicasAnnotation], "Original replica count should be saved")
+}
+
+// TestScaleUpAndReleaseLock_Success tests successful scale up and lock release
+func TestScaleUpAndReleaseLock_Success(t *testing.T) {
+	// Create deployment at scale 0 with annotations (lock and replicas)
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "api-server",
+			Namespace: "test-ns",
+			Labels: map[string]string{
+				"app": "test",
+			},
+			Annotations: map[string]string{
+				k8s.PreRestoreReplicasAnnotation: "3",
+				k8s.RestoreInProgressAnnotation:  config.DatastoreElasticsearch,
+				k8s.RestoreStartedAtAnnotation:   "2025-01-01T12:00:00Z",
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: new(int32), // 0 replicas
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": "test"},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{"app": "test"},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "test", Image: "test:latest"},
+					},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewSimpleClientset(deploy)
+	client := k8s.NewTestClient(fakeClient)
+	log := logger.New(true, false)
+
+	// Verify lock exists before scale up
+	locks, err := client.GetRestoreLocks("test-ns", "app=test")
+	require.NoError(t, err)
+	require.Len(t, locks, 1)
+
+	// Execute scale up and release lock
+	err = ScaleUpAndReleaseLock(client, "test-ns", "app=test", log)
+
+	// Assertions
+	require.NoError(t, err)
+
+	// Verify deployment was scaled up
+	deployAfter, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "api-server", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(3), *deployAfter.Spec.Replicas)
+
+	// Verify pre-restore annotation was removed
+	_, exists := deployAfter.Annotations[k8s.PreRestoreReplicasAnnotation]
+	assert.False(t, exists)
+
+	// Verify lock was released
+	locks, err = client.GetRestoreLocks("test-ns", "app=test")
+	require.NoError(t, err)
+	assert.Empty(t, locks)
+}
+
+// TestScaleUpAndReleaseLock_WithStatefulSet tests scale up and lock release with statefulset
+func TestScaleUpAndReleaseLock_WithStatefulSet(t *testing.T) {
+	// Create statefulset at scale 0 with annotations
+	sts := &appsv1.StatefulSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "victoria-metrics",
+			Namespace: "test-ns",
+			Labels: map[string]string{
+				"app": "vm",
+			},
+			Annotations: map[string]string{
+				k8s.PreRestoreReplicasAnnotation: "2",
+				k8s.RestoreInProgressAnnotation:  config.DatastoreVictoriaMetrics,
+				k8s.RestoreStartedAtAnnotation:   "2025-01-01T12:00:00Z",
+			},
+		},
+		Spec: appsv1.StatefulSetSpec{
+			Replicas: new(int32), // 0 replicas
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": "vm"},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{"app": "vm"},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "test", Image: "test:latest"},
+					},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewSimpleClientset(sts)
+	client := k8s.NewTestClient(fakeClient)
+	log := logger.New(true, false)
+
+	// Execute scale up and release lock
+	err := ScaleUpAndReleaseLock(client, "test-ns", "app=vm", log)
+
+	// Assertions
+	require.NoError(t, err)
+
+	// Verify statefulset was scaled up
+	stsAfter, err := fakeClient.AppsV1().StatefulSets("test-ns").Get(
+		context.Background(), "victoria-metrics", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), *stsAfter.Spec.Replicas)
+
+	// Verify lock was released
+	locks, err := client.GetRestoreLocks("test-ns", "app=vm")
+	require.NoError(t, err)
+	assert.Empty(t, locks)
+}
+
+// TestScaleUpAndReleaseLock_NoLockToRelease tests scale up when no lock exists
+func TestScaleUpAndReleaseLock_NoLockToRelease(t *testing.T) {
+	// Create deployment with pre-restore annotation but no lock
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "api-server",
+			Namespace: "test-ns",
+			Labels: map[string]string{
+				"app": "test",
+			},
+			Annotations: map[string]string{
+				k8s.PreRestoreReplicasAnnotation: "3",
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: new(int32), // 0 replicas
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": "test"},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{"app": "test"},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "test", Image: "test:latest"},
+					},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewSimpleClientset(deploy)
+	client := k8s.NewTestClient(fakeClient)
+	log := logger.New(true, false)
+
+	// Execute scale up and release lock - should succeed even with no lock
+	err := ScaleUpAndReleaseLock(client, "test-ns", "app=test", log)
+
+	// Assertions - should succeed (release lock is non-blocking)
+	require.NoError(t, err)
+
+	// Verify deployment was scaled up
+	deployAfter, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "api-server", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(3), *deployAfter.Spec.Replicas)
+}
+
+// TestScaleUpAndReleaseLock_ScaleUpError tests that error is returned when scale up fails
+func TestScaleUpAndReleaseLock_ScaleUpError(t *testing.T) {
+	// Create deployment with invalid annotation value
+	deploy := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "api-server",
+			Namespace: "test-ns",
+			Labels: map[string]string{
+				"app": "test",
+			},
+			Annotations: map[string]string{
+				k8s.PreRestoreReplicasAnnotation: "invalid",
+				k8s.RestoreInProgressAnnotation:  config.DatastoreElasticsearch,
+				k8s.RestoreStartedAtAnnotation:   "2025-01-01T12:00:00Z",
+			},
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: new(int32),
+			Selector: &metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": "test"},
+			},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{
+					Labels: map[string]string{"app": "test"},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{Name: "test", Image: "test:latest"},
+					},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewSimpleClientset(deploy)
+	client := k8s.NewTestClient(fakeClient)
+	log := logger.New(true, false)
+
+	// Execute scale up - should fail due to invalid annotation
+	err := ScaleUpAndReleaseLock(client, "test-ns", "app=test", log)
+
+	// Assertions
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to parse replicas annotation")
+
+	// Verify lock was NOT released (scale up failed before release)
+	locks, err := client.GetRestoreLocks("test-ns", "app=test")
+	require.NoError(t, err)
+	assert.Len(t, locks, 1) // Lock should still exist
+}
+
+// TestScaleDownWithLock_FullCycle tests the complete lock/scale-down/restore/scale-up/unlock cycle
+func TestScaleDownWithLock_FullCycle(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	client := k8s.NewTestClient(fakeClient)
+	log := logger.New(true, false)
+
+	// Create test deployment
+	deploy := createDeployment("api-server", map[string]string{"app": "test"}, 3)
+	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(
+		context.Background(), &deploy, metav1.CreateOptions{},
+	)
+	require.NoError(t, err)
+
+	allSelectors := restorelock.LabelSelectors{
+		config.DatastoreElasticsearch: "app=test",
+	}
+
+	// Step 1: Scale down with lock
+	scaledApps, err := ScaleDownWithLock(ScaleDownWithLockParams{
+		K8sClient:     client,
+		Namespace:     "test-ns",
+		LabelSelector: "app=test",
+		Datastore:     config.DatastoreElasticsearch,
+		AllSelectors:  allSelectors,
+		Log:           log,
+	})
+	require.NoError(t, err)
+	assert.Len(t, scaledApps, 1)
+
+	// Verify deployment is scaled down and locked
+	deployMid, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "api-server", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(0), *deployMid.Spec.Replicas)
+	assert.Equal(t, config.DatastoreElasticsearch, deployMid.Annotations[k8s.RestoreInProgressAnnotation])
+	assert.Equal(t, "3", deployMid.Annotations[k8s.PreRestoreReplicasAnnotation])
+
+	// Verify a second restore attempt would be blocked
+	_, err = ScaleDownWithLock(ScaleDownWithLockParams{
+		K8sClient:     client,
+		Namespace:     "test-ns",
+		LabelSelector: "app=test",
+		Datastore:     config.DatastoreElasticsearch,
+		AllSelectors:  allSelectors,
+		Log:           log,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "another elasticsearch restore is already in progress")
+
+	// Step 2: Scale up and release lock
+	err = ScaleUpAndReleaseLock(client, "test-ns", "app=test", log)
+	require.NoError(t, err)
+
+	// Verify deployment is scaled back up and lock is released
+	deployFinal, err := fakeClient.AppsV1().Deployments("test-ns").Get(
+		context.Background(), "api-server", metav1.GetOptions{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, int32(3), *deployFinal.Spec.Replicas)
+	_, hasLock := deployFinal.Annotations[k8s.RestoreInProgressAnnotation]
+	assert.False(t, hasLock)
+	_, hasReplicas := deployFinal.Annotations[k8s.PreRestoreReplicasAnnotation]
+	assert.False(t, hasReplicas)
+
+	// Verify a new restore can now be started
+	scaledApps, err = ScaleDownWithLock(ScaleDownWithLockParams{
+		K8sClient:     client,
+		Namespace:     "test-ns",
+		LabelSelector: "app=test",
+		Datastore:     config.DatastoreElasticsearch,
+		AllSelectors:  allSelectors,
+		Log:           log,
+	})
+	require.NoError(t, err)
+	assert.Len(t, scaledApps, 1)
 }

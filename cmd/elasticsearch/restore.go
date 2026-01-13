@@ -14,7 +14,6 @@ import (
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/portforward"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/restore"
-	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/restorelock"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/scale"
 )
 
@@ -99,7 +98,7 @@ func runRestore(appCtx *app.Context) error {
 		K8sClient:     appCtx.K8sClient,
 		Namespace:     appCtx.Namespace,
 		LabelSelector: scaleDownLabelSelector,
-		Datastore:     restorelock.DatastoreElasticsearch,
+		Datastore:     config.DatastoreElasticsearch,
 		AllSelectors:  appCtx.Config.GetAllScaleDownSelectors(),
 		Log:           appCtx.Logger,
 	})

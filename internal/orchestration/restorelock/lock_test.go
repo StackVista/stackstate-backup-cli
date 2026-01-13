@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stackvista/stackstate-backup-cli/internal/clients/k8s"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -41,7 +42,7 @@ func TestFormatConflictError(t *testing.T) {
 
 	t.Run(tests[0].name, func(t *testing.T) {
 		err := formatConflictError(
-			DatastoreElasticsearch, DatastoreElasticsearch,
+			config.DatastoreElasticsearch, config.DatastoreElasticsearch,
 			"Deployment", "api-server", "2025-01-01T12:00:00Z",
 			false,
 			"test-ns", "app=api",
@@ -54,7 +55,7 @@ func TestFormatConflictError(t *testing.T) {
 
 	t.Run(tests[1].name, func(t *testing.T) {
 		err := formatConflictError(
-			DatastoreSettings, DatastoreStackgraph,
+			config.DatastoreSettings, config.DatastoreStackgraph,
 			"Deployment", "server", "2025-01-01T12:00:00Z",
 			true,
 			"test-ns", "app=stackgraph",
@@ -83,12 +84,12 @@ func TestCheckForConflicts_NoConflict(t *testing.T) {
 	log := logger.New(false, true)
 
 	allSelectors := LabelSelectors{
-		DatastoreElasticsearch: "app=api",
-		DatastoreStackgraph:    "app=stackgraph",
-		DatastoreSettings:      "app=settings",
+		config.DatastoreElasticsearch: "app=api",
+		config.DatastoreStackgraph:    "app=stackgraph",
+		config.DatastoreSettings:      "app=settings",
 	}
 
-	err := CheckForConflicts(k8sClient, "test-ns", DatastoreElasticsearch, allSelectors, log)
+	err := CheckForConflicts(k8sClient, "test-ns", config.DatastoreElasticsearch, allSelectors, log)
 	assert.NoError(t, err)
 }
 
@@ -102,7 +103,7 @@ func TestCheckForConflicts_SameDatastoreConflict(t *testing.T) {
 				"app": "api",
 			},
 			Annotations: map[string]string{
-				k8s.RestoreInProgressAnnotation: DatastoreElasticsearch,
+				k8s.RestoreInProgressAnnotation: config.DatastoreElasticsearch,
 				k8s.RestoreStartedAtAnnotation:  "2025-01-01T12:00:00Z",
 			},
 		},
@@ -113,12 +114,12 @@ func TestCheckForConflicts_SameDatastoreConflict(t *testing.T) {
 	log := logger.New(false, true)
 
 	allSelectors := LabelSelectors{
-		DatastoreElasticsearch: "app=api",
-		DatastoreStackgraph:    "app=stackgraph",
-		DatastoreSettings:      "app=settings",
+		config.DatastoreElasticsearch: "app=api",
+		config.DatastoreStackgraph:    "app=stackgraph",
+		config.DatastoreSettings:      "app=settings",
 	}
 
-	err := CheckForConflicts(k8sClient, "test-ns", DatastoreElasticsearch, allSelectors, log)
+	err := CheckForConflicts(k8sClient, "test-ns", config.DatastoreElasticsearch, allSelectors, log)
 	require.Error(t, err)
 
 	errMsg := err.Error()
@@ -138,7 +139,7 @@ func TestCheckForConflicts_MutualExclusionConflict(t *testing.T) {
 				"app": "stackgraph",
 			},
 			Annotations: map[string]string{
-				k8s.RestoreInProgressAnnotation: DatastoreStackgraph,
+				k8s.RestoreInProgressAnnotation: config.DatastoreStackgraph,
 				k8s.RestoreStartedAtAnnotation:  "2025-01-01T12:00:00Z",
 			},
 		},
@@ -160,13 +161,13 @@ func TestCheckForConflicts_MutualExclusionConflict(t *testing.T) {
 	log := logger.New(false, true)
 
 	allSelectors := LabelSelectors{
-		DatastoreElasticsearch: "app=elasticsearch",
-		DatastoreStackgraph:    "app=stackgraph",
-		DatastoreSettings:      "app=settings",
+		config.DatastoreElasticsearch: "app=elasticsearch",
+		config.DatastoreStackgraph:    "app=stackgraph",
+		config.DatastoreSettings:      "app=settings",
 	}
 
 	// Try to start settings restore when stackgraph is running
-	err := CheckForConflicts(k8sClient, "test-ns", DatastoreSettings, allSelectors, log)
+	err := CheckForConflicts(k8sClient, "test-ns", config.DatastoreSettings, allSelectors, log)
 	require.Error(t, err)
 
 	errMsg := err.Error()
@@ -186,7 +187,7 @@ func TestCheckForConflicts_NoMutualExclusionBetweenIndependentDatastores(t *test
 				"app": "elasticsearch",
 			},
 			Annotations: map[string]string{
-				k8s.RestoreInProgressAnnotation: DatastoreElasticsearch,
+				k8s.RestoreInProgressAnnotation: config.DatastoreElasticsearch,
 				k8s.RestoreStartedAtAnnotation:  "2025-01-01T12:00:00Z",
 			},
 		},
@@ -208,14 +209,14 @@ func TestCheckForConflicts_NoMutualExclusionBetweenIndependentDatastores(t *test
 	log := logger.New(false, true)
 
 	allSelectors := LabelSelectors{
-		DatastoreElasticsearch: "app=elasticsearch",
-		DatastoreClickhouse:    "app=clickhouse",
-		DatastoreStackgraph:    "app=stackgraph",
-		DatastoreSettings:      "app=settings",
+		config.DatastoreElasticsearch: "app=elasticsearch",
+		config.DatastoreClickhouse:    "app=clickhouse",
+		config.DatastoreStackgraph:    "app=stackgraph",
+		config.DatastoreSettings:      "app=settings",
 	}
 
 	// Clickhouse restore should succeed even though elasticsearch is running
-	err := CheckForConflicts(k8sClient, "test-ns", DatastoreClickhouse, allSelectors, log)
+	err := CheckForConflicts(k8sClient, "test-ns", config.DatastoreClickhouse, allSelectors, log)
 	assert.NoError(t, err)
 }
 
@@ -234,14 +235,14 @@ func TestAcquireLock(t *testing.T) {
 	k8sClient := k8s.NewTestClient(fakeClientset)
 	log := logger.New(false, true)
 
-	err := AcquireLock(k8sClient, "test-ns", "app=api", DatastoreElasticsearch, log)
+	err := AcquireLock(k8sClient, "test-ns", "app=api", config.DatastoreElasticsearch, log)
 	require.NoError(t, err)
 
 	// Verify lock was set
 	locks, err := k8sClient.GetRestoreLocks("test-ns", "app=api")
 	require.NoError(t, err)
 	require.Len(t, locks, 1)
-	assert.Equal(t, DatastoreElasticsearch, locks[0].Datastore)
+	assert.Equal(t, config.DatastoreElasticsearch, locks[0].Datastore)
 	assert.Equal(t, "Deployment", locks[0].ResourceKind)
 	assert.Equal(t, "api-server", locks[0].ResourceName)
 	assert.NotEmpty(t, locks[0].StartedAt)
@@ -256,7 +257,7 @@ func TestReleaseLock(t *testing.T) {
 				"app": "api",
 			},
 			Annotations: map[string]string{
-				k8s.RestoreInProgressAnnotation: DatastoreElasticsearch,
+				k8s.RestoreInProgressAnnotation: config.DatastoreElasticsearch,
 				k8s.RestoreStartedAtAnnotation:  "2025-01-01T12:00:00Z",
 			},
 		},
@@ -291,7 +292,7 @@ func TestCheckForConflicts_StatefulSetLock(t *testing.T) {
 				"app": "vm",
 			},
 			Annotations: map[string]string{
-				k8s.RestoreInProgressAnnotation: DatastoreVictoriaMetrics,
+				k8s.RestoreInProgressAnnotation: config.DatastoreVictoriaMetrics,
 				k8s.RestoreStartedAtAnnotation:  "2025-01-01T12:00:00Z",
 			},
 		},
@@ -302,10 +303,10 @@ func TestCheckForConflicts_StatefulSetLock(t *testing.T) {
 	log := logger.New(false, true)
 
 	allSelectors := LabelSelectors{
-		DatastoreVictoriaMetrics: "app=vm",
+		config.DatastoreVictoriaMetrics: "app=vm",
 	}
 
-	err := CheckForConflicts(k8sClient, "test-ns", DatastoreVictoriaMetrics, allSelectors, log)
+	err := CheckForConflicts(k8sClient, "test-ns", config.DatastoreVictoriaMetrics, allSelectors, log)
 	require.Error(t, err)
 
 	errMsg := err.Error()

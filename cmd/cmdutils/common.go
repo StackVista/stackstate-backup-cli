@@ -16,7 +16,7 @@ const (
 func Run(globalFlags *config.CLIGlobalFlags, runFunc func(ctx *app.Context) error, minioRequired bool) {
 	appCtx, err := app.NewContext(globalFlags)
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "❌ Error: %v\n", err)
 		os.Exit(1)
 	}
 	if minioRequired && !appCtx.Config.Minio.Enabled {
