@@ -106,7 +106,17 @@ func ScaleDownWithLock(params ScaleDownWithLockParams) ([]k8s.AppsScale, error) 
 	scaledApps, err := ScaleDown(params.K8sClient, params.Namespace, params.LabelSelector, params.Log)
 	if err != nil {
 		// Release lock on scale-down failure
-		_ = restorelock.ReleaseLock(params.K8sClient, params.Namespace, params.LabelSelector, params.Log)
+		releaseLockErr := restorelock.ReleaseLock(params.K8sClient, params.Namespace, params.LabelSelector, params.Log)
+		if releaseLockErr != nil {
+			params.Log.Errorf("Failed to release lock for scale down deployments: %s", releaseLockErr.Error())
+			params.Log.Warningf("To manually remove a restore lock, run:\n"+
+				"  kubectl annotate deployment,statefulset -l %s %s- %s- -n %s",
+				params.LabelSelector,
+				k8s.RestoreInProgressAnnotation,
+				k8s.RestoreStartedAtAnnotation,
+				params.Namespace,
+			)
+		}
 		return nil, err
 	}
 
