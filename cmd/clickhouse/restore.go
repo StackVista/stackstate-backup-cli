@@ -69,10 +69,17 @@ func runRestore(appCtx *app.Context) error {
 		}
 	}
 
-	// Scale down deployments/statefulsets before restore
+	// Scale down deployments/statefulsets before restore (with lock protection)
 	appCtx.Logger.Println()
 	scaleDownLabelSelector := appCtx.Config.Clickhouse.Restore.ScaleDownLabelSelector
-	_, err := scale.ScaleDown(appCtx.K8sClient, appCtx.Namespace, scaleDownLabelSelector, appCtx.Logger)
+	_, err := scale.ScaleDownWithLock(scale.ScaleDownWithLockParams{
+		K8sClient:     appCtx.K8sClient,
+		Namespace:     appCtx.Namespace,
+		LabelSelector: scaleDownLabelSelector,
+		Datastore:     config.DatastoreClickhouse,
+		AllSelectors:  appCtx.Config.GetAllScaleDownSelectors(),
+		Log:           appCtx.Logger,
+	})
 	if err != nil {
 		return err
 	}

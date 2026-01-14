@@ -150,12 +150,26 @@ func (c *Client) PortForwardPod(namespace, podName string, localPort, remotePort
 const (
 	// PreRestoreReplicasAnnotation is the annotation key used to store original replica counts
 	PreRestoreReplicasAnnotation = "stackstate.com/pre-restore-replicas"
+
+	// RestoreInProgressAnnotation is the annotation key used to track which datastore restore is in progress
+	RestoreInProgressAnnotation = "stackstate.com/restore-in-progress"
+
+	// RestoreStartedAtAnnotation is the annotation key used to track when the restore started
+	RestoreStartedAtAnnotation = "stackstate.com/restore-started-at"
 )
 
 // AppsScale holds the name and original replica count of a scalable resource
 type AppsScale struct {
 	Name     string
 	Replicas int32
+}
+
+// RestoreLockInfo holds information about an active restore lock on a resource
+type RestoreLockInfo struct {
+	ResourceKind string // "Deployment" or "StatefulSet"
+	ResourceName string
+	Datastore    string
+	StartedAt    string
 }
 
 // ScalableResource abstracts operations on resources that can be scaled
@@ -412,4 +426,185 @@ func NewTestClient(clientset kubernetes.Interface) *Client {
 		restConfig: nil,
 		debug:      false,
 	}
+}
+
+// GetRestoreLocks returns all active restore locks on Deployments and StatefulSets
+// matching the given label selector
+func (c *Client) GetRestoreLocks(namespace, labelSelector string) ([]RestoreLockInfo, error) {
+	ctx := context.Background()
+	var locks []RestoreLockInfo
+
+	// Check Deployments
+	deployments, err := c.clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list deployments: %w", err)
+	}
+
+	for _, dep := range deployments.Items {
+		if datastore, ok := dep.Annotations[RestoreInProgressAnnotation]; ok {
+			locks = append(locks, RestoreLockInfo{
+				ResourceKind: "Deployment",
+				ResourceName: dep.Name,
+				Datastore:    datastore,
+				StartedAt:    dep.Annotations[RestoreStartedAtAnnotation],
+			})
+		}
+	}
+
+	// Check StatefulSets
+	statefulSets, err := c.clientset.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list statefulsets: %w", err)
+	}
+
+	for _, sts := range statefulSets.Items {
+		if datastore, ok := sts.Annotations[RestoreInProgressAnnotation]; ok {
+			locks = append(locks, RestoreLockInfo{
+				ResourceKind: "StatefulSet",
+				ResourceName: sts.Name,
+				Datastore:    datastore,
+				StartedAt:    sts.Annotations[RestoreStartedAtAnnotation],
+			})
+		}
+	}
+
+	return locks, nil
+}
+
+// SetRestoreLock sets the restore lock annotations on Deployments and StatefulSets
+// matching the given label selector
+func (c *Client) SetRestoreLock(namespace, labelSelector, datastore, startedAt string) error {
+	ctx := context.Background()
+
+	// Update Deployments
+	deployments, err := c.clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list deployments: %w", err)
+	}
+
+	for i := range deployments.Items {
+		dep := &deployments.Items[i]
+		if dep.Annotations == nil {
+			dep.Annotations = make(map[string]string)
+		}
+		dep.Annotations[RestoreInProgressAnnotation] = datastore
+		dep.Annotations[RestoreStartedAtAnnotation] = startedAt
+
+		if _, err := c.clientset.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("failed to set restore lock on deployment %s: %w", dep.Name, err)
+		}
+	}
+
+	// Update StatefulSets
+	statefulSets, err := c.clientset.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list statefulsets: %w", err)
+	}
+
+	for i := range statefulSets.Items {
+		sts := &statefulSets.Items[i]
+		if sts.Annotations == nil {
+			sts.Annotations = make(map[string]string)
+		}
+		sts.Annotations[RestoreInProgressAnnotation] = datastore
+		sts.Annotations[RestoreStartedAtAnnotation] = startedAt
+
+		if _, err := c.clientset.AppsV1().StatefulSets(namespace).Update(ctx, sts, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("failed to set restore lock on statefulset %s: %w", sts.Name, err)
+		}
+	}
+
+	return nil
+}
+
+// hasRestoreLockAnnotations checks if the given annotations map contains restore lock annotations
+func hasRestoreLockAnnotations(annotations map[string]string) bool {
+	if annotations == nil {
+		return false
+	}
+	_, hasLock := annotations[RestoreInProgressAnnotation]
+	_, hasStartedAt := annotations[RestoreStartedAtAnnotation]
+	return hasLock || hasStartedAt
+}
+
+// removeRestoreLockAnnotations removes restore lock annotations from the given map
+func removeRestoreLockAnnotations(annotations map[string]string) {
+	delete(annotations, RestoreInProgressAnnotation)
+	delete(annotations, RestoreStartedAtAnnotation)
+}
+
+// ClearRestoreLock removes the restore lock annotations from Deployments and StatefulSets
+// matching the given label selector
+func (c *Client) ClearRestoreLock(namespace, labelSelector string) error {
+	ctx := context.Background()
+
+	// Update Deployments
+	deployments, err := c.clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list deployments: %w", err)
+	}
+
+	for i := range deployments.Items {
+		if !hasRestoreLockAnnotations(deployments.Items[i].Annotations) {
+			continue
+		}
+
+		// Refetch to get latest version (may have been modified by scale-up)
+		dep, err := c.clientset.AppsV1().Deployments(namespace).Get(ctx, deployments.Items[i].Name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get deployment %s: %w", deployments.Items[i].Name, err)
+		}
+
+		if dep.Annotations == nil {
+			continue
+		}
+
+		removeRestoreLockAnnotations(dep.Annotations)
+
+		if _, err := c.clientset.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("failed to clear restore lock on deployment %s: %w", dep.Name, err)
+		}
+	}
+
+	// Update StatefulSets
+	statefulSets, err := c.clientset.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list statefulsets: %w", err)
+	}
+
+	for i := range statefulSets.Items {
+		if !hasRestoreLockAnnotations(statefulSets.Items[i].Annotations) {
+			continue
+		}
+
+		// Refetch to get latest version (may have been modified by scale-up)
+		sts, err := c.clientset.AppsV1().StatefulSets(namespace).Get(ctx, statefulSets.Items[i].Name, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get statefulset %s: %w", statefulSets.Items[i].Name, err)
+		}
+
+		if sts.Annotations == nil {
+			continue
+		}
+
+		removeRestoreLockAnnotations(sts.Annotations)
+
+		if _, err := c.clientset.AppsV1().StatefulSets(namespace).Update(ctx, sts, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("failed to clear restore lock on statefulset %s: %w", sts.Name, err)
+		}
+	}
+
+	return nil
 }

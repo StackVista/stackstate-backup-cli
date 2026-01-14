@@ -113,20 +113,22 @@ func waitAndFinalize(appCtx *app.Context, repository, snapshotName string) error
 	return finalizeRestore(appCtx)
 }
 
-// finalizeRestore performs post-restore finalization (scale up deployments)
+// finalizeRestore performs post-restore finalization (scale up deployments and release lock)
 func finalizeRestore(appCtx *app.Context) error {
 	appCtx.Logger.Println()
+	labelSelector := appCtx.Config.Elasticsearch.Restore.ScaleDownLabelSelector
 	scaleUpFn := func() error {
-		return scale.ScaleUpFromAnnotations(appCtx.K8sClient, appCtx.Namespace, appCtx.Config.Elasticsearch.Restore.ScaleDownLabelSelector, appCtx.Logger)
+		return scale.ScaleUpAndReleaseLock(appCtx.K8sClient, appCtx.Namespace, labelSelector, appCtx.Logger)
 	}
 
 	return restore.FinalizeRestore(scaleUpFn, appCtx.Logger)
 }
 
-// attemptScaleUp tries to scale up deployments (used when restore is not found/already complete)
+// attemptScaleUp tries to scale up deployments and release lock (used when restore is not found/already complete)
 func attemptScaleUp(appCtx *app.Context) error {
+	labelSelector := appCtx.Config.Elasticsearch.Restore.ScaleDownLabelSelector
 	scaleUpFn := func() error {
-		return scale.ScaleUpFromAnnotations(appCtx.K8sClient, appCtx.Namespace, appCtx.Config.Elasticsearch.Restore.ScaleDownLabelSelector, appCtx.Logger)
+		return scale.ScaleUpAndReleaseLock(appCtx.K8sClient, appCtx.Namespace, labelSelector, appCtx.Logger)
 	}
 
 	if err := scaleUpFn(); err != nil {

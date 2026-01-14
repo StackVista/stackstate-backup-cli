@@ -127,7 +127,7 @@ func waitAndFinalize(appCtx *app.Context, chClient clickhouse.Interface, operati
 	return finalizeRestore(appCtx)
 }
 
-// finalizeRestore finalizes the restore by executing SQL and scaling up
+// finalizeRestore finalizes the restore by executing SQL, scaling up, and releasing lock
 func finalizeRestore(appCtx *app.Context) error {
 	if err := executePostRestoreSQL(appCtx); err != nil {
 		appCtx.Logger.Warningf("Post-restore SQL failed: %v", err)
@@ -135,13 +135,13 @@ func finalizeRestore(appCtx *app.Context) error {
 
 	appCtx.Logger.Println()
 	scaleSelector := appCtx.Config.Clickhouse.Restore.ScaleDownLabelSelector
-	if err := scale.ScaleUpFromAnnotations(
+	if err := scale.ScaleUpAndReleaseLock(
 		appCtx.K8sClient,
 		appCtx.Namespace,
 		scaleSelector,
 		appCtx.Logger,
 	); err != nil {
-		return fmt.Errorf("failed to scale up: %w", err)
+		return fmt.Errorf("failed to scale up and release lock: %w", err)
 	}
 
 	appCtx.Logger.Println()

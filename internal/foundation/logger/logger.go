@@ -32,26 +32,26 @@ func (l *Logger) Infof(format string, args ...interface{}) {
 // Successf logs a success message
 func (l *Logger) Successf(format string, args ...interface{}) {
 	if !l.quiet {
-		_, _ = fmt.Fprintf(l.writer, "✓ "+format+"\n", args...)
+		_, _ = fmt.Fprintf(l.writer, "✅ "+format+"\n", args...)
 	}
 }
 
 // Warningf logs a warning message
 func (l *Logger) Warningf(format string, args ...interface{}) {
 	if !l.quiet {
-		_, _ = fmt.Fprintf(l.writer, "Warning: "+format+"\n", args...)
+		_, _ = fmt.Fprintf(l.writer, "⚠️ Warning: "+format+"\n", args...)
 	}
 }
 
 // Errorf logs an error message (always shown, even in quiet mode)
 func (l *Logger) Errorf(format string, args ...interface{}) {
-	_, _ = fmt.Fprintf(l.writer, "Error: "+format+"\n", args...)
+	_, _ = fmt.Fprintf(l.writer, "❌ Error: "+format+"\n", args...)
 }
 
 // Debug logs a debug message (only shown when debug mode is enabled)
 func (l *Logger) Debugf(format string, args ...interface{}) {
 	if l.debug {
-		_, _ = fmt.Fprintf(l.writer, "DEBUG: "+format+"\n", args...)
+		_, _ = fmt.Fprintf(l.writer, "🛠️ DEBUG: "+format+"\n", args...)
 	}
 }
 

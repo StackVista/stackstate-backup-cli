@@ -48,7 +48,7 @@ func runCheckAndFinalize(appCtx *app.Context) error {
 		Namespace:     appCtx.Namespace,
 		JobName:       checkJobName,
 		ServiceName:   "settings",
-		ScaleUpFn:     scale.ScaleUpFromAnnotations,
+		ScaleUpFn:     scale.ScaleUpAndReleaseLock,
 		ScaleDownFn:   scale.ScaleDown,
 		ScaleSelector: appCtx.Config.Settings.Restore.ScaleDownLabelSelector,
 		CleanupPVC:    false,

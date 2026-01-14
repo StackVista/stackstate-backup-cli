@@ -78,19 +78,26 @@ func runRestore(appCtx *app.Context) error {
 		}
 	}
 
-	// Scale down deployments before restore
+	// Scale down deployments before restore (with lock protection)
 	appCtx.Logger.Println()
 	scaleDownLabelSelector := appCtx.Config.Settings.Restore.ScaleDownLabelSelector
-	scaledDeployments, err := scale.ScaleDown(appCtx.K8sClient, appCtx.Namespace, scaleDownLabelSelector, appCtx.Logger)
+	scaledDeployments, err := scale.ScaleDownWithLock(scale.ScaleDownWithLockParams{
+		K8sClient:     appCtx.K8sClient,
+		Namespace:     appCtx.Namespace,
+		LabelSelector: scaleDownLabelSelector,
+		Datastore:     config.DatastoreSettings,
+		AllSelectors:  appCtx.Config.GetAllScaleDownSelectors(),
+		Log:           appCtx.Logger,
+	})
 	if err != nil {
 		return err
 	}
 
-	// Ensure deployments are scaled back up on exit (even if restore fails)
+	// Ensure deployments are scaled back up and lock released on exit (even if restore fails)
 	defer func() {
 		if len(scaledDeployments) > 0 && !background {
 			appCtx.Logger.Println()
-			if err := scale.ScaleUpFromAnnotations(appCtx.K8sClient, appCtx.Namespace, scaleDownLabelSelector, appCtx.Logger); err != nil {
+			if err := scale.ScaleUpAndReleaseLock(appCtx.K8sClient, appCtx.Namespace, scaleDownLabelSelector, appCtx.Logger); err != nil {
 				appCtx.Logger.Warningf("Failed to scale up deployments: %v", err)
 			}
 		}
