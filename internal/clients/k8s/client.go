@@ -19,6 +19,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
+	"k8s.io/client-go/util/retry"
 )
 
 // Client wraps the Kubernetes clientset
@@ -172,162 +173,204 @@ type RestoreLockInfo struct {
 	StartedAt    string
 }
 
-// ScalableResource abstracts operations on resources that can be scaled
-type ScalableResource interface {
-	GetName() string
-	GetReplicas() int32
-	SetReplicas(replicas int32)
-	GetAnnotations() map[string]string
-	SetAnnotations(annotations map[string]string)
-	Update(ctx context.Context, client kubernetes.Interface, namespace string) error
+// DeploymentUpdateFunc is a function that modifies a deployment.
+// It receives a fresh copy of the deployment and should apply the desired changes.
+type DeploymentUpdateFunc func(dep *appsv1.Deployment)
+
+// StatefulSetUpdateFunc is a function that modifies a statefulset.
+// It receives a fresh copy of the statefulset and should apply the desired changes.
+type StatefulSetUpdateFunc func(sts *appsv1.StatefulSet)
+
+// updateDeploymentWithRetry fetches a fresh copy of the deployment and applies the update function,
+// retrying on conflict errors (when resource version has changed).
+func updateDeploymentWithRetry(ctx context.Context, client kubernetes.Interface, namespace, name string, updateFn DeploymentUpdateFunc) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get fresh copy
+		dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		// Apply changes
+		updateFn(dep)
+		// Update
+		_, err = client.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{})
+		return err
+	})
 }
 
-// deploymentAdapter adapts appsv1.Deployment to ScalableResource interface
-type deploymentAdapter struct {
-	deployment *appsv1.Deployment
+// updateStatefulSetWithRetry fetches a fresh copy of the statefulset and applies the update function,
+// retrying on conflict errors (when resource version has changed).
+func updateStatefulSetWithRetry(ctx context.Context, client kubernetes.Interface, namespace, name string, updateFn StatefulSetUpdateFunc) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		// Get fresh copy
+		sts, err := client.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		// Apply changes
+		updateFn(sts)
+		// Update
+		_, err = client.AppsV1().StatefulSets(namespace).Update(ctx, sts, metav1.UpdateOptions{})
+		return err
+	})
 }
 
-func (d *deploymentAdapter) GetName() string {
-	return d.deployment.Name
-}
+// scaleDownDeployment scales a single deployment to 0 replicas with retry on conflict.
+// Returns the original replica count.
+//
+//nolint:dupl // Deployment and StatefulSet are different K8s types requiring separate implementations
+func scaleDownDeployment(ctx context.Context, client kubernetes.Interface, namespace, name string) (int32, error) {
+	var originalReplicas int32
 
-func (d *deploymentAdapter) GetReplicas() int32 {
-	if d.deployment.Spec.Replicas == nil {
-		return 0
-	}
-	return *d.deployment.Spec.Replicas
-}
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
 
-func (d *deploymentAdapter) SetReplicas(replicas int32) {
-	d.deployment.Spec.Replicas = &replicas
-}
+		if dep.Spec.Replicas != nil {
+			originalReplicas = *dep.Spec.Replicas
+		}
 
-func (d *deploymentAdapter) GetAnnotations() map[string]string {
-	return d.deployment.Annotations
-}
-
-func (d *deploymentAdapter) SetAnnotations(annotations map[string]string) {
-	d.deployment.Annotations = annotations
-}
-
-func (d *deploymentAdapter) Update(ctx context.Context, client kubernetes.Interface, namespace string) error {
-	_, err := client.AppsV1().Deployments(namespace).Update(ctx, d.deployment, metav1.UpdateOptions{})
-	return err
-}
-
-// statefulSetAdapter adapts appsv1.StatefulSet to ScalableResource interface
-type statefulSetAdapter struct {
-	statefulSet *appsv1.StatefulSet
-}
-
-func (s *statefulSetAdapter) GetName() string {
-	return s.statefulSet.Name
-}
-
-func (s *statefulSetAdapter) GetReplicas() int32 {
-	if s.statefulSet.Spec.Replicas == nil {
-		return 0
-	}
-	return *s.statefulSet.Spec.Replicas
-}
-
-func (s *statefulSetAdapter) SetReplicas(replicas int32) {
-	s.statefulSet.Spec.Replicas = &replicas
-}
-
-func (s *statefulSetAdapter) GetAnnotations() map[string]string {
-	return s.statefulSet.Annotations
-}
-
-func (s *statefulSetAdapter) SetAnnotations(annotations map[string]string) {
-	s.statefulSet.Annotations = annotations
-}
-
-func (s *statefulSetAdapter) Update(ctx context.Context, client kubernetes.Interface, namespace string) error {
-	_, err := client.AppsV1().StatefulSets(namespace).Update(ctx, s.statefulSet, metav1.UpdateOptions{})
-	return err
-}
-
-// scaleDownResources is a generic function that scales down resources to 0 replicas
-func scaleDownResources(ctx context.Context, client kubernetes.Interface, namespace string, resources []ScalableResource) ([]AppsScale, error) {
-	if len(resources) == 0 {
-		return []AppsScale{}, nil
-	}
-
-	var scaledResources []AppsScale
-
-	for _, resource := range resources {
-		originalReplicas := resource.GetReplicas()
-
-		// Store original replica count
-		scaledResources = append(scaledResources, AppsScale{
-			Name:     resource.GetName(),
-			Replicas: originalReplicas,
-		})
-
-		// Scale to 0 if not already at 0
+		// Only update if not already at 0
 		if originalReplicas > 0 {
-			// Add annotation with original replica count
-			annotations := resource.GetAnnotations()
-			if annotations == nil {
-				annotations = make(map[string]string)
+			if dep.Annotations == nil {
+				dep.Annotations = make(map[string]string)
 			}
-			annotations[PreRestoreReplicasAnnotation] = fmt.Sprintf("%d", originalReplicas)
-			resource.SetAnnotations(annotations)
-			resource.SetReplicas(0)
+			dep.Annotations[PreRestoreReplicasAnnotation] = fmt.Sprintf("%d", originalReplicas)
+			zero := int32(0)
+			dep.Spec.Replicas = &zero
 
-			if err := resource.Update(ctx, client, namespace); err != nil {
-				return scaledResources, fmt.Errorf("failed to scale down resource %s: %w", resource.GetName(), err)
-			}
+			_, err = client.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{})
+			return err
 		}
-	}
+		return nil
+	})
 
-	return scaledResources, nil
+	return originalReplicas, err
 }
 
-// scaleUpResourcesFromAnnotations is a generic function that scales up resources based on annotations
-func scaleUpResourcesFromAnnotations(ctx context.Context, client kubernetes.Interface, namespace string, resources []ScalableResource) ([]AppsScale, error) {
-	if len(resources) == 0 {
-		return []AppsScale{}, nil
-	}
+// scaleDownStatefulSet scales a single statefulset to 0 replicas with retry on conflict.
+// Returns the original replica count.
+//
+//nolint:dupl // Deployment and StatefulSet are different K8s types requiring separate implementations
+func scaleDownStatefulSet(ctx context.Context, client kubernetes.Interface, namespace, name string) (int32, error) {
+	var originalReplicas int32
 
-	var scaledResources []AppsScale
-
-	for _, resource := range resources {
-		annotations := resource.GetAnnotations()
-		if annotations == nil {
-			continue
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		sts, err := client.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
 		}
 
-		replicasStr, exists := annotations[PreRestoreReplicasAnnotation]
+		if sts.Spec.Replicas != nil {
+			originalReplicas = *sts.Spec.Replicas
+		}
+
+		// Only update if not already at 0
+		if originalReplicas > 0 {
+			if sts.Annotations == nil {
+				sts.Annotations = make(map[string]string)
+			}
+			sts.Annotations[PreRestoreReplicasAnnotation] = fmt.Sprintf("%d", originalReplicas)
+			zero := int32(0)
+			sts.Spec.Replicas = &zero
+
+			_, err = client.AppsV1().StatefulSets(namespace).Update(ctx, sts, metav1.UpdateOptions{})
+			return err
+		}
+		return nil
+	})
+
+	return originalReplicas, err
+}
+
+// scaleUpDeploymentFromAnnotation scales a deployment back to its original replica count with retry on conflict.
+// Returns (replica count, found annotation, error). If no annotation was found, returns (0, false, nil).
+//
+//nolint:dupl // Deployment and StatefulSet are different K8s types requiring separate implementations
+func scaleUpDeploymentFromAnnotation(ctx context.Context, client kubernetes.Interface, namespace, name string) (int32, bool, error) {
+	var scaledTo int32
+	var found bool
+
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+
+		if dep.Annotations == nil {
+			found = false
+			return nil
+		}
+
+		replicasStr, exists := dep.Annotations[PreRestoreReplicasAnnotation]
 		if !exists {
-			continue
+			found = false
+			return nil
 		}
 
 		var originalReplicas int32
 		if _, err := fmt.Sscanf(replicasStr, "%d", &originalReplicas); err != nil {
-			return scaledResources, fmt.Errorf("failed to parse replicas annotation for resource %s: %w", resource.GetName(), err)
+			return fmt.Errorf("failed to parse replicas annotation: %w", err)
 		}
 
-		// Scale up to original replica count
-		resource.SetReplicas(originalReplicas)
+		dep.Spec.Replicas = &originalReplicas
+		delete(dep.Annotations, PreRestoreReplicasAnnotation)
 
-		// Remove the annotation
-		delete(annotations, PreRestoreReplicasAnnotation)
-		resource.SetAnnotations(annotations)
+		_, err = client.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{})
+		if err == nil {
+			scaledTo = originalReplicas
+			found = true
+		}
+		return err
+	})
 
-		if err := resource.Update(ctx, client, namespace); err != nil {
-			return scaledResources, fmt.Errorf("failed to scale up resource %s: %w", resource.GetName(), err)
+	return scaledTo, found, err
+}
+
+// scaleUpStatefulSetFromAnnotation scales a statefulset back to its original replica count with retry on conflict.
+// Returns (replica count, found annotation, error). If no annotation was found, returns (0, false, nil).
+//
+//nolint:dupl // Deployment and StatefulSet are different K8s types requiring separate implementations
+func scaleUpStatefulSetFromAnnotation(ctx context.Context, client kubernetes.Interface, namespace, name string) (int32, bool, error) {
+	var scaledTo int32
+	var found bool
+
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		sts, err := client.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return err
 		}
 
-		// Record scaled resource
-		scaledResources = append(scaledResources, AppsScale{
-			Name:     resource.GetName(),
-			Replicas: originalReplicas,
-		})
-	}
+		if sts.Annotations == nil {
+			found = false
+			return nil
+		}
 
-	return scaledResources, nil
+		replicasStr, exists := sts.Annotations[PreRestoreReplicasAnnotation]
+		if !exists {
+			found = false
+			return nil
+		}
+
+		var originalReplicas int32
+		if _, err := fmt.Sscanf(replicasStr, "%d", &originalReplicas); err != nil {
+			return fmt.Errorf("failed to parse replicas annotation: %w", err)
+		}
+
+		sts.Spec.Replicas = &originalReplicas
+		delete(sts.Annotations, PreRestoreReplicasAnnotation)
+
+		_, err = client.AppsV1().StatefulSets(namespace).Update(ctx, sts, metav1.UpdateOptions{})
+		if err == nil {
+			scaledTo = originalReplicas
+			found = true
+		}
+		return err
+	})
+
+	return scaledTo, found, err
 }
 
 // ScaleDownDeployments scales down deployments matching a label selector to 0 replicas
@@ -343,13 +386,19 @@ func (c *Client) ScaleDownDeployments(namespace, labelSelector string) ([]AppsSc
 		return nil, fmt.Errorf("failed to list deployments: %w", err)
 	}
 
-	// Convert to ScalableResource slice
-	resources := make([]ScalableResource, len(deployments.Items))
-	for i := range deployments.Items {
-		resources[i] = &deploymentAdapter{deployment: &deployments.Items[i]}
+	var scaledResources []AppsScale
+	for _, dep := range deployments.Items {
+		originalReplicas, err := scaleDownDeployment(ctx, c.clientset, namespace, dep.Name)
+		if err != nil {
+			return scaledResources, fmt.Errorf("failed to scale down deployment %s: %w", dep.Name, err)
+		}
+		scaledResources = append(scaledResources, AppsScale{
+			Name:     dep.Name,
+			Replicas: originalReplicas,
+		})
 	}
 
-	return scaleDownResources(ctx, c.clientset, namespace, resources)
+	return scaledResources, nil
 }
 
 // ScaleUpDeploymentsFromAnnotations scales up deployments that have the pre-restore-replicas annotation
@@ -365,13 +414,26 @@ func (c *Client) ScaleUpDeploymentsFromAnnotations(namespace, labelSelector stri
 		return nil, fmt.Errorf("failed to list deployments: %w", err)
 	}
 
-	// Convert to ScalableResource slice
-	resources := make([]ScalableResource, len(deployments.Items))
-	for i := range deployments.Items {
-		resources[i] = &deploymentAdapter{deployment: &deployments.Items[i]}
+	var scaledResources []AppsScale
+	for _, dep := range deployments.Items {
+		// Check if this deployment has the annotation (to avoid unnecessary API calls)
+		if dep.Annotations == nil || dep.Annotations[PreRestoreReplicasAnnotation] == "" {
+			continue
+		}
+
+		scaledTo, found, err := scaleUpDeploymentFromAnnotation(ctx, c.clientset, namespace, dep.Name)
+		if err != nil {
+			return scaledResources, fmt.Errorf("failed to scale up deployment %s: %w", dep.Name, err)
+		}
+		if found {
+			scaledResources = append(scaledResources, AppsScale{
+				Name:     dep.Name,
+				Replicas: scaledTo,
+			})
+		}
 	}
 
-	return scaleUpResourcesFromAnnotations(ctx, c.clientset, namespace, resources)
+	return scaledResources, nil
 }
 
 // ScaleDownStatefulSets scales down statefulsets matching a label selector to 0 replicas
@@ -387,13 +449,19 @@ func (c *Client) ScaleDownStatefulSets(namespace, labelSelector string) ([]AppsS
 		return nil, fmt.Errorf("failed to list statefulsets: %w", err)
 	}
 
-	// Convert to ScalableResource slice
-	resources := make([]ScalableResource, len(statefulSets.Items))
-	for i := range statefulSets.Items {
-		resources[i] = &statefulSetAdapter{statefulSet: &statefulSets.Items[i]}
+	var scaledResources []AppsScale
+	for _, sts := range statefulSets.Items {
+		originalReplicas, err := scaleDownStatefulSet(ctx, c.clientset, namespace, sts.Name)
+		if err != nil {
+			return scaledResources, fmt.Errorf("failed to scale down statefulset %s: %w", sts.Name, err)
+		}
+		scaledResources = append(scaledResources, AppsScale{
+			Name:     sts.Name,
+			Replicas: originalReplicas,
+		})
 	}
 
-	return scaleDownResources(ctx, c.clientset, namespace, resources)
+	return scaledResources, nil
 }
 
 // ScaleUpStatefulSetsFromAnnotations scales up statefulsets that have the pre-restore-replicas annotation
@@ -409,13 +477,26 @@ func (c *Client) ScaleUpStatefulSetsFromAnnotations(namespace, labelSelector str
 		return nil, fmt.Errorf("failed to list statefulsets: %w", err)
 	}
 
-	// Convert to ScalableResource slice
-	resources := make([]ScalableResource, len(statefulSets.Items))
-	for i := range statefulSets.Items {
-		resources[i] = &statefulSetAdapter{statefulSet: &statefulSets.Items[i]}
+	var scaledResources []AppsScale
+	for _, sts := range statefulSets.Items {
+		// Check if this statefulset has the annotation (to avoid unnecessary API calls)
+		if sts.Annotations == nil || sts.Annotations[PreRestoreReplicasAnnotation] == "" {
+			continue
+		}
+
+		scaledTo, found, err := scaleUpStatefulSetFromAnnotation(ctx, c.clientset, namespace, sts.Name)
+		if err != nil {
+			return scaledResources, fmt.Errorf("failed to scale up statefulset %s: %w", sts.Name, err)
+		}
+		if found {
+			scaledResources = append(scaledResources, AppsScale{
+				Name:     sts.Name,
+				Replicas: scaledTo,
+			})
+		}
 	}
 
-	return scaleUpResourcesFromAnnotations(ctx, c.clientset, namespace, resources)
+	return scaledResources, nil
 }
 
 // NewTestClient creates a k8s Client for testing with a fake clientset.
@@ -488,15 +569,15 @@ func (c *Client) SetRestoreLock(namespace, labelSelector, datastore, startedAt s
 		return fmt.Errorf("failed to list deployments: %w", err)
 	}
 
-	for i := range deployments.Items {
-		dep := &deployments.Items[i]
-		if dep.Annotations == nil {
-			dep.Annotations = make(map[string]string)
-		}
-		dep.Annotations[RestoreInProgressAnnotation] = datastore
-		dep.Annotations[RestoreStartedAtAnnotation] = startedAt
-
-		if _, err := c.clientset.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
+	for _, dep := range deployments.Items {
+		err := updateDeploymentWithRetry(ctx, c.clientset, namespace, dep.Name, func(d *appsv1.Deployment) {
+			if d.Annotations == nil {
+				d.Annotations = make(map[string]string)
+			}
+			d.Annotations[RestoreInProgressAnnotation] = datastore
+			d.Annotations[RestoreStartedAtAnnotation] = startedAt
+		})
+		if err != nil {
 			return fmt.Errorf("failed to set restore lock on deployment %s: %w", dep.Name, err)
 		}
 	}
@@ -509,15 +590,15 @@ func (c *Client) SetRestoreLock(namespace, labelSelector, datastore, startedAt s
 		return fmt.Errorf("failed to list statefulsets: %w", err)
 	}
 
-	for i := range statefulSets.Items {
-		sts := &statefulSets.Items[i]
-		if sts.Annotations == nil {
-			sts.Annotations = make(map[string]string)
-		}
-		sts.Annotations[RestoreInProgressAnnotation] = datastore
-		sts.Annotations[RestoreStartedAtAnnotation] = startedAt
-
-		if _, err := c.clientset.AppsV1().StatefulSets(namespace).Update(ctx, sts, metav1.UpdateOptions{}); err != nil {
+	for _, sts := range statefulSets.Items {
+		err := updateStatefulSetWithRetry(ctx, c.clientset, namespace, sts.Name, func(s *appsv1.StatefulSet) {
+			if s.Annotations == nil {
+				s.Annotations = make(map[string]string)
+			}
+			s.Annotations[RestoreInProgressAnnotation] = datastore
+			s.Annotations[RestoreStartedAtAnnotation] = startedAt
+		})
+		if err != nil {
 			return fmt.Errorf("failed to set restore lock on statefulset %s: %w", sts.Name, err)
 		}
 	}
@@ -554,24 +635,17 @@ func (c *Client) ClearRestoreLock(namespace, labelSelector string) error {
 		return fmt.Errorf("failed to list deployments: %w", err)
 	}
 
-	for i := range deployments.Items {
-		if !hasRestoreLockAnnotations(deployments.Items[i].Annotations) {
+	for _, dep := range deployments.Items {
+		if !hasRestoreLockAnnotations(dep.Annotations) {
 			continue
 		}
 
-		// Refetch to get latest version (may have been modified by scale-up)
-		dep, err := c.clientset.AppsV1().Deployments(namespace).Get(ctx, deployments.Items[i].Name, metav1.GetOptions{})
+		err := updateDeploymentWithRetry(ctx, c.clientset, namespace, dep.Name, func(d *appsv1.Deployment) {
+			if d.Annotations != nil {
+				removeRestoreLockAnnotations(d.Annotations)
+			}
+		})
 		if err != nil {
-			return fmt.Errorf("failed to get deployment %s: %w", deployments.Items[i].Name, err)
-		}
-
-		if dep.Annotations == nil {
-			continue
-		}
-
-		removeRestoreLockAnnotations(dep.Annotations)
-
-		if _, err := c.clientset.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("failed to clear restore lock on deployment %s: %w", dep.Name, err)
 		}
 	}
@@ -584,24 +658,17 @@ func (c *Client) ClearRestoreLock(namespace, labelSelector string) error {
 		return fmt.Errorf("failed to list statefulsets: %w", err)
 	}
 
-	for i := range statefulSets.Items {
-		if !hasRestoreLockAnnotations(statefulSets.Items[i].Annotations) {
+	for _, sts := range statefulSets.Items {
+		if !hasRestoreLockAnnotations(sts.Annotations) {
 			continue
 		}
 
-		// Refetch to get latest version (may have been modified by scale-up)
-		sts, err := c.clientset.AppsV1().StatefulSets(namespace).Get(ctx, statefulSets.Items[i].Name, metav1.GetOptions{})
+		err := updateStatefulSetWithRetry(ctx, c.clientset, namespace, sts.Name, func(s *appsv1.StatefulSet) {
+			if s.Annotations != nil {
+				removeRestoreLockAnnotations(s.Annotations)
+			}
+		})
 		if err != nil {
-			return fmt.Errorf("failed to get statefulset %s: %w", statefulSets.Items[i].Name, err)
-		}
-
-		if sts.Annotations == nil {
-			continue
-		}
-
-		removeRestoreLockAnnotations(sts.Annotations)
-
-		if _, err := c.clientset.AppsV1().StatefulSets(namespace).Update(ctx, sts, metav1.UpdateOptions{}); err != nil {
 			return fmt.Errorf("failed to clear restore lock on statefulset %s: %w", sts.Name, err)
 		}
 	}

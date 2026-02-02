@@ -1,5 +1,5 @@
 {
-  description = "StackState CLI";
+  description = "SUSE Observability CLI";
 
   nixConfig.bash-prompt = "STS CLI 2 $ ";
 

@@ -1,4 +1,4 @@
-# Valid ConfigMap-Only Configuration for StackState Backup CLI
+# Valid ConfigMap-Only Configuration for SUSE Observability Backup CLI
 # This file contains a complete configuration including credentials in the ConfigMap.
 # Use this for tests that don't involve Secret overrides.
 # In production, credentials should always be stored in Secrets, not ConfigMaps.

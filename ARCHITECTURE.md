@@ -1,6 +1,6 @@
 # Repository Architecture
 
-This document describes the overall architecture and package organization of the StackState Backup CLI.
+This document describes the overall architecture and package organization of the SUSE Observability Backup CLI.
 
 ## Design Philosophy
 

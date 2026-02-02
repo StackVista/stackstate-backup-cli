@@ -1,4 +1,4 @@
-# Valid ConfigMap Configuration for StackState Backup CLI
+# Valid ConfigMap Configuration for SUSE Observability Backup CLI
 # This file contains the main configuration for Elasticsearch backup and restore operations.
 # It is typically stored in a Kubernetes ConfigMap.
 

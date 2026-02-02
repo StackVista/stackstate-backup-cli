@@ -1,0 +1,44 @@
+# OpenCode Configuration for SUSE Observability Backup CLI
+
+## Project Information
+
+name: stackstate-backup-cli
+description: Go CLI for managing backups/restores for SUSE Observability on Kubernetes
+
+## Agents
+
+agents:
+  code-reviewer:
+    path: .opencode/agents/code-reviewer.md
+    description: |
+      Code reviewer agent for Go CLI. Reviews code for:
+      - Project architecture compliance (5-layer design)
+      - Go best practices for CLI applications
+      - Cobra command patterns
+      - Kubernetes client-go patterns
+      - Code style and formatting
+    triggers:
+      - review
+      - /review
+      - code review
+
+## Key Documentation
+
+docs:
+  - ARCHITECTURE.md
+  - AGENTS.md
+  - README.md
+
+## Build Commands
+
+commands:
+  build: go build -o sts-backup .
+  test: go test ./...
+  lint: golangci-lint run --config=.golangci.yml ./...
+  verify-arch: |
+    # Verify foundation has no internal imports
+    go list -f '{{.ImportPath}}: {{join .Imports "\n"}}' ./internal/foundation/... | grep 'stackvista.*internal' || true
+    # Verify clients only import foundation
+    go list -f '{{.ImportPath}}: {{join .Imports "\n"}}' ./internal/clients/... | grep 'stackvista.*internal' | grep -v foundation || true
+    # Verify orchestration doesn't import other orchestration
+    go list -f '{{.ImportPath}}: {{join .Imports "\n"}}' ./internal/orchestration/... | grep 'stackvista.*orchestration' || true
