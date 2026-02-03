@@ -35,13 +35,14 @@ var (
 	useLatest        bool
 	background       bool
 	skipConfirmation bool
+	skipStackpacks   bool
 )
 
 func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "restore",
 		Short: "Restore Stackgraph from a backup archive",
-		Long:  `Restore Stackgraph data from a backup archive stored in S3. Can use --latest or --archive to specify which backup to restore.`,
+		Long:  `Restore Stackgraph data from a backup archive stored in S3. Automatically also restores Stackpacks backup that was made at the same time, it can be skipped with --skip-stackpacks. Can use --latest or --archive to specify which backup to restore.`,
 		Run: func(_ *cobra.Command, _ []string) {
 			cmdutils.Run(globalFlags, runRestore, cmdutils.StorageIsRequired)
 		},
@@ -51,6 +52,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&useLatest, "latest", false, "Restore from the most recent backup")
 	cmd.Flags().BoolVar(&background, "background", false, "Run restore job in background without waiting for completion")
 	cmd.Flags().BoolVarP(&skipConfirmation, "yes", "y", false, "Skip confirmation prompt")
+	cmd.Flags().BoolVar(&skipStackpacks, "skip-stackpacks", false, "Skip restoring stackpacks backup")
 	cmd.MarkFlagsMutuallyExclusive("archive", "latest")
 	cmd.MarkFlagsOneRequired("archive", "latest")
 
@@ -268,9 +270,11 @@ func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvV
 		{Name: "FORCE_DELETE", Value: purgeStackgraphDataFlag},
 		{Name: "BACKUP_STACKGRAPH_BUCKET_NAME", Value: config.Stackgraph.Bucket},
 		{Name: "BACKUP_STACKGRAPH_S3_PREFIX", Value: config.Stackgraph.S3Prefix},
+		{Name: "BACKUP_STACKGRAPH_STACKPACKS_S3_PREFIX", Value: config.Stackgraph.StackpacksS3Prefix},
 		{Name: "BACKUP_STACKGRAPH_MULTIPART_ARCHIVE", Value: strconv.FormatBool(config.Stackgraph.MultipartArchive)},
 		{Name: "MINIO_ENDPOINT", Value: fmt.Sprintf("%s:%d", storageService.Name, storageService.Port)},
 		{Name: "ZOOKEEPER_QUORUM", Value: config.Stackgraph.Restore.ZookeeperQuorum},
+		{Name: "SKIP_STACKPACKS", Value: strconv.FormatBool(skipStackpacks)},
 	}
 }
 
