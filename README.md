@@ -1,4 +1,4 @@
-# StackState Backup CLI
+# SUSE Observability Backup CLI
 
 A command-line tool for managing backups and restores for SUSE Observability platform running on Kubernetes.
 
@@ -452,6 +452,56 @@ go test ./...
 ```bash
 golangci-lint run --config=.golangci.yml ./...
 ```
+
+### Using OpenCode for Development
+
+We're exploring AI-assisted development with [OpenCode](https://github.com/opencode-ai/opencode). If you'd like to try it for your tasks, here's how to get started.
+
+#### Quick Start
+
+1. Install OpenCode following their [installation guide](https://github.com/opencode-ai/opencode#installation)
+2. Run `opencode` in the repository root
+3. Start asking questions or requesting changes
+
+#### What Works Well
+
+OpenCode can help with:
+- **Understanding the codebase**: Ask about architecture, patterns, or how specific features work
+- **Implementing new features**: Describe what you need, and it will follow project conventions
+- **Writing tests**: Request table-driven tests following our testify patterns
+- **Code reviews**: Ask it to review changes against project guidelines
+
+#### Example: Adding a New Command
+
+Here's an example workflow for implementing a new feature:
+
+```
+You: I need to add a "prune" command to elasticsearch that deletes snapshots older than N days.
+     It should follow the existing patterns in this codebase.
+
+OpenCode will:
+1. Explore existing commands to understand patterns
+2. Create cmd/elasticsearch/prune.go following the command runner pattern
+3. Add any needed client methods to internal/clients/elasticsearch/
+4. Generate table-driven tests
+5. Run linting to verify compliance
+```
+
+#### Tips
+
+- **Reference the docs**: Mention `ARCHITECTURE.md` or `AGENTS.md` if you want it to follow specific guidelines
+- **Ask for reviews**: After implementing, ask OpenCode to review the code against project standards
+- **Iterate**: If something doesn't look right, ask for adjustments
+
+#### Code Review Agent
+
+This repository includes a code review agent (`.opencode/agents/code-reviewer.md`) that understands our architecture and coding standards. Use it to validate changes before submitting PRs.
+
+#### Contributing to OpenCode Configuration
+
+The OpenCode configuration files in `.opencode/` are not set in stone. If you find ways to improve the agents or add new ones, feel free to update them. Better prompts, additional review checks, or new specialized agents are all welcome contributions.
+
+> **Note**: We're still experimenting with AI-assisted development. Share your experiences with the team - what works, what doesn't, and any tips you discover.
 
 ## License
 
