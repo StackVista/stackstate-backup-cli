@@ -21,6 +21,11 @@ go test -v ./internal/clients/elasticsearch/...
 
 # Lint (required before committing)
 golangci-lint run --config=.golangci.yml ./...
+
+# Verify architecture dependencies
+go list -f '{{.ImportPath}}: {{join .Imports "\n"}}' ./internal/foundation/... | grep 'stackvista.*internal' || true
+go list -f '{{.ImportPath}}: {{join .Imports "\n"}}' ./internal/clients/... | grep 'stackvista.*internal' | grep -v foundation || true
+go list -f '{{.ImportPath}}: {{join .Imports "\n"}}' ./internal/orchestration/... | grep 'stackvista.*orchestration' || true
 ```
 
 ## Code Style Guidelines
