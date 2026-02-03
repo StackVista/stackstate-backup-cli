@@ -175,11 +175,11 @@ type RestoreLockInfo struct {
 
 // DeploymentUpdateFunc is a function that modifies a deployment.
 // It receives a fresh copy of the deployment and should apply the desired changes.
-type DeploymentUpdateFunc func(dep *appsv1.Deployment)
+type DeploymentUpdateFunc func(dep *appsv1.Deployment) error
 
 // StatefulSetUpdateFunc is a function that modifies a statefulset.
 // It receives a fresh copy of the statefulset and should apply the desired changes.
-type StatefulSetUpdateFunc func(sts *appsv1.StatefulSet)
+type StatefulSetUpdateFunc func(sts *appsv1.StatefulSet) error
 
 // updateDeploymentWithRetry fetches a fresh copy of the deployment and applies the update function,
 // retrying on conflict errors (when resource version has changed).
@@ -191,7 +191,10 @@ func updateDeploymentWithRetry(ctx context.Context, client kubernetes.Interface,
 			return err
 		}
 		// Apply changes
-		updateFn(dep)
+		err = updateFn(dep)
+		if err != nil {
+			return err
+		}
 		// Update
 		_, err = client.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{})
 		return err
@@ -208,7 +211,10 @@ func updateStatefulSetWithRetry(ctx context.Context, client kubernetes.Interface
 			return err
 		}
 		// Apply changes
-		updateFn(sts)
+		err = updateFn(sts)
+		if err != nil {
+			return err
+		}
 		// Update
 		_, err = client.AppsV1().StatefulSets(namespace).Update(ctx, sts, metav1.UpdateOptions{})
 		return err
@@ -222,28 +228,16 @@ func updateStatefulSetWithRetry(ctx context.Context, client kubernetes.Interface
 func scaleDownDeployment(ctx context.Context, client kubernetes.Interface, namespace, name string) (int32, error) {
 	var originalReplicas int32
 
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-
+	err := updateDeploymentWithRetry(ctx, client, namespace, name, func(dep *appsv1.Deployment) error {
 		if dep.Spec.Replicas != nil {
 			originalReplicas = *dep.Spec.Replicas
 		}
-
-		// Only update if not already at 0
-		if originalReplicas > 0 {
-			if dep.Annotations == nil {
-				dep.Annotations = make(map[string]string)
-			}
-			dep.Annotations[PreRestoreReplicasAnnotation] = fmt.Sprintf("%d", originalReplicas)
-			zero := int32(0)
-			dep.Spec.Replicas = &zero
-
-			_, err = client.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{})
-			return err
+		if dep.Annotations == nil {
+			dep.Annotations = make(map[string]string)
 		}
+		dep.Annotations[PreRestoreReplicasAnnotation] = fmt.Sprintf("%d", originalReplicas)
+		zero := int32(0)
+		dep.Spec.Replicas = &zero
 		return nil
 	})
 
@@ -257,28 +251,16 @@ func scaleDownDeployment(ctx context.Context, client kubernetes.Interface, names
 func scaleDownStatefulSet(ctx context.Context, client kubernetes.Interface, namespace, name string) (int32, error) {
 	var originalReplicas int32
 
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		sts, err := client.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-
+	err := updateStatefulSetWithRetry(ctx, client, namespace, name, func(sts *appsv1.StatefulSet) error {
 		if sts.Spec.Replicas != nil {
 			originalReplicas = *sts.Spec.Replicas
 		}
-
-		// Only update if not already at 0
-		if originalReplicas > 0 {
-			if sts.Annotations == nil {
-				sts.Annotations = make(map[string]string)
-			}
-			sts.Annotations[PreRestoreReplicasAnnotation] = fmt.Sprintf("%d", originalReplicas)
-			zero := int32(0)
-			sts.Spec.Replicas = &zero
-
-			_, err = client.AppsV1().StatefulSets(namespace).Update(ctx, sts, metav1.UpdateOptions{})
-			return err
+		if sts.Annotations == nil {
+			sts.Annotations = make(map[string]string)
 		}
+		sts.Annotations[PreRestoreReplicasAnnotation] = fmt.Sprintf("%d", originalReplicas)
+		zero := int32(0)
+		sts.Spec.Replicas = &zero
 		return nil
 	})
 
@@ -291,14 +273,9 @@ func scaleDownStatefulSet(ctx context.Context, client kubernetes.Interface, name
 //nolint:dupl // Deployment and StatefulSet are different K8s types requiring separate implementations
 func scaleUpDeploymentFromAnnotation(ctx context.Context, client kubernetes.Interface, namespace, name string) (int32, bool, error) {
 	var scaledTo int32
-	var found bool
+	found := true
 
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		dep, err := client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-
+	err := updateDeploymentWithRetry(ctx, client, namespace, name, func(dep *appsv1.Deployment) error {
 		if dep.Annotations == nil {
 			found = false
 			return nil
@@ -315,15 +292,11 @@ func scaleUpDeploymentFromAnnotation(ctx context.Context, client kubernetes.Inte
 			return fmt.Errorf("failed to parse replicas annotation: %w", err)
 		}
 
-		dep.Spec.Replicas = &originalReplicas
 		delete(dep.Annotations, PreRestoreReplicasAnnotation)
+		dep.Spec.Replicas = &originalReplicas
+		scaledTo = originalReplicas
 
-		_, err = client.AppsV1().Deployments(namespace).Update(ctx, dep, metav1.UpdateOptions{})
-		if err == nil {
-			scaledTo = originalReplicas
-			found = true
-		}
-		return err
+		return nil
 	})
 
 	return scaledTo, found, err
@@ -335,14 +308,9 @@ func scaleUpDeploymentFromAnnotation(ctx context.Context, client kubernetes.Inte
 //nolint:dupl // Deployment and StatefulSet are different K8s types requiring separate implementations
 func scaleUpStatefulSetFromAnnotation(ctx context.Context, client kubernetes.Interface, namespace, name string) (int32, bool, error) {
 	var scaledTo int32
-	var found bool
+	found := true
 
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		sts, err := client.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-
+	err := updateStatefulSetWithRetry(ctx, client, namespace, name, func(sts *appsv1.StatefulSet) error {
 		if sts.Annotations == nil {
 			found = false
 			return nil
@@ -359,15 +327,11 @@ func scaleUpStatefulSetFromAnnotation(ctx context.Context, client kubernetes.Int
 			return fmt.Errorf("failed to parse replicas annotation: %w", err)
 		}
 
-		sts.Spec.Replicas = &originalReplicas
 		delete(sts.Annotations, PreRestoreReplicasAnnotation)
+		sts.Spec.Replicas = &originalReplicas
+		scaledTo = originalReplicas
 
-		_, err = client.AppsV1().StatefulSets(namespace).Update(ctx, sts, metav1.UpdateOptions{})
-		if err == nil {
-			scaledTo = originalReplicas
-			found = true
-		}
-		return err
+		return nil
 	})
 
 	return scaledTo, found, err
@@ -570,12 +534,13 @@ func (c *Client) SetRestoreLock(namespace, labelSelector, datastore, startedAt s
 	}
 
 	for _, dep := range deployments.Items {
-		err := updateDeploymentWithRetry(ctx, c.clientset, namespace, dep.Name, func(d *appsv1.Deployment) {
+		err := updateDeploymentWithRetry(ctx, c.clientset, namespace, dep.Name, func(d *appsv1.Deployment) error {
 			if d.Annotations == nil {
 				d.Annotations = make(map[string]string)
 			}
 			d.Annotations[RestoreInProgressAnnotation] = datastore
 			d.Annotations[RestoreStartedAtAnnotation] = startedAt
+			return nil
 		})
 		if err != nil {
 			return fmt.Errorf("failed to set restore lock on deployment %s: %w", dep.Name, err)
@@ -591,12 +556,13 @@ func (c *Client) SetRestoreLock(namespace, labelSelector, datastore, startedAt s
 	}
 
 	for _, sts := range statefulSets.Items {
-		err := updateStatefulSetWithRetry(ctx, c.clientset, namespace, sts.Name, func(s *appsv1.StatefulSet) {
+		err := updateStatefulSetWithRetry(ctx, c.clientset, namespace, sts.Name, func(s *appsv1.StatefulSet) error {
 			if s.Annotations == nil {
 				s.Annotations = make(map[string]string)
 			}
 			s.Annotations[RestoreInProgressAnnotation] = datastore
 			s.Annotations[RestoreStartedAtAnnotation] = startedAt
+			return nil
 		})
 		if err != nil {
 			return fmt.Errorf("failed to set restore lock on statefulset %s: %w", sts.Name, err)
@@ -640,10 +606,11 @@ func (c *Client) ClearRestoreLock(namespace, labelSelector string) error {
 			continue
 		}
 
-		err := updateDeploymentWithRetry(ctx, c.clientset, namespace, dep.Name, func(d *appsv1.Deployment) {
+		err := updateDeploymentWithRetry(ctx, c.clientset, namespace, dep.Name, func(d *appsv1.Deployment) error {
 			if d.Annotations != nil {
 				removeRestoreLockAnnotations(d.Annotations)
 			}
+			return nil
 		})
 		if err != nil {
 			return fmt.Errorf("failed to clear restore lock on deployment %s: %w", dep.Name, err)
@@ -663,10 +630,11 @@ func (c *Client) ClearRestoreLock(namespace, labelSelector string) error {
 			continue
 		}
 
-		err := updateStatefulSetWithRetry(ctx, c.clientset, namespace, sts.Name, func(s *appsv1.StatefulSet) {
+		err := updateStatefulSetWithRetry(ctx, c.clientset, namespace, sts.Name, func(s *appsv1.StatefulSet) error {
 			if s.Annotations != nil {
 				removeRestoreLockAnnotations(s.Annotations)
 			}
+			return nil
 		})
 		if err != nil {
 			return fmt.Errorf("failed to clear restore lock on statefulset %s: %w", sts.Name, err)
