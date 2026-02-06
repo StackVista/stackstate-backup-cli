@@ -279,13 +279,23 @@ func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvV
 }
 
 // buildRestoreVolumeMounts constructs volume mounts for the restore job container
-func buildRestoreVolumeMounts() []corev1.VolumeMount {
-	return []corev1.VolumeMount{
+func buildRestoreVolumeMounts(config *config.Config) []corev1.VolumeMount {
+	volumeMounts := []corev1.VolumeMount{
 		{Name: "backup-log", MountPath: "/opt/docker/etc_log"},
+		{Name: "config-volume", MountPath: "/opt/docker/etc/application_stackstate.conf", SubPath: "application_stackstate.conf"},
 		{Name: "backup-restore-scripts", MountPath: "/backup-restore-scripts"},
 		{Name: "minio-keys", MountPath: "/aws-keys"},
 		{Name: "tmp-data", MountPath: "/tmp-data"},
 	}
+
+	if config.Settings.Restore.StackpacksPVCName != "" {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "stackpacks-local",
+			MountPath: "/var/stackpacks_local",
+		})
+	}
+
+	return volumeMounts
 }
 
 // buildRestoreInitContainers constructs init containers for the restore job
@@ -308,13 +318,23 @@ func buildRestoreInitContainers(config *config.Config) []corev1.Container {
 
 // buildRestoreVolumes constructs volumes for the restore job pod
 func buildRestoreVolumes(jobName string, config *config.Config, defaultMode int32) []corev1.Volume {
-	return []corev1.Volume{
+	volumes := []corev1.Volume{
 		{
 			Name: "backup-log",
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{
 						Name: config.Stackgraph.Restore.LoggingConfigConfigMapName,
+					},
+				},
+			},
+		},
+		{
+			Name: "config-volume",
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: config.Stackgraph.Restore.StsBackupConfigConfigMapName,
 					},
 				},
 			},
@@ -347,6 +367,18 @@ func buildRestoreVolumes(jobName string, config *config.Config, defaultMode int3
 			},
 		},
 	}
+	if config.Settings.Restore.StackpacksPVCName != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "stackpacks-local",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: config.Settings.Restore.StackpacksPVCName,
+				},
+			},
+		})
+	}
+
+	return volumes
 }
 
 // buildRestoreContainers constructs containers for the restore job
@@ -360,7 +392,7 @@ func buildRestoreContainers(backupFile string, config *config.Config) []corev1.C
 			Command:         []string{"/backup-restore-scripts/restore-stackgraph-backup.sh"},
 			Env:             buildRestoreEnvVars(backupFile, config),
 			Resources:       k8s.ConvertResources(config.Stackgraph.Restore.Job.Resources),
-			VolumeMounts:    buildRestoreVolumeMounts(),
+			VolumeMounts:    buildRestoreVolumeMounts(config),
 		},
 	}
 }

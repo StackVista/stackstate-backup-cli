@@ -162,11 +162,13 @@ type S3Location struct {
 
 // StackgraphRestoreConfig holds Stackgraph restore-specific configuration
 type StackgraphRestoreConfig struct {
-	ScaleDownLabelSelector     string    `yaml:"scaleDownLabelSelector" validate:"required"`
-	LoggingConfigConfigMapName string    `yaml:"loggingConfigConfigMap" validate:"required"`
-	ZookeeperQuorum            string    `yaml:"zookeeperQuorum" validate:"required"`
-	Job                        JobConfig `yaml:"job" validate:"required"`
-	PVC                        PVCConfig `yaml:"pvc" validate:"required"`
+	ScaleDownLabelSelector       string    `yaml:"scaleDownLabelSelector" validate:"required"`
+	LoggingConfigConfigMapName   string    `yaml:"loggingConfigConfigMap" validate:"required"`
+	StsBackupConfigConfigMapName string    `yaml:"stsBackupConfigConfigMap" validate:"required"`
+	ZookeeperQuorum              string    `yaml:"zookeeperQuorum" validate:"required"`
+	Job                          JobConfig `yaml:"job" validate:"required"`
+	PVC                          PVCConfig `yaml:"pvc" validate:"required"`
+	StackpacksPVCName            string    `yaml:"stackpacksPvc"`
 }
 
 type SettingsConfig struct {
@@ -178,14 +180,16 @@ type SettingsConfig struct {
 }
 
 type SettingsRestoreConfig struct {
-	ScaleDownLabelSelector     string    `yaml:"scaleDownLabelSelector" validate:"required"`
-	LoggingConfigConfigMapName string    `yaml:"loggingConfigConfigMap" validate:"required"`
-	BaseURL                    string    `yaml:"baseUrl" validate:"required"`
-	ReceiverBaseURL            string    `yaml:"receiverBaseUrl" validate:"required"`
-	PlatformVersion            string    `yaml:"platformVersion" validate:"required"`
-	ZookeeperQuorum            string    `yaml:"zookeeperQuorum" validate:"required"`
-	Job                        JobConfig `yaml:"job" validate:"required"`
-	PVC                        string    `yaml:"pvc"` // Required only in legacy mode
+	ScaleDownLabelSelector       string    `yaml:"scaleDownLabelSelector" validate:"required"`
+	LoggingConfigConfigMapName   string    `yaml:"loggingConfigConfigMap" validate:"required"`
+	StsBackupConfigConfigMapName string    `yaml:"stsBackupConfigConfigMap" validate:"required"`
+	BaseURL                      string    `yaml:"baseUrl" validate:"required"`
+	ReceiverBaseURL              string    `yaml:"receiverBaseUrl" validate:"required"`
+	PlatformVersion              string    `yaml:"platformVersion" validate:"required"`
+	ZookeeperQuorum              string    `yaml:"zookeeperQuorum" validate:"required"`
+	Job                          JobConfig `yaml:"job" validate:"required"`
+	PVC                          string    `yaml:"pvc"` // Required only in legacy mode
+	StackpacksPVCName            string    `yaml:"stackpacksPvc"`
 }
 
 // ClickhouseConfig holds Clickhouse-specific configuration
