@@ -364,3 +364,173 @@ func TestFilterBackupObjects_SizeSummation(t *testing.T) {
 	assert.Equal(t, int64(109206155), sizeMap["sts-backup-20251029-0300.graph"]) // 104857600 + 4348555
 	assert.Equal(t, int64(111424839), sizeMap["sts-backup-20251029-0924.graph"]) // 104857600 + 6567239
 }
+
+// TestFilterByPrefixAndRegex tests the combined filtering by prefix and regex pattern
+func TestFilterByPrefixAndRegex(t *testing.T) {
+	now := time.Now()
+
+	tests := []struct {
+		name         string
+		objects      []Object
+		prefix       string
+		pattern      string
+		expectedKeys []string
+		expectError  bool
+	}{
+		{
+			name: "filters stackgraph backups with prefix and .graph extension",
+			objects: []Object{
+				{Key: "backups/sts-backup-20240101.graph", Size: 1000, LastModified: now},
+				{Key: "backups/sts-backup-20240102.graph", Size: 2000, LastModified: now},
+				{Key: "backups/other-file.txt", Size: 500, LastModified: now},
+				{Key: "backups/sts-backup-20240103.tar.gz", Size: 3000, LastModified: now},
+			},
+			prefix:       "backups/",
+			pattern:      `^sts-backup-.*\.graph$`,
+			expectedKeys: []string{"sts-backup-20240101.graph", "sts-backup-20240102.graph"},
+			expectError:  false,
+		},
+		{
+			name: "filters settings backups with .sty extension",
+			objects: []Object{
+				{Key: "settings/sts-backup-20240101.sty", Size: 1000, LastModified: now},
+				{Key: "settings/sts-backup-20240102.sty", Size: 2000, LastModified: now},
+				{Key: "settings/other-file.txt", Size: 500, LastModified: now},
+				{Key: "settings/sts-backup-20240103.graph", Size: 3000, LastModified: now},
+			},
+			prefix:       "settings/",
+			pattern:      `^sts-backup-.*\.sty$`,
+			expectedKeys: []string{"sts-backup-20240101.sty", "sts-backup-20240102.sty"},
+			expectError:  false,
+		},
+		{
+			name: "excludes nested files even if they match pattern",
+			objects: []Object{
+				{Key: "backups/sts-backup-20240101.graph", Size: 1000, LastModified: now},
+				{Key: "backups/old/sts-backup-20240102.graph", Size: 2000, LastModified: now},
+				{Key: "backups/archive/2023/sts-backup-20230101.graph", Size: 3000, LastModified: now},
+			},
+			prefix:       "backups/",
+			pattern:      `^sts-backup-.*\.graph$`,
+			expectedKeys: []string{"sts-backup-20240101.graph"},
+			expectError:  false,
+		},
+		{
+			name: "works with empty prefix",
+			objects: []Object{
+				{Key: "sts-backup-20240101.graph", Size: 1000, LastModified: now},
+				{Key: "sts-backup-20240102.graph", Size: 2000, LastModified: now},
+				{Key: "subdir/sts-backup-20240103.graph", Size: 3000, LastModified: now},
+				{Key: "other-file.txt", Size: 500, LastModified: now},
+			},
+			prefix:       "",
+			pattern:      `^sts-backup-.*\.graph$`,
+			expectedKeys: []string{"sts-backup-20240101.graph", "sts-backup-20240102.graph"},
+			expectError:  false,
+		},
+		{
+			name: "returns empty slice when no matches",
+			objects: []Object{
+				{Key: "backups/other-file.txt", Size: 500, LastModified: now},
+				{Key: "backups/another-file.log", Size: 100, LastModified: now},
+			},
+			prefix:       "backups/",
+			pattern:      `^sts-backup-.*\.graph$`,
+			expectedKeys: []string{},
+			expectError:  false,
+		},
+		{
+			name:         "handles empty object list",
+			objects:      []Object{},
+			prefix:       "backups/",
+			pattern:      `^sts-backup-.*\.graph$`,
+			expectedKeys: []string{},
+			expectError:  false,
+		},
+		{
+			name: "returns error for invalid regex",
+			objects: []Object{
+				{Key: "backups/sts-backup-20240101.graph", Size: 1000, LastModified: now},
+			},
+			prefix:       "backups/",
+			pattern:      `[invalid`,
+			expectedKeys: nil,
+			expectError:  true,
+		},
+		{
+			name: "excludes the prefix directory itself",
+			objects: []Object{
+				{Key: "backups/", Size: 0, LastModified: now},
+				{Key: "backups/sts-backup-20240101.graph", Size: 1000, LastModified: now},
+			},
+			prefix:       "backups/",
+			pattern:      `^sts-backup-.*\.graph$`,
+			expectedKeys: []string{"sts-backup-20240101.graph"},
+			expectError:  false,
+		},
+		{
+			name: "returns empty when all files are nested",
+			objects: []Object{
+				{Key: "backups/old/sts-backup-20240101.graph", Size: 1000, LastModified: now},
+				{Key: "backups/archive/sts-backup-20240102.graph", Size: 2000, LastModified: now},
+			},
+			prefix:       "backups/",
+			pattern:      `^sts-backup-.*\.graph$`,
+			expectedKeys: []string{},
+			expectError:  false,
+		},
+		{
+			name: "filters with complex regex pattern",
+			objects: []Object{
+				{Key: "backups/sts-backup-20240101-1200.graph", Size: 1000, LastModified: now},
+				{Key: "backups/sts-backup-20240102-1300.graph", Size: 2000, LastModified: now},
+				{Key: "backups/sts-backup-invalid.graph", Size: 500, LastModified: now},
+				{Key: "backups/sts-backup-20240103.graph", Size: 3000, LastModified: now},
+			},
+			prefix:       "backups/",
+			pattern:      `^sts-backup-\d{8}-\d{4}\.graph$`,
+			expectedKeys: []string{"sts-backup-20240101-1200.graph", "sts-backup-20240102-1300.graph"},
+			expectError:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := FilterByPrefixAndRegex(tt.objects, tt.prefix, tt.pattern)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				assert.Nil(t, result)
+				return
+			}
+
+			assert.NoError(t, err)
+
+			resultKeys := make([]string, len(result))
+			for i, obj := range result {
+				resultKeys[i] = obj.Key
+			}
+
+			assert.Equal(t, tt.expectedKeys, resultKeys)
+		})
+	}
+}
+
+// TestFilterByPrefixAndRegex_PreservesMetadata tests that object metadata is preserved after filtering
+func TestFilterByPrefixAndRegex_PreservesMetadata(t *testing.T) {
+	now := time.Now()
+
+	objects := []Object{
+		{Key: "backups/sts-backup-20240101.graph", Size: 1234567890, LastModified: now},
+		{Key: "backups/other-file.txt", Size: 500, LastModified: now.Add(-24 * time.Hour)},
+		{Key: "backups/nested/sts-backup-20240102.graph", Size: 999, LastModified: now},
+	}
+
+	result, err := FilterByPrefixAndRegex(objects, "backups/", `^sts-backup-.*\.graph$`)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(result))
+	assert.Equal(t, "sts-backup-20240101.graph", result[0].Key)
+	assert.Equal(t, int64(1234567890), result[0].Size)
+	assert.Equal(t, now.Unix(), result[0].LastModified.Unix())
+}

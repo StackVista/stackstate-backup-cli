@@ -17,6 +17,10 @@ import (
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/portforward"
 )
 
+const (
+	backupFileNameRegex = `^sts-backup-.*\.graph$`
+)
+
 func listCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
@@ -64,6 +68,13 @@ func runList(appCtx *app.Context) error {
 
 	// Filter objects based on whether the archive is split or not
 	filteredObjects := s3client.FilterMultipartBackupObjects(result.Contents, multipartArchive)
+
+	// Filter to only include direct children of the prefix that match the backup filename pattern,
+	// and strip the prefix from the key
+	filteredObjects, err = s3client.FilterByPrefixAndRegex(filteredObjects, prefix, backupFileNameRegex)
+	if err != nil {
+		return fmt.Errorf("failed to filter objects: %w", err)
+	}
 
 	// Sort by LastModified time (most recent first)
 	sort.Slice(filteredObjects, func(i, j int) bool {
