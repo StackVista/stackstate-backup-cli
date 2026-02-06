@@ -29,6 +29,7 @@ const (
 	isMultiPartArchive            = false
 	expectedListJobPodCount       = 1
 	expectedListJobContainerCount = 1
+	backupFileNameRegex           = `^sts-backup-.*\.sty$`
 )
 
 // Shared flag for --from-old-pvc, used by both list and restore commands
@@ -182,7 +183,7 @@ func getBackupListFromS3(appCtx *app.Context) ([]BackupFileInfo, error) {
 	}
 
 	// Filter objects based on whether the archive is split or not
-	filteredObjects := s3client.FilterBackupObjects(result.Contents, isMultiPartArchive)
+	filteredObjects := s3client.FilterMultipartBackupObjects(result.Contents, isMultiPartArchive)
 
 	var backups []BackupFileInfo
 	for _, obj := range filteredObjects {

@@ -180,7 +180,7 @@ func getLatestBackup(k8sClient *k8s.Client, namespace string, config *config.Con
 	}
 
 	// Filter objects based on whether the archive is split or not
-	filteredObjects := s3client.FilterBackupObjects(result.Contents, multipartArchive)
+	filteredObjects := s3client.FilterMultipartBackupObjects(result.Contents, multipartArchive)
 
 	if len(filteredObjects) == 0 {
 		return "", fmt.Errorf("no backups found in bucket %s", bucket)

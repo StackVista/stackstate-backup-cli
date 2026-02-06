@@ -19,10 +19,10 @@ type Object struct {
 	Size         int64
 }
 
-// FilterBackupObjects filters S3 objects based on whether the archive is split or not
+// FilterMultipartBackupObjects filters S3 objects based on whether the archive is split or not
 // If it is not multipartArchive, it filters out multipart archives (files ending with .digits)
 // Otherwise, it groups multipart archives by base name and sums their sizes
-func FilterBackupObjects(objects []s3types.Object, multipartArchive bool) []Object {
+func FilterMultipartBackupObjects(objects []s3types.Object, multipartArchive bool) []Object {
 	if !multipartArchive {
 		return filterNonMultipart(objects)
 	}

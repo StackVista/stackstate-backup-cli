@@ -79,7 +79,7 @@ func TestFilterBackupObjects_SingleFileMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FilterBackupObjects(tt.objects, false)
+			result := FilterMultipartBackupObjects(tt.objects, false)
 
 			assert.Equal(t, tt.expectedCount, len(result))
 
@@ -158,7 +158,7 @@ func TestFilterBackupObjects_MultipartMode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FilterBackupObjects(tt.objects, tt.multipartArchive)
+			result := FilterMultipartBackupObjects(tt.objects, tt.multipartArchive)
 
 			assert.Equal(t, tt.expectedCount, len(result))
 
@@ -196,14 +196,14 @@ func TestFilterBackupObjects_ObjectMetadata(t *testing.T) {
 	}
 
 	// Test single file mode
-	result := FilterBackupObjects(objects, false)
+	result := FilterMultipartBackupObjects(objects, false)
 	assert.Equal(t, 1, len(result))
 	assert.Equal(t, "backup-2024-01-01.tar.gz", result[0].Key)
 	assert.Equal(t, int64(1234567890), result[0].Size)
 	assert.Equal(t, now.Unix(), result[0].LastModified.Unix())
 
 	// Test multipart mode - should group parts and sum sizes
-	result = FilterBackupObjects(objects, true)
+	result = FilterMultipartBackupObjects(objects, true)
 	assert.Equal(t, 2, len(result)) // tar.gz file + grouped multipart
 
 	// Find the multipart archive result
@@ -275,7 +275,7 @@ func TestFilterBackupObjects_EdgeCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FilterBackupObjects(tt.objects, tt.multipartArchive)
+			result := FilterMultipartBackupObjects(tt.objects, tt.multipartArchive)
 			assert.Equal(t, tt.expectedCount, len(result))
 		})
 	}
@@ -331,7 +331,7 @@ func TestFilterBackupObjects_RealWorldScenarios(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := FilterBackupObjects(tt.objects, tt.multipartArchive)
+			result := FilterMultipartBackupObjects(tt.objects, tt.multipartArchive)
 			assert.Equal(t, tt.expectedCount, len(result), "Scenario: %s", tt.scenario)
 		})
 	}
@@ -348,7 +348,7 @@ func TestFilterBackupObjects_SizeSummation(t *testing.T) {
 		{Key: aws.String("sts-backup-20251029-0924.graph.01"), Size: aws.Int64(6567239)},
 	}
 
-	result := FilterBackupObjects(objects, true)
+	result := FilterMultipartBackupObjects(objects, true)
 
 	// Should have 3 grouped archives
 	assert.Equal(t, 3, len(result))
