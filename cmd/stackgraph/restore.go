@@ -43,7 +43,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		Short: "Restore Stackgraph from a backup archive",
 		Long:  `Restore Stackgraph data from a backup archive stored in S3/Minio. Can use --latest or --archive to specify which backup to restore.`,
 		Run: func(_ *cobra.Command, _ []string) {
-			cmdutils.Run(globalFlags, runRestore, cmdutils.MinioIsRequired)
+			cmdutils.Run(globalFlags, runRestore, cmdutils.StorageIsRequired)
 		},
 	}
 
@@ -144,9 +144,10 @@ func waitAndCleanupRestoreJob(k8sClient *k8s.Client, namespace, jobName string, 
 
 // getLatestBackup retrieves the most recent backup from S3
 func getLatestBackup(k8sClient *k8s.Client, namespace string, config *config.Config, log *logger.Logger) (string, error) {
-	// Setup port-forward to Minio
-	serviceName := config.Minio.Service.Name
-	remotePort := config.Minio.Service.Port
+	// Setup port-forward to S3-compatible storage
+	storageService := config.GetStorageService()
+	serviceName := storageService.Name
+	remotePort := storageService.Port
 
 	pf, err := portforward.SetupPortForward(k8sClient, namespace, serviceName, remotePort, log)
 	if err != nil {
@@ -156,7 +157,7 @@ func getLatestBackup(k8sClient *k8s.Client, namespace string, config *config.Con
 
 	// Create S3 client
 	endpoint := fmt.Sprintf("http://localhost:%d", pf.LocalPort)
-	s3Client, err := s3client.NewClient(endpoint, config.Minio.AccessKey, config.Minio.SecretKey)
+	s3Client, err := s3client.NewClient(endpoint, config.GetStorageAccessKey(), config.GetStorageSecretKey())
 	if err != nil {
 		return "", err
 	}
@@ -261,13 +262,14 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 
 // buildRestoreEnvVars constructs environment variables for the restore job
 func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvVar {
+	storageService := config.GetStorageService()
 	return []corev1.EnvVar{
 		{Name: "BACKUP_FILE", Value: backupFile},
 		{Name: "FORCE_DELETE", Value: purgeStackgraphDataFlag},
 		{Name: "BACKUP_STACKGRAPH_BUCKET_NAME", Value: config.Stackgraph.Bucket},
 		{Name: "BACKUP_STACKGRAPH_S3_PREFIX", Value: config.Stackgraph.S3Prefix},
 		{Name: "BACKUP_STACKGRAPH_MULTIPART_ARCHIVE", Value: strconv.FormatBool(config.Stackgraph.MultipartArchive)},
-		{Name: "MINIO_ENDPOINT", Value: fmt.Sprintf("%s:%d", config.Minio.Service.Name, config.Minio.Service.Port)},
+		{Name: "MINIO_ENDPOINT", Value: fmt.Sprintf("%s:%d", storageService.Name, storageService.Port)},
 		{Name: "ZOOKEEPER_QUORUM", Value: config.Stackgraph.Restore.ZookeeperQuorum},
 	}
 }
@@ -284,6 +286,7 @@ func buildRestoreVolumeMounts() []corev1.VolumeMount {
 
 // buildRestoreInitContainers constructs init containers for the restore job
 func buildRestoreInitContainers(config *config.Config) []corev1.Container {
+	storageService := config.GetStorageService()
 	return []corev1.Container{
 		{
 			Name:            "wait",
@@ -292,7 +295,7 @@ func buildRestoreInitContainers(config *config.Config) []corev1.Container {
 			Command: []string{
 				"sh",
 				"-c",
-				fmt.Sprintf("/entrypoint -c %s:%d -t 300", config.Minio.Service.Name, config.Minio.Service.Port),
+				fmt.Sprintf("/entrypoint -c %s:%d -t 300", storageService.Name, storageService.Port),
 			},
 			SecurityContext: k8s.ConvertSecurityContext(config.Stackgraph.Restore.Job.ContainerSecurityContext),
 		},

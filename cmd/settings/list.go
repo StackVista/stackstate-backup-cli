@@ -68,24 +68,34 @@ func runList(appCtx *app.Context) error {
 	return appCtx.Formatter.PrintTable(table)
 }
 
-// getAllBackups retrieves backups from all sources (S3 and PVC), deduplicates and sorts them by LastModified time (most recent first)
+// getAllBackups retrieves backups from all sources, deduplicates and sorts them by LastModified time (most recent first).
+// In legacy mode (Minio): combines S3 backups (if Minio enabled) + PVC backups.
+// In new mode (Storage): combines S3 backups + local bucket backups (from settings.localBucket).
 func getAllBackups(appCtx *app.Context) ([]BackupFileInfo, error) {
 	var backups []BackupFileInfo
 	var err error
 
-	// Get backups from S3 if enabled
-	if appCtx.Config.Minio.Enabled {
+	// Get backups from S3 if storage is enabled
+	if appCtx.Config.StorageEnabled() {
 		if backups, err = getBackupListFromS3(appCtx); err != nil {
-			return nil, fmt.Errorf("failed to get list of backups from Minio: %v", err)
+			return nil, fmt.Errorf("failed to get list of backups from S3 storage: %v", err)
 		}
 	}
 
-	// Get backups from PVC
-	backupsFromPvc, err := getBackupListFromPVC(appCtx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get list of backups from PVC: %v", err)
+	// Get local backups: from PVC in legacy mode, from localBucket in new mode
+	var localBackups []BackupFileInfo
+	if appCtx.Config.IsLegacyMode() {
+		localBackups, err = getBackupListFromPVC(appCtx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get list of backups from PVC: %v", err)
+		}
+	} else {
+		localBackups, err = getBackupListFromLocalBucket(appCtx)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get list of backups from local bucket: %v", err)
+		}
 	}
-	backups = append(backups, backupsFromPvc...)
+	backups = append(backups, localBackups...)
 
 	if len(backups) == 0 {
 		return []BackupFileInfo{}, nil
@@ -117,9 +127,10 @@ type BackupFileInfo struct {
 }
 
 func getBackupListFromS3(appCtx *app.Context) ([]BackupFileInfo, error) {
-	// Setup port-forward to Minio
-	serviceName := appCtx.Config.Minio.Service.Name
-	remotePort := appCtx.Config.Minio.Service.Port
+	// Setup port-forward to S3-compatible storage
+	storageService := appCtx.Config.GetStorageService()
+	serviceName := storageService.Name
+	remotePort := storageService.Port
 
 	pf, err := portforward.SetupPortForward(appCtx.K8sClient, appCtx.Namespace, serviceName, remotePort, appCtx.Logger)
 	if err != nil {
@@ -160,6 +171,52 @@ func getBackupListFromS3(appCtx *app.Context) ([]BackupFileInfo, error) {
 			Size:         obj.Size,
 		}
 		backups = append(backups, row)
+	}
+	return backups, nil
+}
+
+// getBackupListFromLocalBucket lists settings backups from the local S3 bucket (new mode).
+// This replaces PVC-based listing when using the new storage configuration.
+func getBackupListFromLocalBucket(appCtx *app.Context) ([]BackupFileInfo, error) {
+	// Setup port-forward to S3-compatible storage
+	storageService := appCtx.Config.GetStorageService()
+	serviceName := storageService.Name
+	remotePort := storageService.Port
+
+	pf, err := portforward.SetupPortForward(appCtx.K8sClient, appCtx.Namespace, serviceName, remotePort, appCtx.Logger)
+	if err != nil {
+		return nil, err
+	}
+	defer close(pf.StopChan)
+
+	// Create S3 client with actual port
+	s3Client, err := appCtx.NewS3Client(pf.LocalPort)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create S3 client: %w", err)
+	}
+
+	bucket := appCtx.Config.Settings.LocalBucket
+
+	appCtx.Logger.Infof("Listing local Settings backups in bucket '%s'...", bucket)
+
+	input := &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucket),
+	}
+
+	result, err := s3Client.ListObjectsV2(context.Background(), input)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list objects in local bucket: %w", err)
+	}
+
+	filteredObjects := s3client.FilterBackupObjects(result.Contents, isMultiPartArchive)
+
+	var backups []BackupFileInfo
+	for _, obj := range filteredObjects {
+		backups = append(backups, BackupFileInfo{
+			Filename:     obj.Key,
+			LastModified: obj.LastModified,
+			Size:         obj.Size,
+		})
 	}
 	return backups, nil
 }

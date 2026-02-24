@@ -10,8 +10,10 @@ import (
 )
 
 const (
-	// MinioKeysSecretName is the name of the secret containing Minio access/secret keys
-	MinioKeysSecretName = "suse-observability-backup-cli-minio-keys" //nolint:gosec // This is a Kubernetes secret name, not a credential
+	// StorageKeysSecretName is the name of the secret containing S3-compatible storage access/secret keys
+	StorageKeysSecretName = "suse-observability-backup-cli-minio-keys" //nolint:gosec // This is a Kubernetes secret name, not a credential
+	// MinioKeysSecretName is an alias for StorageKeysSecretName for backward compatibility
+	MinioKeysSecretName = StorageKeysSecretName
 	// RestoreScriptsConfigMap is the name of the ConfigMap containing restore scripts
 	RestoreScriptsConfigMap = "suse-observability-backup-cli-restore-scripts"
 )
@@ -41,19 +43,19 @@ func EnsureResources(k8sClient *k8s.Client, namespace string, config *config.Con
 	}
 	log.Successf("Backup scripts ConfigMap ready")
 
-	// Ensure Minio keys secret exists
-	log.Infof("Ensuring Minio keys secret exists...")
+	// Ensure storage keys secret exists (uses storage or minio credentials)
+	log.Infof("Ensuring storage keys secret exists...")
 
 	secretData := map[string][]byte{
-		"accesskey": []byte(config.Minio.AccessKey),
-		"secretkey": []byte(config.Minio.SecretKey),
+		"accesskey": []byte(config.GetStorageAccessKey()),
+		"secretkey": []byte(config.GetStorageSecretKey()),
 	}
 
 	secretLabels := k8s.MergeLabels(config.Kubernetes.CommonLabels, map[string]string{})
-	if _, err := k8sClient.EnsureSecret(namespace, MinioKeysSecretName, secretData, secretLabels); err != nil {
-		return fmt.Errorf("failed to ensure Minio keys secret: %w", err)
+	if _, err := k8sClient.EnsureSecret(namespace, StorageKeysSecretName, secretData, secretLabels); err != nil {
+		return fmt.Errorf("failed to ensure storage keys secret: %w", err)
 	}
-	log.Successf("Minio keys secret ready")
+	log.Successf("Storage keys secret ready")
 
 	return nil
 }

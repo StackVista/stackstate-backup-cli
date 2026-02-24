@@ -182,34 +182,42 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 
 // buildEnvVar constructs environment variables for the container spec
 func buildEnvVar(extraEnvVar []corev1.EnvVar, config *config.Config) []corev1.EnvVar {
+	storageService := config.GetStorageService()
 	commonVar := []corev1.EnvVar{
 		{Name: "BACKUP_CONFIGURATION_BUCKET_NAME", Value: config.Settings.Bucket},
 		{Name: "BACKUP_CONFIGURATION_S3_PREFIX", Value: config.Settings.S3Prefix},
-		{Name: "MINIO_ENDPOINT", Value: fmt.Sprintf("%s:%d", config.Minio.Service.Name, config.Minio.Service.Port)},
+		{Name: "MINIO_ENDPOINT", Value: fmt.Sprintf("%s:%d", storageService.Name, storageService.Port)},
 		{Name: "STACKSTATE_BASE_URL", Value: config.Settings.Restore.BaseURL},
 		{Name: "RECEIVER_BASE_URL", Value: config.Settings.Restore.ReceiverBaseURL},
 		{Name: "PLATFORM_VERSION", Value: config.Settings.Restore.PlatformVersion},
 		{Name: "ZOOKEEPER_QUORUM", Value: config.Settings.Restore.ZookeeperQuorum},
-		{Name: "BACKUP_CONFIGURATION_UPLOAD_REMOTE", Value: strconv.FormatBool(config.Minio.Enabled)},
+		{Name: "BACKUP_CONFIGURATION_UPLOAD_REMOTE", Value: strconv.FormatBool(config.StorageEnabled())},
+	}
+	if config.Settings.LocalBucket != "" {
+		commonVar = append(commonVar, corev1.EnvVar{Name: "BACKUP_CONFIGURATION_LOCAL_BUCKET", Value: config.Settings.LocalBucket})
 	}
 	commonVar = append(commonVar, extraEnvVar...)
 	return commonVar
 }
 
 // buildVolumeMounts constructs volume mounts for the restore job container
-func buildVolumeMounts() []corev1.VolumeMount {
-	return []corev1.VolumeMount{
+func buildVolumeMounts(config *config.Config) []corev1.VolumeMount {
+	mounts := []corev1.VolumeMount{
 		{Name: "backup-log", MountPath: "/opt/docker/etc_log"},
 		{Name: "backup-restore-scripts", MountPath: "/backup-restore-scripts"},
 		{Name: "minio-keys", MountPath: "/aws-keys"},
 		{Name: "tmp-data", MountPath: "/tmp-data"},
-		{Name: "settings-backup-data", MountPath: "/settings-backup-data"},
 	}
+	// Only mount PVC in legacy mode
+	if config.IsLegacyMode() {
+		mounts = append(mounts, corev1.VolumeMount{Name: "settings-backup-data", MountPath: "/settings-backup-data"})
+	}
+	return mounts
 }
 
 // buildVolumes constructs volumes for the restore job pod
 func buildVolumes(config *config.Config, defaultMode int32) []corev1.Volume {
-	return []corev1.Volume{
+	volumes := []corev1.Volume{
 		{
 			Name: "backup-log",
 			VolumeSource: corev1.VolumeSource{
@@ -235,7 +243,7 @@ func buildVolumes(config *config.Config, defaultMode int32) []corev1.Volume {
 			Name: "minio-keys",
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
-					SecretName: restore.MinioKeysSecretName,
+					SecretName: restore.StorageKeysSecretName,
 				},
 			},
 		},
@@ -245,15 +253,19 @@ func buildVolumes(config *config.Config, defaultMode int32) []corev1.Volume {
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		},
-		{
+	}
+	// Only include PVC volume in legacy mode
+	if config.IsLegacyMode() {
+		volumes = append(volumes, corev1.Volume{
 			Name: "settings-backup-data",
 			VolumeSource: corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 					ClaimName: config.Settings.Restore.PVC,
 				},
 			},
-		},
+		})
 	}
+	return volumes
 }
 
 // buildContainers constructs containers for the restore job
@@ -266,6 +278,6 @@ func buildContainer(envVar []corev1.EnvVar, command []string, config *config.Con
 		Command:         command,
 		Env:             envVar,
 		Resources:       k8s.ConvertResources(config.Settings.Restore.Job.Resources),
-		VolumeMounts:    buildVolumeMounts(),
+		VolumeMounts:    buildVolumeMounts(config),
 	}
 }
