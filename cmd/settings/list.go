@@ -150,7 +150,7 @@ func getBackupListFromS3(appCtx *app.Context) ([]BackupFileInfo, error) {
 	var backups []BackupFileInfo
 	for _, obj := range filteredObjects {
 		row := BackupFileInfo{
-			Filename:     obj.Key,
+			Filename:     strings.TrimPrefix(obj.Key, prefix),
 			LastModified: obj.LastModified,
 			Size:         obj.Size,
 		}
