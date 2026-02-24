@@ -21,7 +21,10 @@ download_from_s3() {
 
 RESTORE_FILE=""
 
-if [ -n "${BACKUP_CONFIGURATION_LOCAL_BUCKET:-}" ]; then
+if [ "${BACKUP_RESTORE_FROM_PVC:-}" == "true" ]; then
+  # --from-pvc mode: use legacy PVC directly, no S3 fallback
+  RESTORE_FILE="${BACKUP_DIR}/${BACKUP_FILE}"
+elif [ -n "${BACKUP_CONFIGURATION_LOCAL_BUCKET:-}" ]; then
   # New mode: no PVC, download from local bucket first, fall back to remote bucket
   setup_aws_credentials
 

@@ -44,6 +44,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&useLatest, "latest", false, "Restore from the most recent backup")
 	cmd.Flags().BoolVar(&background, "background", false, "Run restore job in background without waiting for completion")
 	cmd.Flags().BoolVarP(&skipConfirmation, "yes", "y", false, "Skip confirmation prompt")
+	cmd.Flags().BoolVar(&fromPVC, "from-pvc", false, "Restore backup from legacy PVC instead of S3")
 	cmd.MarkFlagsMutuallyExclusive("archive", "latest")
 	cmd.MarkFlagsOneRequired("archive", "latest")
 
@@ -51,6 +52,11 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 }
 
 func runRestore(appCtx *app.Context) error {
+	// Validate --from-pvc: PVC must be configured
+	if fromPVC && appCtx.Config.Settings.Restore.PVC == "" {
+		return fmt.Errorf("--from-pvc requires settings.restore.pvc to be configured")
+	}
+
 	// Determine which archive to restore
 	backupFile := archiveName
 	if useLatest {
@@ -193,7 +199,10 @@ func buildEnvVar(extraEnvVar []corev1.EnvVar, config *config.Config) []corev1.En
 		{Name: "ZOOKEEPER_QUORUM", Value: config.Settings.Restore.ZookeeperQuorum},
 		{Name: "BACKUP_CONFIGURATION_UPLOAD_REMOTE", Value: strconv.FormatBool(config.StorageEnabled())},
 	}
-	if config.Settings.LocalBucket != "" {
+	if fromPVC {
+		// Force PVC mode in the shell script, suppress local bucket
+		commonVar = append(commonVar, corev1.EnvVar{Name: "BACKUP_RESTORE_FROM_PVC", Value: "true"})
+	} else if config.Settings.LocalBucket != "" {
 		commonVar = append(commonVar, corev1.EnvVar{Name: "BACKUP_CONFIGURATION_LOCAL_BUCKET", Value: config.Settings.LocalBucket})
 	}
 	commonVar = append(commonVar, extraEnvVar...)
@@ -208,8 +217,8 @@ func buildVolumeMounts(config *config.Config) []corev1.VolumeMount {
 		{Name: "minio-keys", MountPath: "/aws-keys"},
 		{Name: "tmp-data", MountPath: "/tmp-data"},
 	}
-	// Only mount PVC in legacy mode
-	if config.IsLegacyMode() {
+	// Mount PVC in legacy mode or when --from-pvc is set
+	if config.IsLegacyMode() || fromPVC {
 		mounts = append(mounts, corev1.VolumeMount{Name: "settings-backup-data", MountPath: "/settings-backup-data"})
 	}
 	return mounts
@@ -254,8 +263,8 @@ func buildVolumes(config *config.Config, defaultMode int32) []corev1.Volume {
 			},
 		},
 	}
-	// Only include PVC volume in legacy mode
-	if config.IsLegacyMode() {
+	// Include PVC volume in legacy mode or when --from-pvc is set
+	if config.IsLegacyMode() || fromPVC {
 		volumes = append(volumes, corev1.Volume{
 			Name: "settings-backup-data",
 			VolumeSource: corev1.VolumeSource{
