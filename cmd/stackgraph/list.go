@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -75,7 +76,7 @@ func runList(appCtx *app.Context) error {
 
 	for _, obj := range filteredObjects {
 		row := []string{
-			obj.Key,
+			strings.TrimPrefix(obj.Key, prefix),
 			obj.LastModified.Format("2006-01-02 15:04:05 MST"),
 			output.FormatBytes(obj.Size),
 		}
