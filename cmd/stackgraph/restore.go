@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -187,8 +188,8 @@ func getLatestBackup(k8sClient *k8s.Client, namespace string, config *config.Con
 	sort.Slice(filteredObjects, func(i, j int) bool {
 		return filteredObjects[i].LastModified.After(filteredObjects[j].LastModified)
 	})
-
-	return filteredObjects[0].Key, nil
+	latestBackup := strings.TrimPrefix(filteredObjects[0].Key, prefix)
+	return latestBackup, nil
 }
 
 // buildPVCSpec builds a PVCSpec from configuration
