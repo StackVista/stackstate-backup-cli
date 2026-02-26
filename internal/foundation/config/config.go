@@ -38,7 +38,7 @@ func (c *Config) StorageEnabled() bool {
 	if c.IsLegacyMode() {
 		return c.Minio.Enabled
 	}
-	return c.Storage.Service.Name != ""
+	return c.Storage.GlobalBackupEnabled
 }
 
 // GetStorageService returns the service config for the S3-compatible storage,
@@ -127,9 +127,10 @@ type MinioConfig struct {
 
 // StorageConfig holds S3-compatible storage configuration (new mode, replaces Minio)
 type StorageConfig struct {
-	Service   ServiceConfig `yaml:"service" validate:"omitempty"`
-	AccessKey string        `yaml:"accessKey"` // From secret
-	SecretKey string        `yaml:"secretKey"` // From secret
+	GlobalBackupEnabled bool          `yaml:"globalBackupEnabled" validate:"boolean"`
+	Service             ServiceConfig `yaml:"service" validate:"omitempty"`
+	AccessKey           string        `yaml:"accessKey"` // From secret
+	SecretKey           string        `yaml:"secretKey"` // From secret
 }
 
 // StackgraphConfig holds Stackgraph backup-specific configuration
