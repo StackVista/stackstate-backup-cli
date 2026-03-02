@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/stackvista/stackstate-backup-cli/internal/clients/clickhouse"
 	"github.com/stackvista/stackstate-backup-cli/internal/clients/elasticsearch"
@@ -16,15 +17,16 @@ import (
 
 // Context holds all dependencies for cli commands
 type Context struct {
-	K8sClient *k8s.Client
-	Namespace string
-	S3Client  s3.Interface
-	ESClient  elasticsearch.Interface
-	CHClient  clickhouse.Interface
-	Config    *config.Config
-	Logger    *logger.Logger
-	Formatter *output.Formatter
-	Context   context.Context
+	K8sClient  *k8s.Client
+	Namespace  string
+	S3Client   s3.Interface
+	ESClient   elasticsearch.Interface
+	CHClient   clickhouse.Interface
+	Config     *config.Config
+	Logger     *logger.Logger
+	Formatter  *output.Formatter
+	Context    context.Context
+	JobTimeout time.Duration
 }
 
 // NewContext creates production dependencies
@@ -68,14 +70,15 @@ func NewContext(flags *config.CLIGlobalFlags) (*Context, error) {
 	formatter := output.NewFormatter(os.Stdout, flags.OutputFormat)
 
 	return &Context{
-		K8sClient: k8sClient,
-		Namespace: flags.Namespace,
-		Config:    cfg,
-		S3Client:  s3Client,
-		ESClient:  esClient,
-		CHClient:  chClient,
-		Logger:    logger.New(flags.Quiet, flags.Debug),
-		Formatter: formatter,
-		Context:   context.Background(),
+		K8sClient:  k8sClient,
+		Namespace:  flags.Namespace,
+		Config:     cfg,
+		S3Client:   s3Client,
+		ESClient:   esClient,
+		CHClient:   chClient,
+		Logger:     logger.New(flags.Quiet, flags.Debug),
+		Formatter:  formatter,
+		Context:    context.Background(),
+		JobTimeout: time.Duration(flags.JobTimeout) * time.Minute,
 	}, nil
 }

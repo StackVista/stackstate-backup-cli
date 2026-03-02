@@ -14,8 +14,45 @@ const (
 )
 
 // WaitForJobCompletion waits for a Kubernetes job to complete
-func WaitForJobCompletion(k8sClient *k8s.Client, namespace, jobName string, log *logger.Logger) error {
-	timeout := time.After(defaultJobCompletionTimeout)
+func WaitForJobCompletion(k8sClient *k8s.Client, namespace, jobName string, log *logger.Logger, jobTimeout time.Duration) error {
+	if jobTimeout <= 0 {
+		jobTimeout = defaultJobCompletionTimeout
+	}
+
+	// Initial check before starting the ticker
+	checkJob := func() (bool, error) {
+		job, err := k8sClient.GetJob(namespace, jobName)
+		if err != nil {
+			return false, fmt.Errorf("failed to get job status: %w", err)
+		}
+
+		if job.Status.Succeeded > 0 {
+			return true, nil
+		}
+
+		if job.Status.Failed > 0 {
+			// Get and print logs from failed job
+			log.Println()
+			log.Errorf("Job failed. Fetching logs...")
+			log.Println()
+			if err := PrintJobLogs(k8sClient, namespace, jobName, log); err != nil {
+				log.Warningf("Failed to fetch job logs: %v", err)
+			}
+			return false, fmt.Errorf("job failed")
+		}
+
+		log.Debugf("Job status: Active=%d, Succeeded=%d, Failed=%d",
+			job.Status.Active, job.Status.Succeeded, job.Status.Failed)
+		return false, nil
+	}
+
+	// Perform initial check
+	done, err := checkJob()
+	if err != nil || done {
+		return err
+	}
+
+	timeout := time.After(jobTimeout)
 	ticker := time.NewTicker(defaultJobStatusCheckInterval)
 	defer ticker.Stop()
 
@@ -24,28 +61,10 @@ func WaitForJobCompletion(k8sClient *k8s.Client, namespace, jobName string, log 
 		case <-timeout:
 			return fmt.Errorf("timeout waiting for job to complete")
 		case <-ticker.C:
-			job, err := k8sClient.GetJob(namespace, jobName)
-			if err != nil {
-				return fmt.Errorf("failed to get job status: %w", err)
+			done, err := checkJob()
+			if err != nil || done {
+				return err
 			}
-
-			if job.Status.Succeeded > 0 {
-				return nil
-			}
-
-			if job.Status.Failed > 0 {
-				// Get and print logs from failed job
-				log.Println()
-				log.Errorf("Job failed. Fetching logs...")
-				log.Println()
-				if err := PrintJobLogs(k8sClient, namespace, jobName, log); err != nil {
-					log.Warningf("Failed to fetch job logs: %v", err)
-				}
-				return fmt.Errorf("job failed")
-			}
-
-			log.Debugf("Job status: Active=%d, Succeeded=%d, Failed=%d",
-				job.Status.Active, job.Status.Succeeded, job.Status.Failed)
 		}
 	}
 }
@@ -112,8 +131,8 @@ func PrintRunningJobStatus(log *logger.Logger, serviceName, jobName, namespace s
 }
 
 // WaitAndCleanup waits for job completion and cleans up resources
-func WaitAndCleanup(k8sClient *k8s.Client, namespace, jobName string, log *logger.Logger, cleanupPVC bool) error {
-	if err := WaitForJobCompletion(k8sClient, namespace, jobName, log); err != nil {
+func WaitAndCleanup(k8sClient *k8s.Client, namespace, jobName string, log *logger.Logger, cleanupPVC bool, jobTimeout time.Duration) error {
+	if err := WaitForJobCompletion(k8sClient, namespace, jobName, log, jobTimeout); err != nil {
 		log.Errorf("Job failed: %v", err)
 		log.Println()
 		log.Infof("Cleanup commands:")

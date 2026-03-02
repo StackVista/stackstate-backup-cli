@@ -2,6 +2,7 @@ package restore
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/stackvista/stackstate-backup-cli/internal/clients/k8s"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
@@ -74,13 +75,14 @@ type WaitAndFinalizeParams struct {
 	ScaleSelector string
 	CleanupPVC    bool
 	Log           *logger.Logger
+	Timeout       time.Duration
 }
 
 // WaitAndFinalize waits for job completion and then cleans up
 func WaitAndFinalize(params WaitAndFinalizeParams) error {
 	PrintWaitingMessage(params.Log, params.ServiceName, params.JobName, params.Namespace)
 
-	if err := WaitForJobCompletion(params.K8sClient, params.Namespace, params.JobName, params.Log); err != nil {
+	if err := WaitForJobCompletion(params.K8sClient, params.Namespace, params.JobName, params.Log, params.Timeout); err != nil {
 		params.Log.Errorf("Job failed: %v", err)
 		// Still cleanup even if failed
 		params.Log.Println()
@@ -113,6 +115,7 @@ type CheckAndFinalizeParams struct {
 	CleanupPVC    bool
 	WaitForJob    bool
 	Log           *logger.Logger
+	Timeout       time.Duration
 }
 
 // CheckAndFinalize checks the status of a background restore job and cleans up resources
@@ -157,6 +160,7 @@ func CheckAndFinalize(params CheckAndFinalizeParams) error {
 			ScaleSelector: params.ScaleSelector,
 			CleanupPVC:    params.CleanupPVC,
 			Log:           params.Log,
+			Timeout:       params.Timeout,
 		})
 	}
 

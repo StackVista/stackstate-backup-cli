@@ -130,13 +130,13 @@ func runRestore(appCtx *app.Context) error {
 		return nil
 	}
 
-	return waitAndCleanupRestoreJob(appCtx.K8sClient, appCtx.Namespace, jobName, appCtx.Logger)
+	return waitAndCleanupRestoreJob(appCtx.K8sClient, appCtx.Namespace, jobName, appCtx.Logger, appCtx.JobTimeout)
 }
 
 // waitAndCleanupRestoreJob waits for job completion and cleans up resources
-func waitAndCleanupRestoreJob(k8sClient *k8s.Client, namespace, jobName string, log *logger.Logger) error {
+func waitAndCleanupRestoreJob(k8sClient *k8s.Client, namespace, jobName string, log *logger.Logger, jobTimeout time.Duration) error {
 	restore.PrintWaitingMessage(log, "victoria-metrics", jobName, namespace)
-	return restore.WaitAndCleanup(k8sClient, namespace, jobName, log, false)
+	return restore.WaitAndCleanup(k8sClient, namespace, jobName, log, false, jobTimeout)
 }
 
 // getLatestBackup retrieves the most recent backup from S3

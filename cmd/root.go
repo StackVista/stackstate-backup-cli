@@ -27,6 +27,7 @@ func addBackupConfigFlags(cmd *cobra.Command) {
 	cmd.PersistentFlags().StringVar(&flags.ConfigMapName, "configmap", "suse-observability-backup-config", "ConfigMap name containing backup configuration")
 	cmd.PersistentFlags().StringVar(&flags.SecretName, "secret", "suse-observability-backup-config", "Secret name containing backup configuration")
 	cmd.PersistentFlags().StringVarP(&flags.OutputFormat, "output", "o", "table", "Output format (table, json)")
+	cmd.PersistentFlags().IntVar(&flags.JobTimeout, "job-timeout", config.DefaultJobTimeoutMinutes, "Timeout in minutes for waiting on job/restore completion")
 	_ = cmd.MarkPersistentFlagRequired("namespace")
 }
 

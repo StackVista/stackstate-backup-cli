@@ -54,5 +54,6 @@ func runCheckAndFinalize(appCtx *app.Context) error {
 		CleanupPVC:    false,
 		WaitForJob:    waitForJob,
 		Log:           appCtx.Logger,
+		Timeout:       appCtx.JobTimeout,
 	})
 }

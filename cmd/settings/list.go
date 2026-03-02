@@ -185,7 +185,7 @@ func getBackupListFromPVC(appCtx *app.Context) ([]BackupFileInfo, error) {
 		}
 	}()
 
-	if err := restore.WaitForJobCompletion(appCtx.K8sClient, appCtx.Namespace, jobName, appCtx.Logger); err != nil {
+	if err := restore.WaitForJobCompletion(appCtx.K8sClient, appCtx.Namespace, jobName, appCtx.Logger, appCtx.JobTimeout); err != nil {
 		return nil, err
 	}
 

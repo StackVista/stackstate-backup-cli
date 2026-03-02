@@ -341,6 +341,11 @@ func LoadConfig(clientset kubernetes.Interface, namespace, configMapName, secret
 	return config, nil
 }
 
+const (
+	// DefaultJobTimeoutMinutes is the default timeout for job completion in minutes
+	DefaultJobTimeoutMinutes = 30
+)
+
 type CLIGlobalFlags struct {
 	Namespace     string
 	Kubeconfig    string
@@ -349,6 +354,7 @@ type CLIGlobalFlags struct {
 	ConfigMapName string
 	SecretName    string
 	OutputFormat  string // table, json
+	JobTimeout    int    // job completion timeout in minutes
 }
 
 func NewCLIGlobalFlags() *CLIGlobalFlags {

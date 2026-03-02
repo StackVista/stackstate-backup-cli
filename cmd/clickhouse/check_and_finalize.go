@@ -117,7 +117,7 @@ func waitAndFinalize(appCtx *app.Context, chClient clickhouse.Interface, operati
 		}
 	}
 
-	if err := restore.WaitForAPIRestore(checkStatusFn, defaultPollInterval, defaultRestoreTimeout, appCtx.Logger); err != nil {
+	if err := restore.WaitForAPIRestore(checkStatusFn, defaultPollInterval, appCtx.JobTimeout, appCtx.Logger); err != nil {
 		return err
 	}
 
