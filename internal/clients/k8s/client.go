@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -104,13 +105,14 @@ func (c *Client) PortForwardService(namespace, serviceName string, localPort, re
 
 // PortForwardPod creates a port-forward to a specific pod
 func (c *Client) PortForwardPod(namespace, podName string, localPort, remotePort int) (chan struct{}, chan struct{}, error) {
-	path := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/portforward", namespace, podName)
+	reqPath := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/portforward", namespace, podName)
 	hostIP := c.restConfig.Host
 	pfURL, err := url.Parse(hostIP)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to parse host: %w", err)
 	}
-	pfURL.Path = path
+	// Preserve any existing path prefix (e.g. from Rancher/OpenShift proxy URLs)
+	pfURL.Path = path.Join(pfURL.Path, reqPath)
 
 	transport, upgrader, err := spdy.RoundTripperFor(c.restConfig)
 	if err != nil {
