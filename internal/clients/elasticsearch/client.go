@@ -247,6 +247,28 @@ func (c *Client) RolloverDatastream(datastreamName string) error {
 	return nil
 }
 
+// DeleteSnapshotRepository deletes a snapshot repository
+func (c *Client) DeleteSnapshotRepository(name string) error {
+	res, err := c.es.Snapshot.DeleteRepository(
+		[]string{name},
+		c.es.Snapshot.DeleteRepository.WithContext(context.Background()),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to delete snapshot repository: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode == http.StatusNotFound {
+		return nil // Repository doesn't exist, which is fine
+	}
+
+	if res.IsError() {
+		return fmt.Errorf("elasticsearch returned error: %s", res.String())
+	}
+
+	return nil
+}
+
 // ConfigureSnapshotRepository configures an S3 snapshot repository
 func (c *Client) ConfigureSnapshotRepository(name, bucket, endpoint, basePath, accessKey, secretKey string) error {
 	body := map[string]interface{}{
