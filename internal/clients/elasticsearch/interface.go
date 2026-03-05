@@ -19,6 +19,7 @@ type Interface interface {
 	RolloverDatastream(datastreamName string) error
 
 	// Repository and SLM operations
+	DeleteSnapshotRepository(name string) error
 	ConfigureSnapshotRepository(name, bucket, endpoint, basePath, accessKey, secretKey string) error
 	ConfigureSLMPolicy(name, schedule, snapshotName, repository, indices, expireAfter string, minCount, maxCount int) error
 }

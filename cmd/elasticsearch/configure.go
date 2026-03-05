@@ -40,6 +40,14 @@ func runConfigure(appCtx *app.Context) error {
 
 	// Configure snapshot repository
 	repo := appCtx.Config.Elasticsearch.SnapshotRepository
+
+	// Always unregister existing repository to ensure clean state
+	appCtx.Logger.Infof("Unregistering snapshot repository '%s'...", repo.Name)
+	if err := appCtx.ESClient.DeleteSnapshotRepository(repo.Name); err != nil {
+		return fmt.Errorf("failed to unregister snapshot repository: %w", err)
+	}
+	appCtx.Logger.Successf("Snapshot repository unregistered successfully")
+
 	appCtx.Logger.Infof("Configuring snapshot repository '%s' (bucket: %s)...", repo.Name, repo.Bucket)
 
 	err = appCtx.ESClient.ConfigureSnapshotRepository(

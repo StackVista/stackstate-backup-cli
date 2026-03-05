@@ -16,12 +16,22 @@ import (
 
 // mockESClientForConfigure is a mock for testing configure command
 type mockESClientForConfigure struct {
+	deleteRepoErr    error
 	configureRepoErr error
 	configureSLMErr  error
+	repoDeleted      bool
 	repoConfigured   bool
 	slmConfigured    bool
 	lastRepoConfig   map[string]string
 	lastSLMConfig    map[string]interface{}
+}
+
+func (m *mockESClientForConfigure) DeleteSnapshotRepository(_ string) error {
+	if m.deleteRepoErr != nil {
+		return m.deleteRepoErr
+	}
+	m.repoDeleted = true
+	return nil
 }
 
 func (m *mockESClientForConfigure) ConfigureSnapshotRepository(name, bucket, endpoint, basePath, accessKey, secretKey string) error {
@@ -260,32 +270,51 @@ minio:
 }
 
 // TestMockESClientForConfigure demonstrates mock usage for configure
+//
+//nolint:funlen // Table-driven test
 func TestMockESClientForConfigure(t *testing.T) {
 	tests := []struct {
 		name             string
+		deleteRepoErr    error
 		configureRepoErr error
 		configureSLMErr  error
+		expectDeleteOK   bool
 		expectRepoOK     bool
 		expectSLMOK      bool
 	}{
 		{
 			name:             "successful configuration",
+			deleteRepoErr:    nil,
 			configureRepoErr: nil,
 			configureSLMErr:  nil,
+			expectDeleteOK:   true,
 			expectRepoOK:     true,
 			expectSLMOK:      true,
 		},
 		{
+			name:             "repository deletion fails",
+			deleteRepoErr:    fmt.Errorf("repository deletion failed"),
+			configureRepoErr: nil,
+			configureSLMErr:  nil,
+			expectDeleteOK:   false,
+			expectRepoOK:     false,
+			expectSLMOK:      false,
+		},
+		{
 			name:             "repository configuration fails",
+			deleteRepoErr:    nil,
 			configureRepoErr: fmt.Errorf("repository creation failed"),
 			configureSLMErr:  nil,
+			expectDeleteOK:   true,
 			expectRepoOK:     false,
 			expectSLMOK:      false,
 		},
 		{
 			name:             "SLM configuration fails",
+			deleteRepoErr:    nil,
 			configureRepoErr: nil,
 			configureSLMErr:  fmt.Errorf("SLM policy creation failed"),
+			expectDeleteOK:   true,
 			expectRepoOK:     true,
 			expectSLMOK:      false,
 		},
@@ -294,12 +323,24 @@ func TestMockESClientForConfigure(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockClient := &mockESClientForConfigure{
+				deleteRepoErr:    tt.deleteRepoErr,
 				configureRepoErr: tt.configureRepoErr,
 				configureSLMErr:  tt.configureSLMErr,
 			}
 
+			// Delete repository
+			err := mockClient.DeleteSnapshotRepository("backup-repo")
+
+			if tt.expectDeleteOK {
+				assert.NoError(t, err)
+				assert.True(t, mockClient.repoDeleted)
+			} else {
+				assert.Error(t, err)
+				return // Don't test configure if delete failed
+			}
+
 			// Configure repository
-			err := mockClient.ConfigureSnapshotRepository(
+			err = mockClient.ConfigureSnapshotRepository(
 				"backup-repo",
 				"backup-bucket",
 				"minio:9000",
