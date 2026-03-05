@@ -8,7 +8,6 @@ import (
 )
 
 const (
-	defaultAPIRestoreTimeout      = 30 * time.Minute
 	defaultAPIStatusCheckInterval = 10 * time.Second
 )
 
@@ -18,39 +17,30 @@ const (
 func WaitForAPIRestore(
 	checkStatusFn func() (string, bool, error),
 	interval time.Duration,
-	timeout time.Duration,
 	log *logger.Logger,
 ) error {
 	if interval == 0 {
 		interval = defaultAPIStatusCheckInterval
 	}
-	if timeout == 0 {
-		timeout = defaultAPIRestoreTimeout
-	}
 
-	timeoutChan := time.After(timeout)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
-		select {
-		case <-timeoutChan:
-			return fmt.Errorf("timeout waiting for restore to complete")
-		case <-ticker.C:
-			statusMsg, isComplete, err := checkStatusFn()
-			if err != nil {
-				return fmt.Errorf("failed to check restore status: %w", err)
-			}
+		<-ticker.C
+		statusMsg, isComplete, err := checkStatusFn()
+		if err != nil {
+			return fmt.Errorf("failed to check restore status: %w", err)
+		}
 
-			log.Debugf("Restore status: %s (complete: %v)", statusMsg, isComplete)
+		log.Debugf("Restore status: %s (complete: %v)", statusMsg, isComplete)
 
-			if isComplete {
-				if statusMsg == "SUCCESS" || statusMsg == "PARTIAL" {
-					log.Debugf("Restore completed successfully")
-					return nil
-				}
-				return fmt.Errorf("restore failed with status: %s", statusMsg)
+		if isComplete {
+			if statusMsg == "SUCCESS" || statusMsg == "PARTIAL" {
+				log.Debugf("Restore completed successfully")
+				return nil
 			}
+			return fmt.Errorf("restore failed with status: %s", statusMsg)
 		}
 	}
 }

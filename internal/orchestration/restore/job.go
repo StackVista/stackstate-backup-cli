@@ -9,44 +9,38 @@ import (
 )
 
 const (
-	defaultJobCompletionTimeout   = 30 * time.Minute
 	defaultJobStatusCheckInterval = 10 * time.Second
 )
 
 // WaitForJobCompletion waits for a Kubernetes job to complete
 func WaitForJobCompletion(k8sClient *k8s.Client, namespace, jobName string, log *logger.Logger) error {
-	timeout := time.After(defaultJobCompletionTimeout)
 	ticker := time.NewTicker(defaultJobStatusCheckInterval)
 	defer ticker.Stop()
 
 	for {
-		select {
-		case <-timeout:
-			return fmt.Errorf("timeout waiting for job to complete")
-		case <-ticker.C:
-			job, err := k8sClient.GetJob(namespace, jobName)
-			if err != nil {
-				return fmt.Errorf("failed to get job status: %w", err)
-			}
-
-			if job.Status.Succeeded > 0 {
-				return nil
-			}
-
-			if job.Status.Failed > 0 {
-				// Get and print logs from failed job
-				log.Println()
-				log.Errorf("Job failed. Fetching logs...")
-				log.Println()
-				if err := PrintJobLogs(k8sClient, namespace, jobName, log); err != nil {
-					log.Warningf("Failed to fetch job logs: %v", err)
-				}
-				return fmt.Errorf("job failed")
-			}
-
-			log.Debugf("Job status: Active=%d, Succeeded=%d, Failed=%d",
-				job.Status.Active, job.Status.Succeeded, job.Status.Failed)
+		<-ticker.C
+		job, err := k8sClient.GetJob(namespace, jobName)
+		if err != nil {
+			return fmt.Errorf("failed to get job status: %w", err)
 		}
+
+		if job.Status.Succeeded > 0 {
+			return nil
+		}
+
+		if job.Status.Failed > 0 {
+			// Get and print logs from failed job
+			log.Println()
+			log.Errorf("Job failed. Fetching logs...")
+			log.Println()
+			if err := PrintJobLogs(k8sClient, namespace, jobName, log); err != nil {
+				log.Warningf("Failed to fetch job logs: %v", err)
+			}
+			return fmt.Errorf("job failed")
+		}
+
+		log.Debugf("Job status: Active=%d, Succeeded=%d, Failed=%d",
+			job.Status.Active, job.Status.Succeeded, job.Status.Failed)
 	}
 }
 
