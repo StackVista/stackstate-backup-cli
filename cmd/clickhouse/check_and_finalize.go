@@ -15,8 +15,7 @@ import (
 )
 
 const (
-	defaultRestoreTimeout = 30 * time.Minute
-	defaultPollInterval   = 10 * time.Second
+	defaultPollInterval = 10 * time.Second
 )
 
 // Check-and-finalize command flags
@@ -117,7 +116,7 @@ func waitAndFinalize(appCtx *app.Context, chClient clickhouse.Interface, operati
 		}
 	}
 
-	if err := restore.WaitForAPIRestore(checkStatusFn, defaultPollInterval, defaultRestoreTimeout, appCtx.Logger); err != nil {
+	if err := restore.WaitForAPIRestore(checkStatusFn, defaultPollInterval, appCtx.Logger); err != nil {
 		return err
 	}
 

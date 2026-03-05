@@ -105,7 +105,7 @@ func waitAndFinalize(appCtx *app.Context, repository, snapshotName string) error
 		return appCtx.ESClient.GetRestoreStatus(repository, snapshotName)
 	}
 
-	if err := restore.WaitForAPIRestore(checkStatusFn, 0, 0, appCtx.Logger); err != nil {
+	if err := restore.WaitForAPIRestore(checkStatusFn, 0, appCtx.Logger); err != nil {
 		return err
 	}
 
