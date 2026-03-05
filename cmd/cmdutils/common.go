@@ -11,11 +11,6 @@ import (
 const (
 	StorageIsRequired    bool = true
 	StorageIsNotRequired bool = false
-
-	// MinioIsRequired is deprecated: use StorageIsRequired instead
-	MinioIsRequired = StorageIsRequired
-	// MinioIsNotRequired is deprecated: use StorageIsNotRequired instead
-	MinioIsNotRequired = StorageIsNotRequired
 )
 
 func Run(globalFlags *config.CLIGlobalFlags, runFunc func(ctx *app.Context) error, storageRequired bool) {

@@ -1,0 +1,181 @@
+# Valid ConfigMap Configuration for SUSE Observability Backup CLI (Storage mode)
+# This file contains the main configuration using the new StorageConfig (non-legacy mode).
+# It is typically stored in a Kubernetes ConfigMap.
+
+elasticsearch:
+  # Snapshot repository configuration for S3-compatible storage
+  snapshotRepository:
+    # Name of the Elasticsearch snapshot repository
+    name: sts-backup
+    # S3 bucket name where snapshots will be stored
+    bucket: sts-elasticsearch-backup
+    # S3 endpoint (hostname:port)
+    endpoint: suse-observability-storage:9000
+    # Base path within the bucket for snapshots (empty string for root)
+    basepath: ""
+
+  # Snapshot Lifecycle Management (SLM) policy configuration
+  # SLM automates snapshot creation on a schedule
+  slm:
+    # Name of the SLM policy
+    name: auto-sts-backup
+    # Cron schedule for automatic snapshots (Quartz format: "second minute hour day month weekday")
+    # Example: "0 0 3 * * ?" = daily at 3:00 AM
+    schedule: "0 0 3 * * ?"
+    # Template for snapshot names (supports Elasticsearch date math)
+    # Example: "<sts-backup-{now{yyyyMMdd-HHmm}}>" creates snapshots like "sts-backup-20240115-0300"
+    snapshotTemplateName: "<sts-backup-{now{yyyyMMdd-HHmm}}>"
+    # Repository to store snapshots (must match snapshotRepository.name)
+    repository: sts-backup
+    # Indices pattern to include in snapshots (glob pattern)
+    indices: "sts*"
+    # Retention policy: delete snapshots older than this duration (e.g., 30d, 7d, 90d)
+    retentionExpireAfter: 30d
+    # Retention policy: minimum number of snapshots to keep (even if expired)
+    retentionMinCount: 5
+    # Retention policy: maximum number of snapshots to keep
+    retentionMaxCount: 30
+
+  # Elasticsearch service connection details
+  service:
+    # Name of the Elasticsearch service in Kubernetes
+    name: suse-observability-elasticsearch-master-headless
+    # Port number for Elasticsearch HTTP API
+    port: 9200
+    # Local port to use for port-forwarding (can be same as port)
+    localPortForwardPort: 9200
+
+  # Restore operation configuration
+  restore:
+    # Snapshot repository to restore from (must match snapshotRepository.name)
+    repository: sts-backup
+    # Kubernetes label selector for deployments to scale down during restore
+    # Example: "observability.suse.com/scalable-during-es-restore=true"
+    scaleDownLabelSelector: "observability.suse.com/scalable-during-es-restore=true"
+    # Prefix for regular indices to filter during restore operations
+    indexPrefix: sts
+    # Prefix for datastream indices (datastreams use pattern: .ds-{name}-{generation})
+    datastreamIndexPrefix: .ds-sts_k8s_logs
+    # Name of the datastream (used for rollover operations)
+    datastreamName: sts_k8s_logs
+    # Pattern for indices to restore from snapshot (comma-separated glob patterns)
+    indicesPattern: sts*,.ds-sts_k8s_logs*
+
+# Storage configuration for S3-compatible storage (new mode, replaces Minio)
+storage:
+  globalBackupEnabled: true
+  # Storage service connection details
+  service:
+    name: suse-observability-storage
+    port: 9000
+    localPortForwardPort: 9000
+  # Access credentials (typically from Kubernetes secret)
+  accessKey: storageadmin
+  secretKey: storageadmin
+
+# Stackgraph backup configuration
+stackgraph:
+  # S3 bucket for stackgraph backups
+  bucket: sts-stackgraph-backup
+  # S3 prefix path for backups
+  s3Prefix: ""
+  # Archive split to multiple parts
+  multipartArchive: true
+  # Restore configuration
+  restore:
+    # Label selector for deployments to scale down during restore
+    scaleDownLabelSelector: "observability.suse.com/scalable-during-stackgraph-restore=true"
+    # ConfigMap containing logging configuration
+    loggingConfigConfigMap: suse-observability-logging
+    # Zookeeper quorum connection string
+    zookeeperQuorum: "suse-observability-zookeeper:2181"
+    # Job configuration
+    job:
+      labels:
+        app: stackgraph-restore
+      image: quay.io/stackstate/stackstate-backup:latest
+      waitImage: quay.io/stackstate/wait:latest
+      resources:
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+        requests:
+          cpu: "1"
+          memory: "2Gi"
+    # PVC configuration for restore jobs
+    pvc:
+      size: "10Gi"
+      accessModes:
+        - ReadWriteOnce
+
+# VictoriaMetrics backup configuration
+victoriaMetrics:
+  # S3 locations for VictoriaMetrics backups (one per instance)
+  S3Locations:
+    - bucket: sts-victoria-metrics-backup
+      prefix: victoria-metrics-0
+    - bucket: sts-victoria-metrics-backup
+      prefix: victoria-metrics-1
+  # Restore configuration
+  restore:
+    # HA mode for VictoriaMetrics (mirror = two independent instances)
+    haMode: "mirror"
+    # PVC prefix for VictoriaMetrics StatefulSet PVCs
+    persistentVolumeClaimPrefix: "database-victoria-metrics-"
+    # Label selector for deployments to scale down during restore
+    scaleDownLabelSelector: "observability.suse.com/scalable-during-vm-restore=true"
+    # Job configuration
+    job:
+      labels:
+        app: victoria-metrics-restore
+      image: quay.io/stackstate/victoria-metrics-backup:latest
+      waitImage: quay.io/stackstate/wait:latest
+      resources:
+        limits:
+          cpu: "1"
+          memory: "2Gi"
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
+
+# Settings backup configuration
+# In storage mode, localBucket is required instead of settings.restore.pvc
+settings:
+  bucket: sts-settings-backup
+  s3Prefix: ""
+  localBucket: sts-settings-local-backup
+  restore:
+    scaleDownLabelSelector: "observability.suse.com/scalable-during-settings-restore=true"
+    loggingConfigConfigMap: suse-observability-logging
+    baseUrl: "http://suse-observability-server:7070"
+    receiverBaseUrl: "http://suse-observability-receiver:7077"
+    platformVersion: "5.2.0"
+    zookeeperQuorum: "suse-observability-zookeeper:2181"
+    job:
+      labels:
+        app: settings-restore
+      image: quay.io/stackstate/settings-backup:latest
+      waitImage: quay.io/stackstate/wait:latest
+      resources:
+        limits:
+          cpu: "1"
+          memory: "2Gi"
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
+
+# ClickHouse backup configuration
+clickhouse:
+  service:
+    name: "suse-observability-clickhouse-shard0-0"
+    port: 9000
+    localPortForwardPort: 9000
+  backupService:
+    name: "suse-observability-clickhouse-shard0-0"
+    port: 7171
+    localPortForwardPort: 7171
+  database: "default"
+  username: "default"
+  password: "password"
+  restore:
+    scaleDownLabelSelector: "observability.suse.com/scalable-during-clickhouse-restore=true"

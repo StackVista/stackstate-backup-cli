@@ -17,10 +17,10 @@ func TestNewClient(t *testing.T) {
 		expectError bool
 	}{
 		{
-			name:        "valid minio configuration",
-			endpoint:    "http://minio:9000",
-			accessKey:   "minioadmin",
-			secretKey:   "minioadmin",
+			name:        "valid configuration",
+			endpoint:    "http://s3proxy:9000",
+			accessKey:   "access-admin",
+			secretKey:   "secret-admin",
 			expectError: false,
 		},
 		{
@@ -53,7 +53,7 @@ func TestNewClient(t *testing.T) {
 		},
 		{
 			name:        "empty credentials",
-			endpoint:    "http://minio:9000",
+			endpoint:    "http://s3proxy:9000",
 			accessKey:   "",
 			secretKey:   "",
 			expectError: false, // Client creation succeeds, but operations will fail
@@ -77,7 +77,7 @@ func TestNewClient(t *testing.T) {
 
 // TestNewClient_ClientConfiguration tests that the client is configured correctly
 func TestNewClient_ClientConfiguration(t *testing.T) {
-	endpoint := "http://test-minio:9000"
+	endpoint := "http://test-s3proxy:9000"
 	accessKey := "test-access"
 	secretKey := "test-secret"
 
@@ -152,7 +152,7 @@ func TestNewClient_CredentialFormats(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			client, err := NewClient("http://minio:9000", tt.accessKey, tt.secretKey)
+			client, err := NewClient("http://s3proxy:9000", tt.accessKey, tt.secretKey)
 
 			// Client creation should succeed regardless of credential format
 			// The credentials will be validated when actual S3 operations are performed
@@ -170,7 +170,7 @@ func TestNewClient_EndpointFormats(t *testing.T) {
 	}{
 		{
 			name:     "endpoint with http scheme",
-			endpoint: "http://minio.example.com:9000",
+			endpoint: "http://s3proxy.example.com:9000",
 		},
 		{
 			name:     "endpoint with https scheme",
@@ -178,15 +178,15 @@ func TestNewClient_EndpointFormats(t *testing.T) {
 		},
 		{
 			name:     "endpoint without port",
-			endpoint: "http://minio.local",
+			endpoint: "http://s3proxy.local",
 		},
 		{
 			name:     "endpoint with non-standard port",
-			endpoint: "http://minio:8080",
+			endpoint: "http://s3proxy:8080",
 		},
 		{
 			name:     "endpoint with path",
-			endpoint: "http://minio:9000/path/to/s3",
+			endpoint: "http://s3proxy:9000/path/to/s3",
 		},
 		{
 			name:     "endpoint as IP address",
@@ -218,7 +218,7 @@ func TestNewClient_ConcurrentCreation(t *testing.T) {
 
 	for i := 0; i < numGoroutines; i++ {
 		go func() {
-			_, err := NewClient("http://minio:9000", "access", "secret")
+			_, err := NewClient("http://s3proxy:9000", "access", "secret")
 			if err != nil {
 				errors <- err
 			}

@@ -143,6 +143,70 @@ elasticsearch:
 	assert.Equal(t, 9200, cfg.Elasticsearch.Service.Port)
 }
 
+// TestListIndicesCmd_StorageIntegration tests the integration with Kubernetes client using StorageConfig
+func TestListIndicesCmd_StorageIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	// Create fake Kubernetes client
+	fakeClient := fake.NewClientset()
+
+	// Create ConfigMap with valid config using StorageConfig instead of MinioConfig
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      testConfigMapName,
+			Namespace: testNamespace,
+		},
+		Data: map[string]string{
+			"config": `
+elasticsearch:
+  service:
+    name: elasticsearch-master
+    port: 9200
+    localPortForwardPort: 9200
+  restore:
+    scaleDownLabelSelector: app=test
+    indexPrefix: sts_
+    datastreamIndexPrefix: sts_k8s_logs
+    datastreamName: sts_k8s_logs
+    indicesPattern: "sts_*"
+    repository: backup-repo
+  snapshotRepository:
+    name: backup-repo
+    bucket: backups
+    endpoint: storage:9000
+    basepath: snapshots
+    accessKey: key
+    secretKey: secret
+  slm:
+    name: daily
+    schedule: "0 1 * * *"
+    snapshotTemplateName: "<snap-{now/d}>"
+    repository: backup-repo
+    indices: "sts_*"
+    retentionExpireAfter: 30d
+    retentionMinCount: 5
+    retentionMaxCount: 50
+` + minimalStorageStackgraphConfig,
+		},
+	}
+	_, err := fakeClient.CoreV1().ConfigMaps(testNamespace).Create(
+		context.Background(), cm, metav1.CreateOptions{},
+	)
+	require.NoError(t, err)
+
+	// Test that config loading works
+	cfg, err := config.LoadConfig(fakeClient, testNamespace, testConfigMapName, "")
+	require.NoError(t, err)
+	assert.Equal(t, "elasticsearch-master", cfg.Elasticsearch.Service.Name)
+	assert.Equal(t, 9200, cfg.Elasticsearch.Service.Port)
+	// Verify storage mode
+	assert.False(t, cfg.IsLegacyMode())
+	assert.True(t, cfg.StorageEnabled())
+	assert.Equal(t, "storage", cfg.GetStorageService().Name)
+}
+
 // TestMockESClientForIndices demonstrates mock usage for indices
 func TestMockESClientForIndices(t *testing.T) {
 	tests := []struct {

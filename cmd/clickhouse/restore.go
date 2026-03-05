@@ -27,7 +27,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		Short: "Restore ClickHouse from a backup archive",
 		Long:  `Restore ClickHouse data from a backup archive via ClickHouse Backup API. Waits for completion by default; use --background to run asynchronously.`,
 		Run: func(_ *cobra.Command, _ []string) {
-			cmdutils.Run(globalFlags, runRestore, cmdutils.MinioIsRequired)
+			cmdutils.Run(globalFlags, runRestore, cmdutils.StorageIsRequired)
 		},
 	}
 

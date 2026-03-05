@@ -104,6 +104,92 @@ clickhouse:
     scaleDownLabelSelector: "app=clickhouse"
 `
 
+// minimalStorageStackgraphConfig provides the required Storage and Stackgraph configuration for tests (new mode)
+const minimalStorageStackgraphConfig = `
+storage:
+  globalBackupEnabled: true
+  service:
+    name: storage
+    port: 9000
+    localPortForwardPort: 9000
+  accessKey: storageadmin
+  secretKey: storageadmin
+stackgraph:
+  bucket: stackgraph-bucket
+  multipartArchive: true
+  restore:
+    scaleDownLabelSelector: "app=stackgraph"
+    loggingConfigConfigMap: logging-config
+    zookeeperQuorum: "zookeeper:2181"
+    job:
+      image: backup:latest
+      waitImage: wait:latest
+      resources:
+        limits:
+          cpu: "2"
+          memory: "4Gi"
+        requests:
+          cpu: "1"
+          memory: "2Gi"
+    pvc:
+      size: "10Gi"
+victoriaMetrics:
+  S3Locations:
+    - bucket: vm-backup
+      prefix: victoria-metrics-0
+    - bucket: vm-backup
+      prefix: victoria-metrics-1
+  restore:
+    haMode: "mirror"
+    persistentVolumeClaimPrefix: "database-victoria-metrics-"
+    scaleDownLabelSelector: "app=victoria-metrics"
+    job:
+      image: vm-backup:latest
+      waitImage: wait:latest
+      resources:
+        limits:
+          cpu: "1"
+          memory: "2Gi"
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
+settings:
+  bucket: sts-settings-backup
+  s3Prefix: ""
+  localBucket: sts-settings-local-backup
+  restore:
+    scaleDownLabelSelector: "app=settings"
+    loggingConfigConfigMap: logging-config
+    baseUrl: "http://server:7070"
+    receiverBaseUrl: "http://receiver:7077"
+    platformVersion: "5.2.0"
+    zookeeperQuorum: "zookeeper:2181"
+    job:
+      image: settings-backup:latest
+      waitImage: wait:latest
+      resources:
+        limits:
+          cpu: "1"
+          memory: "2Gi"
+        requests:
+          cpu: "500m"
+          memory: "1Gi"
+clickhouse:
+  service:
+    name: "clickhouse"
+    port: 9000
+    localPortForwardPort: 9000
+  backupService:
+    name: "clickhouse"
+    port: 7171
+    localPortForwardPort: 7171
+  database: "default"
+  username: "default"
+  password: "password"
+  restore:
+    scaleDownLabelSelector: "app=clickhouse"
+`
+
 // mockESClient is a simple mock for testing commands
 type mockESClient struct {
 	snapshots []elasticsearch.Snapshot
@@ -212,6 +298,70 @@ elasticsearch:
 	require.NoError(t, err)
 	assert.Equal(t, "backup-repo", cfg.Elasticsearch.Restore.Repository)
 	assert.Equal(t, "elasticsearch-master", cfg.Elasticsearch.Service.Name)
+}
+
+// TestListCmd_StorageIntegration tests the full command flow with new StorageConfig
+func TestListCmd_StorageIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	// Create fake Kubernetes client
+	fakeClient := fake.NewClientset()
+
+	// Create ConfigMap with valid config using StorageConfig instead of MinioConfig
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      testConfigMapName,
+			Namespace: testNamespace,
+		},
+		Data: map[string]string{
+			"config": `
+elasticsearch:
+  service:
+    name: elasticsearch-master
+    port: 9200
+    localPortForwardPort: 9200
+  restore:
+    scaleDownLabelSelector: app=test
+    indexPrefix: sts_
+    datastreamIndexPrefix: sts_k8s_logs
+    datastreamName: sts_k8s_logs
+    indicesPattern: "sts_*"
+    repository: backup-repo
+  snapshotRepository:
+    name: backup-repo
+    bucket: backups
+    endpoint: storage:9000
+    basepath: snapshots
+    accessKey: key
+    secretKey: secret
+  slm:
+    name: daily
+    schedule: "0 1 * * *"
+    snapshotTemplateName: "<snap-{now/d}>"
+    repository: backup-repo
+    indices: "sts_*"
+    retentionExpireAfter: 30d
+    retentionMinCount: 5
+    retentionMaxCount: 50
+` + minimalStorageStackgraphConfig,
+		},
+	}
+	_, err := fakeClient.CoreV1().ConfigMaps(testNamespace).Create(
+		context.Background(), cm, metav1.CreateOptions{},
+	)
+	require.NoError(t, err)
+
+	// Test that config loading works
+	cfg, err := config.LoadConfig(fakeClient, testNamespace, testConfigMapName, "")
+	require.NoError(t, err)
+	assert.Equal(t, "backup-repo", cfg.Elasticsearch.Restore.Repository)
+	assert.Equal(t, "elasticsearch-master", cfg.Elasticsearch.Service.Name)
+	// Verify storage mode
+	assert.False(t, cfg.IsLegacyMode())
+	assert.True(t, cfg.StorageEnabled())
+	assert.Equal(t, "storage", cfg.GetStorageService().Name)
 }
 
 // TestListCmd_Unit demonstrates a unit-style test

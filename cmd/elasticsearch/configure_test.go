@@ -267,6 +267,162 @@ minio:
 	}
 }
 
+// TestConfigureCmd_StorageIntegration tests the integration with Kubernetes client using StorageConfig
+//
+//nolint:funlen
+func TestConfigureCmd_StorageIntegration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	tests := []struct {
+		name          string
+		configData    string
+		secretData    string
+		expectError   bool
+		errorContains string
+	}{
+		{
+			name: "successful configuration with complete data (storage mode)",
+			configData: `
+elasticsearch:
+  service:
+    name: elasticsearch-master
+    port: 9200
+    localPortForwardPort: 9200
+  restore:
+    scaleDownLabelSelector: app=test
+    indexPrefix: sts_
+    datastreamIndexPrefix: sts_k8s_logs
+    datastreamName: sts_k8s_logs
+    indicesPattern: "sts_*"
+    repository: backup-repo
+  snapshotRepository:
+    name: backup-repo
+    bucket: backups
+    endpoint: storage:9000
+    basepath: snapshots
+    accessKey: test-key
+    secretKey: test-secret
+  slm:
+    name: daily
+    schedule: "0 1 * * *"
+    snapshotTemplateName: "<snap-{now/d}>"
+    repository: backup-repo
+    indices: "sts_*"
+    retentionExpireAfter: 30d
+    retentionMinCount: 5
+    retentionMaxCount: 50
+` + minimalStorageStackgraphConfig,
+			secretData:  "",
+			expectError: false,
+		},
+		{
+			name: "missing credentials in config with secret override (storage mode)",
+			configData: `
+elasticsearch:
+  service:
+    name: elasticsearch-master
+    port: 9200
+    localPortForwardPort: 9200
+  restore:
+    scaleDownLabelSelector: app=test
+    indexPrefix: sts_
+    datastreamIndexPrefix: sts_k8s_logs
+    datastreamName: sts_k8s_logs
+    indicesPattern: "sts_*"
+    repository: backup-repo
+  snapshotRepository:
+    name: backup-repo
+    bucket: backups
+    endpoint: storage:9000
+    basepath: snapshots
+    accessKey: ""
+    secretKey: ""
+  slm:
+    name: daily
+    schedule: "0 1 * * *"
+    snapshotTemplateName: "<snap-{now/d}>"
+    repository: backup-repo
+    indices: "sts_*"
+    retentionExpireAfter: 30d
+    retentionMinCount: 5
+    retentionMaxCount: 50
+` + minimalStorageStackgraphConfig,
+			secretData: `
+elasticsearch:
+  snapshotRepository:
+    accessKey: secret-key
+    secretKey: secret-value
+storage:
+  accessKey: secret-storage-key
+  secretKey: secret-storage-value
+`,
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeClient := fake.NewClientset()
+
+			// Create ConfigMap
+			cm := &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      testConfigMapName,
+					Namespace: testNamespace,
+				},
+				Data: map[string]string{
+					"config": tt.configData,
+				},
+			}
+			_, err := fakeClient.CoreV1().ConfigMaps(testNamespace).Create(
+				context.Background(), cm, metav1.CreateOptions{},
+			)
+			require.NoError(t, err)
+
+			// Create Secret if provided
+			if tt.secretData != "" {
+				secret := &corev1.Secret{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      testSecretName,
+						Namespace: testNamespace,
+					},
+					Data: map[string][]byte{
+						"config": []byte(tt.secretData),
+					},
+				}
+				_, err := fakeClient.CoreV1().Secrets(testNamespace).Create(
+					context.Background(), secret, metav1.CreateOptions{},
+				)
+				require.NoError(t, err)
+			}
+
+			// Test that config loading works
+			secretName := ""
+			if tt.secretData != "" {
+				secretName = testSecretName
+			}
+			cfg, err := config.LoadConfig(fakeClient, testNamespace, testConfigMapName, secretName)
+
+			if tt.expectError {
+				assert.Error(t, err)
+				if tt.errorContains != "" {
+					assert.Contains(t, err.Error(), tt.errorContains)
+				}
+			} else {
+				require.NoError(t, err)
+				assert.NotNil(t, cfg)
+				// Verify storage mode
+				assert.False(t, cfg.IsLegacyMode())
+				assert.True(t, cfg.StorageEnabled())
+				assert.NotEmpty(t, cfg.Elasticsearch.SnapshotRepository.AccessKey)
+				assert.NotEmpty(t, cfg.Elasticsearch.SnapshotRepository.SecretKey)
+			}
+		})
+	}
+}
+
 // TestMockESClientForConfigure demonstrates mock usage for configure
 //
 //nolint:funlen // Table-driven test

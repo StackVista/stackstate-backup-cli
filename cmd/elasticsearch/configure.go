@@ -16,7 +16,7 @@ func configureCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		Short: "Configure Elasticsearch snapshot repository and SLM policy",
 		Long:  `Configure Elasticsearch snapshot repository and Snapshot Lifecycle Management (SLM) policy for automated backups.`,
 		Run: func(_ *cobra.Command, _ []string) {
-			cmdutils.Run(globalFlags, runConfigure, cmdutils.MinioIsRequired)
+			cmdutils.Run(globalFlags, runConfigure, cmdutils.StorageIsRequired)
 		},
 	}
 }

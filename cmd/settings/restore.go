@@ -34,9 +34,9 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "restore",
 		Short: "Restore Settings from a backup archive",
-		Long:  `Restore Settings data from a backup archive stored in S3/Minio. Can use --latest or --archive to specify which backup to restore.`,
+		Long:  `Restore Settings data from a backup archive stored in S3. Can use --latest or --archive to specify which backup to restore.`,
 		Run: func(_ *cobra.Command, _ []string) {
-			cmdutils.Run(globalFlags, runRestore, cmdutils.MinioIsNotRequired)
+			cmdutils.Run(globalFlags, runRestore, cmdutils.StorageIsNotRequired)
 		},
 	}
 

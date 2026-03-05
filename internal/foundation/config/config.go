@@ -33,12 +33,13 @@ func (c *Config) IsLegacyMode() bool {
 }
 
 // StorageEnabled returns true when S3-compatible storage is available,
-// either through legacy Minio (with Enabled=true) or new Storage config.
+// either through legacy Minio (with Enabled=true) or when the new Storage config is used the
+// storage is always enabled
 func (c *Config) StorageEnabled() bool {
 	if c.IsLegacyMode() {
 		return c.Minio.Enabled
 	}
-	return c.Storage.GlobalBackupEnabled
+	return true
 }
 
 // GetStorageService returns the service config for the S3-compatible storage,

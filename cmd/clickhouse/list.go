@@ -18,7 +18,7 @@ func listCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		Short: "List available Clickhouse backups",
 		Long:  `List all Clickhouse backups from the ClickHouse Backup API.`,
 		Run: func(_ *cobra.Command, _ []string) {
-			cmdutils.Run(globalFlags, runList, cmdutils.MinioIsRequired)
+			cmdutils.Run(globalFlags, runList, cmdutils.StorageIsRequired)
 		},
 	}
 }

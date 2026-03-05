@@ -38,7 +38,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		Short: "Restore Elasticsearch from a snapshot",
 		Long:  `Restore Elasticsearch indices from a snapshot. Deletes existing STS indices before restore. Waits for completion by default; use --background to run asynchronously.`,
 		Run: func(_ *cobra.Command, _ []string) {
-			cmdutils.Run(globalFlags, runRestore, cmdutils.MinioIsRequired)
+			cmdutils.Run(globalFlags, runRestore, cmdutils.StorageIsRequired)
 		}}
 
 	cmd.Flags().StringVarP(&snapshotName, "snapshot", "s", "", "Snapshot name to restore (mutually exclusive with --latest)")

@@ -26,7 +26,7 @@ func checkAndFinalizeCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		Long: `Check the status of a restore operation and perform finalization (scale up deployments) if complete.
 If the restore is still running and --wait is specified, wait for completion before finalizing.`,
 		Run: func(_ *cobra.Command, _ []string) {
-			cmdutils.Run(globalFlags, runCheckAndFinalize, cmdutils.MinioIsRequired)
+			cmdutils.Run(globalFlags, runCheckAndFinalize, cmdutils.StorageIsRequired)
 		},
 	}
 

@@ -16,7 +16,7 @@ func TestClientImplementsInterface(_ *testing.T) {
 // TestInterfaceContract verifies that Client correctly wraps AWS S3 client methods
 func TestInterfaceContract(t *testing.T) {
 	// Create a client
-	client, err := NewClient("http://test-minio:9000", "test-access", "test-secret")
+	client, err := NewClient("http://test-s3proxy:9000", "test-access", "test-secret")
 	assert.NoError(t, err)
 	assert.NotNil(t, client)
 
@@ -28,7 +28,7 @@ func TestInterfaceContract(t *testing.T) {
 // TestClientMethods verifies that all interface methods are implemented
 // Note: These tests don't call real S3 - they just verify the methods exist
 func TestClientMethods(t *testing.T) {
-	client, err := NewClient("http://test-minio:9000", "test-access", "test-secret")
+	client, err := NewClient("http://test-s3proxy:9000", "test-access", "test-secret")
 	assert.NoError(t, err)
 	require := assert.New(t)
 

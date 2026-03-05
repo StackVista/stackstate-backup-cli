@@ -31,7 +31,7 @@ Examples:
   # Wait for job completion and cleanup
   sts-backup settings check-and-finalize --job settings-restore-20250128t143000 --wait -n my-namespace`,
 		Run: func(_ *cobra.Command, _ []string) {
-			cmdutils.Run(globalFlags, runCheckAndFinalize, cmdutils.MinioIsNotRequired)
+			cmdutils.Run(globalFlags, runCheckAndFinalize, cmdutils.StorageIsNotRequired)
 		},
 	}
 

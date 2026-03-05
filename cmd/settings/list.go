@@ -37,9 +37,9 @@ var fromPVC bool
 func listCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List available Settings backups from S3/Minio",
+		Short: "List available Settings backups from S3",
 		Run: func(_ *cobra.Command, _ []string) {
-			cmdutils.Run(globalFlags, runList, cmdutils.MinioIsNotRequired)
+			cmdutils.Run(globalFlags, runList, cmdutils.StorageIsNotRequired)
 		},
 	}
 
