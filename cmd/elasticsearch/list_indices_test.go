@@ -53,7 +53,7 @@ func (m *mockESClientForIndices) IndexExists(_ string) (bool, error) {
 	return false, fmt.Errorf("not implemented")
 }
 
-func (m *mockESClientForIndices) RestoreSnapshot(_, _, _ string, _ bool) error {
+func (m *mockESClientForIndices) RestoreSnapshot(_, _, _ string) error {
 	return fmt.Errorf("not implemented")
 }
 
@@ -105,7 +105,6 @@ elasticsearch:
   service:
     name: elasticsearch-master
     port: 9200
-    localPortForwardPort: 9200
   restore:
     scaleDownLabelSelector: app=test
     indexPrefix: sts_

@@ -28,7 +28,6 @@ minio:
   service:
     name: minio
     port: 9000
-    localPortForwardPort: 9000
   accessKey: minioadmin
   secretKey: minioadmin
 stackgraph:
@@ -95,11 +94,9 @@ clickhouse:
   service:
     name: "clickhouse"
     port: 9000
-    localPortForwardPort: 9000
   backupService:
     name: "clickhouse"
     port: 7171
-    localPortForwardPort: 7171
   database: "default"
   username: "default"
   password: "password"
@@ -140,7 +137,7 @@ func (m *mockESClient) IndexExists(_ string) (bool, error) {
 	return false, fmt.Errorf("not implemented")
 }
 
-func (m *mockESClient) RestoreSnapshot(_, _, _ string, _ bool) error {
+func (m *mockESClient) RestoreSnapshot(_, _, _ string) error {
 	return fmt.Errorf("not implemented")
 }
 
@@ -179,7 +176,6 @@ elasticsearch:
   service:
     name: elasticsearch-master
     port: 9200
-    localPortForwardPort: 9200
   restore:
     scaleDownLabelSelector: app=test
     indexPrefix: sts_

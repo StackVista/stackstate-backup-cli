@@ -319,7 +319,6 @@ elasticsearch:
   service:
     name: suse-observability-elasticsearch-master-headless
     port: 9200
-    localPortForwardPort: 9200
 
   restore:
     repository: sts-backup

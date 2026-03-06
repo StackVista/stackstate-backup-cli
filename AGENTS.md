@@ -137,9 +137,10 @@ internal/
 // GOOD
 func runRestore(appCtx *app.Context) error {
     appCtx.K8sClient  // Kubernetes client
-    appCtx.ESClient   // Elasticsearch client
     appCtx.Config     // Configuration
     appCtx.Logger     // Structured logger
+    // Service clients created via factory methods after port-forwarding
+    esClient, err := appCtx.NewESClient(pf.LocalPort)
 }
 ```
 

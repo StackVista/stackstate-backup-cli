@@ -25,20 +25,25 @@ func listCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 func runListSnapshots(appCtx *app.Context) error {
 	// Setup port-forward to Elasticsearch
 	serviceName := appCtx.Config.Elasticsearch.Service.Name
-	localPort := appCtx.Config.Elasticsearch.Service.LocalPortForwardPort
 	remotePort := appCtx.Config.Elasticsearch.Service.Port
 
-	pf, err := portforward.SetupPortForward(appCtx.K8sClient, appCtx.Namespace, serviceName, localPort, remotePort, appCtx.Logger)
+	pf, err := portforward.SetupPortForward(appCtx.K8sClient, appCtx.Namespace, serviceName, remotePort, appCtx.Logger)
 	if err != nil {
 		return err
 	}
 	defer close(pf.StopChan)
 
+	// Create ES client with actual port
+	esClient, err := appCtx.NewESClient(pf.LocalPort)
+	if err != nil {
+		return fmt.Errorf("failed to create Elasticsearch client: %w", err)
+	}
+
 	// List snapshots
 	repository := appCtx.Config.Elasticsearch.Restore.Repository
 	appCtx.Logger.Infof("Fetching snapshots from repository '%s'...", repository)
 
-	snapshots, err := appCtx.ESClient.ListSnapshots(repository)
+	snapshots, err := esClient.ListSnapshots(repository)
 	if err != nil {
 		return fmt.Errorf("failed to list snapshots: %w", err)
 	}

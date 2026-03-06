@@ -29,28 +29,33 @@ func runConfigure(appCtx *app.Context) error {
 
 	// Setup port-forward to Elasticsearch
 	serviceName := appCtx.Config.Elasticsearch.Service.Name
-	localPort := appCtx.Config.Elasticsearch.Service.LocalPortForwardPort
 	remotePort := appCtx.Config.Elasticsearch.Service.Port
 
-	pf, err := portforward.SetupPortForward(appCtx.K8sClient, appCtx.Namespace, serviceName, localPort, remotePort, appCtx.Logger)
+	pf, err := portforward.SetupPortForward(appCtx.K8sClient, appCtx.Namespace, serviceName, remotePort, appCtx.Logger)
 	if err != nil {
 		return err
 	}
 	defer close(pf.StopChan)
+
+	// Create ES client with actual port
+	esClient, err := appCtx.NewESClient(pf.LocalPort)
+	if err != nil {
+		return fmt.Errorf("failed to create Elasticsearch client: %w", err)
+	}
 
 	// Configure snapshot repository
 	repo := appCtx.Config.Elasticsearch.SnapshotRepository
 
 	// Always unregister existing repository to ensure clean state
 	appCtx.Logger.Infof("Unregistering snapshot repository '%s'...", repo.Name)
-	if err := appCtx.ESClient.DeleteSnapshotRepository(repo.Name); err != nil {
+	if err := esClient.DeleteSnapshotRepository(repo.Name); err != nil {
 		return fmt.Errorf("failed to unregister snapshot repository: %w", err)
 	}
 	appCtx.Logger.Successf("Snapshot repository unregistered successfully")
 
 	appCtx.Logger.Infof("Configuring snapshot repository '%s' (bucket: %s)...", repo.Name, repo.Bucket)
 
-	err = appCtx.ESClient.ConfigureSnapshotRepository(
+	err = esClient.ConfigureSnapshotRepository(
 		repo.Name,
 		repo.Bucket,
 		repo.Endpoint,
@@ -68,7 +73,7 @@ func runConfigure(appCtx *app.Context) error {
 	slm := appCtx.Config.Elasticsearch.SLM
 	appCtx.Logger.Infof("Configuring SLM policy '%s'...", slm.Name)
 
-	err = appCtx.ESClient.ConfigureSLMPolicy(
+	err = esClient.ConfigureSLMPolicy(
 		slm.Name,
 		slm.Schedule,
 		slm.SnapshotTemplateName,

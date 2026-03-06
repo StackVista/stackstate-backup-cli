@@ -18,9 +18,6 @@ import (
 type Context struct {
 	K8sClient *k8s.Client
 	Namespace string
-	S3Client  s3.Interface
-	ESClient  elasticsearch.Interface
-	CHClient  clickhouse.Interface
 	Config    *config.Config
 	Logger    *logger.Logger
 	Formatter *output.Formatter
@@ -40,30 +37,6 @@ func NewContext(flags *config.CLIGlobalFlags) (*Context, error) {
 		return nil, fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	// Create S3 client
-	endpoint := fmt.Sprintf("http://localhost:%d", cfg.Minio.Service.LocalPortForwardPort)
-	s3Client, err := s3.NewClient(endpoint, cfg.Minio.AccessKey, cfg.Minio.SecretKey)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create Elasticsearch client
-	esClient, err := elasticsearch.NewClient(fmt.Sprintf("http://localhost:%d", cfg.Elasticsearch.Service.LocalPortForwardPort))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Elasticsearch client: %w", err)
-	}
-
-	// Create ClickHouse client
-	chClient, err := clickhouse.NewClient(
-		fmt.Sprintf("http://localhost:%d", cfg.Clickhouse.BackupService.LocalPortForwardPort),
-		fmt.Sprintf("localhost:%d", cfg.Clickhouse.Service.LocalPortForwardPort),
-		cfg.Clickhouse.Database,
-		cfg.Clickhouse.Username,
-		cfg.Clickhouse.Password)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create ClickHouse client: %w", err)
-	}
-
 	// Format and print backups
 	formatter := output.NewFormatter(os.Stdout, flags.OutputFormat)
 
@@ -71,11 +44,39 @@ func NewContext(flags *config.CLIGlobalFlags) (*Context, error) {
 		K8sClient: k8sClient,
 		Namespace: flags.Namespace,
 		Config:    cfg,
-		S3Client:  s3Client,
-		ESClient:  esClient,
-		CHClient:  chClient,
 		Logger:    logger.New(flags.Quiet, flags.Debug),
 		Formatter: formatter,
 		Context:   context.Background(),
 	}, nil
+}
+
+// NewS3Client creates an S3 client connecting to the given local port-forwarded port
+func (c *Context) NewS3Client(localPort int) (s3.Interface, error) {
+	endpoint := fmt.Sprintf("http://localhost:%d", localPort)
+	return s3.NewClient(endpoint, c.Config.Minio.AccessKey, c.Config.Minio.SecretKey)
+}
+
+// NewESClient creates an Elasticsearch client connecting to the given local port-forwarded port
+func (c *Context) NewESClient(localPort int) (elasticsearch.Interface, error) {
+	return elasticsearch.NewClient(fmt.Sprintf("http://localhost:%d", localPort))
+}
+
+// NewCHClient creates a ClickHouse client. Pass backupAPIPort for backup API access,
+// and dbPort for SQL access. Use 0 for either if not needed.
+func (c *Context) NewCHClient(backupAPIPort, dbPort int) (clickhouse.Interface, error) {
+	backupAPIURL := ""
+	if backupAPIPort > 0 {
+		backupAPIURL = fmt.Sprintf("http://localhost:%d", backupAPIPort)
+	}
+	dbAddr := ""
+	if dbPort > 0 {
+		dbAddr = fmt.Sprintf("localhost:%d", dbPort)
+	}
+	return clickhouse.NewClient(
+		backupAPIURL,
+		dbAddr,
+		c.Config.Clickhouse.Database,
+		c.Config.Clickhouse.Username,
+		c.Config.Clickhouse.Password,
+	)
 }

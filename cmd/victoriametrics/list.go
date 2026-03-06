@@ -35,14 +35,19 @@ func listCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 func runList(appCtx *app.Context) error {
 	// Setup port-forward to Minio
 	serviceName := appCtx.Config.Minio.Service.Name
-	localPort := appCtx.Config.Minio.Service.LocalPortForwardPort
 	remotePort := appCtx.Config.Minio.Service.Port
 
-	pf, err := portforward.SetupPortForward(appCtx.K8sClient, appCtx.Namespace, serviceName, localPort, remotePort, appCtx.Logger)
+	pf, err := portforward.SetupPortForward(appCtx.K8sClient, appCtx.Namespace, serviceName, remotePort, appCtx.Logger)
 	if err != nil {
 		return err
 	}
 	defer close(pf.StopChan)
+
+	// Create S3 client with actual port
+	s3Client, err := appCtx.NewS3Client(pf.LocalPort)
+	if err != nil {
+		return fmt.Errorf("failed to create S3 client: %w", err)
+	}
 
 	var vmBackups []s3client.Object
 	// List objects in bucket
@@ -63,7 +68,7 @@ func runList(appCtx *app.Context) error {
 			Delimiter: aws.String("/"),
 		}
 
-		result, err := appCtx.S3Client.ListObjectsV2(context.Background(), input)
+		result, err := s3Client.ListObjectsV2(context.Background(), input)
 		if err != nil {
 			return fmt.Errorf("failed to list S3 objects: %w", err)
 		}
@@ -71,7 +76,7 @@ func runList(appCtx *app.Context) error {
 		for _, key := range s3client.FilterByCommonPrefix(result.CommonPrefixes) {
 			vmBackups = append(vmBackups, s3client.Object{
 				Key:          fmt.Sprintf("%s/%s", bucket, key.Key),
-				LastModified: getVMBackupTime(appCtx.S3Client, bucket, key.Key),
+				LastModified: getVMBackupTime(s3Client, bucket, key.Key),
 			})
 		}
 	}

@@ -54,11 +54,8 @@ type ActionResponse struct {
 
 // NewClient creates a new ClickHouse client with both Backup API and SQL support
 func NewClient(backupAPI, addr, db, username, password string) (*Client, error) {
-	if backupAPI == "" {
-		return nil, fmt.Errorf("backupAPIURL cannot be empty")
-	}
-	if addr == "" {
-		return nil, fmt.Errorf("clickhouseAddr cannot be empty")
+	if backupAPI == "" && addr == "" {
+		return nil, fmt.Errorf("at least one of backupAPIURL or clickhouseAddr must be provided")
 	}
 	if db == "" {
 		return nil, fmt.Errorf("clickhouseDatabase cannot be empty")

@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stackvista/stackstate-backup-cli/cmd/cmdutils"
 	"github.com/stackvista/stackstate-backup-cli/internal/app"
-	"github.com/stackvista/stackstate-backup-cli/internal/clients/clickhouse"
+	ch "github.com/stackvista/stackstate-backup-cli/internal/clients/clickhouse"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/portforward"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/restore"
@@ -45,12 +45,11 @@ It will check the restore status and if complete, execute post-restore tasks and
 }
 
 func runCheckAndFinalize(appCtx *app.Context) error {
-	// Setup port-forward
+	// Setup port-forward to ClickHouse Backup API
 	pf, err := portforward.SetupPortForward(
 		appCtx.K8sClient,
 		appCtx.Namespace,
 		appCtx.Config.Clickhouse.BackupService.Name,
-		appCtx.Config.Clickhouse.BackupService.LocalPortForwardPort,
 		appCtx.Config.Clickhouse.BackupService.Port,
 		appCtx.Logger,
 	)
@@ -58,15 +57,22 @@ func runCheckAndFinalize(appCtx *app.Context) error {
 		return err
 	}
 	defer close(pf.StopChan)
-	return checkAndFinalize(appCtx, checkOperationID, waitForRestore)
+
+	// Create CH client with backup API port only
+	chClient, err := appCtx.NewCHClient(pf.LocalPort, 0)
+	if err != nil {
+		return fmt.Errorf("failed to create ClickHouse client: %w", err)
+	}
+
+	return checkAndFinalize(chClient, appCtx, checkOperationID, waitForRestore)
 }
 
 // checkAndFinalize checks restore status and finalizes if complete
-func checkAndFinalize(appCtx *app.Context, operationID string, waitForComplete bool) error {
+func checkAndFinalize(chClient ch.Interface, appCtx *app.Context, operationID string, waitForComplete bool) error {
 	// Check status
 	appCtx.Logger.Println()
 	appCtx.Logger.Infof("Checking restore status for operation: %s", operationID)
-	status, err := appCtx.CHClient.GetRestoreStatus(appCtx.Context, operationID)
+	status, err := chClient.GetRestoreStatus(appCtx.Context, operationID)
 	if err != nil {
 		return err
 	}
@@ -87,7 +93,7 @@ func checkAndFinalize(appCtx *app.Context, operationID string, waitForComplete b
 	if waitForComplete {
 		// Still running - wait
 		appCtx.Logger.Infof("Restore is in progress, waiting for completion...")
-		return waitAndFinalize(appCtx, appCtx.CHClient, operationID)
+		return waitAndFinalize(appCtx, chClient, operationID)
 	}
 	// Just print status
 	appCtx.Logger.Println()
@@ -96,7 +102,7 @@ func checkAndFinalize(appCtx *app.Context, operationID string, waitForComplete b
 }
 
 // waitAndFinalize waits for restore completion and finalizes
-func waitAndFinalize(appCtx *app.Context, chClient clickhouse.Interface, operationID string) error {
+func waitAndFinalize(appCtx *app.Context, chClient ch.Interface, operationID string) error {
 	restore.PrintAPIWaitingMessage("clickhouse", operationID, appCtx.Namespace, appCtx.Logger)
 
 	// Wait for restore using shared utility
@@ -157,7 +163,6 @@ func executePostRestoreSQL(appCtx *app.Context) error {
 		appCtx.K8sClient,
 		appCtx.Namespace,
 		appCtx.Config.Clickhouse.Service.Name,
-		appCtx.Config.Clickhouse.Service.LocalPortForwardPort,
 		appCtx.Config.Clickhouse.Service.Port,
 		appCtx.Logger,
 	)
@@ -166,8 +171,14 @@ func executePostRestoreSQL(appCtx *app.Context) error {
 	}
 	defer close(pf.StopChan)
 
+	// Create ClickHouse client with DB port only
+	chDBClient, err := appCtx.NewCHClient(0, pf.LocalPort)
+	if err != nil {
+		return fmt.Errorf("failed to create ClickHouse DB client: %w", err)
+	}
+
 	// Create ClickHouse SQL connection
-	conn, closeConn, err := appCtx.CHClient.Connect()
+	conn, closeConn, err := chDBClient.Connect()
 	if err != nil {
 		return fmt.Errorf("failed to connect to ClickHouse: %w", err)
 	}

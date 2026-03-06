@@ -10,7 +10,7 @@ type Interface interface {
 	Clientset() kubernetes.Interface
 
 	// Port forwarding operations
-	PortForwardService(namespace, serviceName string, localPort, remotePort int) (stopChan chan struct{}, readyChan chan struct{}, err error)
+	PortForwardService(namespace, serviceName string, remotePort int) (stopChan chan struct{}, actualLocalPort int, err error)
 
 	// Deployment scaling operations
 	ScaleDownDeployments(namespace, labelSelector string) ([]AppsScale, error)

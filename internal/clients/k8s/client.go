@@ -11,6 +11,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -63,14 +64,15 @@ func NewClient(kubeconfigPath string, debug bool) (*Client, error) {
 	}, nil
 }
 
-// PortForwardService creates a port-forward to a Kubernetes service
-func (c *Client) PortForwardService(namespace, serviceName string, localPort, remotePort int) (chan struct{}, chan struct{}, error) {
+// PortForwardService creates a port-forward to a Kubernetes service.
+// It uses OS dynamic port allocation (port 0) and returns the actual allocated local port.
+func (c *Client) PortForwardService(namespace, serviceName string, remotePort int) (chan struct{}, int, error) {
 	ctx := context.Background()
 
 	// Get service to find pods
 	svc, err := c.clientset.CoreV1().Services(namespace).Get(ctx, serviceName, metav1.GetOptions{})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to get service: %w", err)
+		return nil, 0, fmt.Errorf("failed to get service: %w", err)
 	}
 
 	// Find pod matching service selector
@@ -80,11 +82,11 @@ func (c *Client) PortForwardService(namespace, serviceName string, localPort, re
 		}),
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to list pods: %w", err)
+		return nil, 0, fmt.Errorf("failed to list pods: %w", err)
 	}
 
 	if len(podList.Items) == 0 {
-		return nil, nil, fmt.Errorf("no pods found for service %s", serviceName)
+		return nil, 0, fmt.Errorf("no pods found for service %s", serviceName)
 	}
 
 	// Find a running pod
@@ -97,26 +99,30 @@ func (c *Client) PortForwardService(namespace, serviceName string, localPort, re
 	}
 
 	if targetPod == nil {
-		return nil, nil, fmt.Errorf("no running pods found for service %s", serviceName)
+		return nil, 0, fmt.Errorf("no running pods found for service %s", serviceName)
 	}
 	// Setup port-forward
-	return c.PortForwardPod(namespace, targetPod.Name, localPort, remotePort)
+	return c.PortForwardPod(namespace, targetPod.Name, remotePort)
 }
 
-// PortForwardPod creates a port-forward to a specific pod
-func (c *Client) PortForwardPod(namespace, podName string, localPort, remotePort int) (chan struct{}, chan struct{}, error) {
+// portForwardReadyTimeout is the maximum time to wait for a port-forward to become ready.
+const portForwardReadyTimeout = 60 * time.Second
+
+// PortForwardPod creates a port-forward to a specific pod using OS dynamic port allocation.
+// It waits for the port-forward to be ready and returns the actual allocated local port.
+func (c *Client) PortForwardPod(namespace, podName string, remotePort int) (chan struct{}, int, error) {
 	reqPath := fmt.Sprintf("/api/v1/namespaces/%s/pods/%s/portforward", namespace, podName)
 	hostIP := c.restConfig.Host
 	pfURL, err := url.Parse(hostIP)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to parse host: %w", err)
+		return nil, 0, fmt.Errorf("failed to parse host: %w", err)
 	}
 	// Preserve any existing path prefix (e.g. from Rancher/OpenShift proxy URLs)
 	pfURL.Path = path.Join(pfURL.Path, reqPath)
 
 	transport, upgrader, err := spdy.RoundTripperFor(c.restConfig)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create round tripper: %w", err)
+		return nil, 0, fmt.Errorf("failed to create round tripper: %w", err)
 	}
 
 	dialer := spdy.NewDialer(upgrader, &http.Client{Transport: transport}, http.MethodPost, pfURL)
@@ -124,7 +130,8 @@ func (c *Client) PortForwardPod(namespace, podName string, localPort, remotePort
 	stopChan := make(chan struct{}, 1)
 	readyChan := make(chan struct{})
 
-	ports := []string{fmt.Sprintf("%d:%d", localPort, remotePort)}
+	// Use port 0 so the OS picks a free local port
+	ports := []string{fmt.Sprintf("0:%d", remotePort)}
 
 	// Use discard writers if debug is disabled to suppress port-forward output
 	outWriter := io.Discard
@@ -136,18 +143,49 @@ func (c *Client) PortForwardPod(namespace, podName string, localPort, remotePort
 
 	fw, err := portforward.New(dialer, ports, stopChan, readyChan, outWriter, errWriter)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to create port forwarder: %w", err)
+		return nil, 0, fmt.Errorf("failed to create port forwarder: %w", err)
 	}
 
+	errChan := make(chan error, 1)
 	go func() {
-		if err := fw.ForwardPorts(); err != nil {
-			if c.debug {
-				_, _ = fmt.Fprintf(os.Stderr, "Port forward error: %v\n", err)
-			}
+		errChan <- fw.ForwardPorts()
+	}()
+
+	// Wait for port-forward to be ready, fail, or timeout
+	select {
+	case <-readyChan:
+		// Port-forward is ready
+	case err := <-errChan:
+		if err != nil {
+			return nil, 0, fmt.Errorf("port forward failed: %w", err)
+		}
+		return nil, 0, fmt.Errorf("port forward closed unexpectedly")
+	case <-time.After(portForwardReadyTimeout):
+		close(stopChan)
+		return nil, 0, fmt.Errorf("timed out waiting for port-forward to become ready after %s", portForwardReadyTimeout)
+	}
+
+	// Drain errChan in background to avoid silent failures if the port-forward
+	// dies after becoming ready (e.g., pod eviction, network partition).
+	go func() {
+		if err := <-errChan; err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "port-forward error: %v\n", err)
 		}
 	}()
 
-	return stopChan, readyChan, nil
+	// Get the actual allocated local port
+	forwardedPorts, err := fw.GetPorts()
+	if err != nil {
+		close(stopChan)
+		return nil, 0, fmt.Errorf("failed to get forwarded ports: %w", err)
+	}
+	if len(forwardedPorts) == 0 {
+		close(stopChan)
+		return nil, 0, fmt.Errorf("no ports were forwarded")
+	}
+
+	actualLocalPort := int(forwardedPorts[0].Local)
+	return stopChan, actualLocalPort, nil
 }
 
 const (

@@ -22,9 +22,9 @@ func TestNewClient(t *testing.T) {
 			wantError: false,
 		},
 		{
-			name:      "empty backupAPIURL",
+			name:      "empty backupAPIURL with addr",
 			baseURL:   "",
-			wantError: true,
+			wantError: false,
 		},
 	}
 
