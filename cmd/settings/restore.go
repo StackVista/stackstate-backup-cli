@@ -44,7 +44,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&useLatest, "latest", false, "Restore from the most recent backup")
 	cmd.Flags().BoolVar(&background, "background", false, "Run restore job in background without waiting for completion")
 	cmd.Flags().BoolVarP(&skipConfirmation, "yes", "y", false, "Skip confirmation prompt")
-	cmd.Flags().BoolVar(&fromPVC, "from-pvc", false, "Restore backup from legacy PVC instead of S3")
+	cmd.Flags().BoolVar(&fromPVC, "from-old-pvc", false, "Restore backup from legacy PVC instead of S3")
 	cmd.MarkFlagsMutuallyExclusive("archive", "latest")
 	cmd.MarkFlagsOneRequired("archive", "latest")
 
@@ -52,9 +52,9 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 }
 
 func runRestore(appCtx *app.Context) error {
-	// Validate --from-pvc: PVC must be configured
+	// Validate --from-old-pvc: PVC must be configured
 	if fromPVC && appCtx.Config.Settings.Restore.PVC == "" {
-		return fmt.Errorf("--from-pvc requires settings.restore.pvc to be configured")
+		return fmt.Errorf("--from-old-pvc requires settings.restore.pvc to be configured")
 	}
 
 	// Determine which archive to restore
@@ -217,7 +217,7 @@ func buildVolumeMounts(config *config.Config) []corev1.VolumeMount {
 		{Name: "minio-keys", MountPath: "/aws-keys"},
 		{Name: "tmp-data", MountPath: "/tmp-data"},
 	}
-	// Mount PVC in legacy mode or when --from-pvc is set
+	// Mount PVC in legacy mode or when --from-old-pvc is set
 	if config.IsLegacyMode() || fromPVC {
 		mounts = append(mounts, corev1.VolumeMount{Name: "settings-backup-data", MountPath: "/settings-backup-data"})
 	}
@@ -263,7 +263,7 @@ func buildVolumes(config *config.Config, defaultMode int32) []corev1.Volume {
 			},
 		},
 	}
-	// Include PVC volume in legacy mode or when --from-pvc is set
+	// Include PVC volume in legacy mode or when --from-old-pvc is set
 	if config.IsLegacyMode() || fromPVC {
 		volumes = append(volumes, corev1.Volume{
 			Name: "settings-backup-data",

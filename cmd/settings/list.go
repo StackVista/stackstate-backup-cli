@@ -31,7 +31,7 @@ const (
 	expectedListJobContainerCount = 1
 )
 
-// Shared flag for --from-pvc, used by both list and restore commands
+// Shared flag for --from-old-pvc, used by both list and restore commands
 var fromPVC bool
 
 func listCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
@@ -43,7 +43,7 @@ func listCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVar(&fromPVC, "from-pvc", false, "List backups from legacy PVC instead of S3")
+	cmd.Flags().BoolVar(&fromPVC, "from-old-pvc", false, "List backups from legacy PVC instead of S3")
 
 	return cmd
 }
@@ -76,17 +76,17 @@ func runList(appCtx *app.Context) error {
 }
 
 // getAllBackups retrieves backups from all sources, deduplicates and sorts them by LastModified time (most recent first).
-// When --from-pvc is set: only lists backups from the legacy PVC (requires settings.restore.pvc to be configured).
+// When --from-old-pvc is set: only lists backups from the legacy PVC (requires settings.restore.pvc to be configured).
 // In legacy mode (Minio): combines S3 backups (if Minio enabled) + PVC backups.
 // In new mode (Storage): combines S3 backups + local bucket backups (from settings.localBucket).
 func getAllBackups(appCtx *app.Context) ([]BackupFileInfo, error) {
 	var backups []BackupFileInfo
 	var err error
 
-	// When --from-pvc is set, only list from the PVC
+	// When --from-old-pvc is set, only list from the PVC
 	if fromPVC {
 		if appCtx.Config.Settings.Restore.PVC == "" {
-			return nil, fmt.Errorf("--from-pvc requires settings.restore.pvc to be configured")
+			return nil, fmt.Errorf("--from-old-pvc requires settings.restore.pvc to be configured")
 		}
 		appCtx.Logger.Infof("Listing backups from legacy PVC '%s'...", appCtx.Config.Settings.Restore.PVC)
 		pvcBackups, err := getBackupListFromPVC(appCtx)
