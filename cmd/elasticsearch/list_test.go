@@ -21,6 +21,38 @@ const (
 	testSecretName    = "backup-secret"
 )
 
+// minimalESConfig provides the common Elasticsearch configuration for tests
+const minimalESConfig = `
+elasticsearch:
+  service:
+    name: elasticsearch-master
+    port: 9200
+    localPortForwardPort: 9200
+  restore:
+    scaleDownLabelSelector: app=test
+    indexPrefix: sts_
+    datastreamIndexPrefix: sts_k8s_logs
+    datastreamName: sts_k8s_logs
+    indicesPattern: "sts_*"
+    repository: backup-repo
+  snapshotRepository:
+    name: backup-repo
+    bucket: backups
+    endpoint: minio:9000
+    basepath: snapshots
+    accessKey: key
+    secretKey: secret
+  slm:
+    name: daily
+    schedule: "0 1 * * *"
+    snapshotTemplateName: "<snap-{now/d}>"
+    repository: backup-repo
+    indices: "sts_*"
+    retentionExpireAfter: 30d
+    retentionMinCount: 5
+    retentionMaxCount: 50
+`
+
 // minimalMinioStackgraphConfig provides the required Minio and Stackgraph configuration for tests
 const minimalMinioStackgraphConfig = `
 minio:
@@ -190,10 +222,12 @@ clickhouse:
     scaleDownLabelSelector: "app=clickhouse"
 `
 
-// mockESClient is a simple mock for testing commands
+// mockESClient is a mock for testing Elasticsearch commands
 type mockESClient struct {
-	snapshots []elasticsearch.Snapshot
-	err       error
+	snapshots     []elasticsearch.Snapshot
+	indices       []string
+	indicesDetail []elasticsearch.IndexInfo
+	err           error
 }
 
 func (m *mockESClient) ListSnapshots(_ string) ([]elasticsearch.Snapshot, error) {
@@ -208,11 +242,17 @@ func (m *mockESClient) GetSnapshot(_, _ string) (*elasticsearch.Snapshot, error)
 }
 
 func (m *mockESClient) ListIndices(_ string) ([]string, error) {
-	return nil, fmt.Errorf("not implemented")
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.indices, nil
 }
 
 func (m *mockESClient) ListIndicesDetailed() ([]elasticsearch.IndexInfo, error) {
-	return nil, fmt.Errorf("not implemented")
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.indicesDetail, nil
 }
 
 func (m *mockESClient) DeleteIndex(_ string) error {
@@ -239,61 +279,33 @@ func (m *mockESClient) RolloverDatastream(_ string) error {
 	return fmt.Errorf("not implemented")
 }
 
-// TestListCmd_Integration demonstrates an integration-style test
-// This test uses real fake.Clientset to test the full command flow
-func TestListCmd_Integration(t *testing.T) {
-	// Skip this test in short mode as it requires more setup
-	if testing.Short() {
-		t.Skip("skipping integration test in short mode")
-	}
-
-	// Create fake Kubernetes client
+// createFakeClientWithConfig creates a fake Kubernetes client with a ConfigMap containing the given config
+func createFakeClientWithConfig(t *testing.T, storageConfig string) *fake.Clientset {
+	t.Helper()
 	fakeClient := fake.NewClientset()
-
-	// Create ConfigMap with valid config
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      testConfigMapName,
 			Namespace: testNamespace,
 		},
 		Data: map[string]string{
-			"config": `
-elasticsearch:
-  service:
-    name: elasticsearch-master
-    port: 9200
-  restore:
-    scaleDownLabelSelector: app=test
-    indexPrefix: sts_
-    datastreamIndexPrefix: sts_k8s_logs
-    datastreamName: sts_k8s_logs
-    indicesPattern: "sts_*"
-    repository: backup-repo
-  snapshotRepository:
-    name: backup-repo
-    bucket: backups
-    endpoint: minio:9000
-    basepath: snapshots
-    accessKey: key
-    secretKey: secret
-  slm:
-    name: daily
-    schedule: "0 1 * * *"
-    snapshotTemplateName: "<snap-{now/d}>"
-    repository: backup-repo
-    indices: "sts_*"
-    retentionExpireAfter: 30d
-    retentionMinCount: 5
-    retentionMaxCount: 50
-` + minimalMinioStackgraphConfig,
+			"config": minimalESConfig + storageConfig,
 		},
 	}
 	_, err := fakeClient.CoreV1().ConfigMaps(testNamespace).Create(
 		context.Background(), cm, metav1.CreateOptions{},
 	)
 	require.NoError(t, err)
+	return fakeClient
+}
 
-	// Test that config loading works
+// TestListCmd_Integration demonstrates an integration-style test
+func TestListCmd_Integration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	fakeClient := createFakeClientWithConfig(t, minimalMinioStackgraphConfig)
 	cfg, err := config.LoadConfig(fakeClient, testNamespace, testConfigMapName, "")
 	require.NoError(t, err)
 	assert.Equal(t, "backup-repo", cfg.Elasticsearch.Restore.Repository)
@@ -306,66 +318,17 @@ func TestListCmd_StorageIntegration(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	// Create fake Kubernetes client
-	fakeClient := fake.NewClientset()
-
-	// Create ConfigMap with valid config using StorageConfig instead of MinioConfig
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      testConfigMapName,
-			Namespace: testNamespace,
-		},
-		Data: map[string]string{
-			"config": `
-elasticsearch:
-  service:
-    name: elasticsearch-master
-    port: 9200
-    localPortForwardPort: 9200
-  restore:
-    scaleDownLabelSelector: app=test
-    indexPrefix: sts_
-    datastreamIndexPrefix: sts_k8s_logs
-    datastreamName: sts_k8s_logs
-    indicesPattern: "sts_*"
-    repository: backup-repo
-  snapshotRepository:
-    name: backup-repo
-    bucket: backups
-    endpoint: storage:9000
-    basepath: snapshots
-    accessKey: key
-    secretKey: secret
-  slm:
-    name: daily
-    schedule: "0 1 * * *"
-    snapshotTemplateName: "<snap-{now/d}>"
-    repository: backup-repo
-    indices: "sts_*"
-    retentionExpireAfter: 30d
-    retentionMinCount: 5
-    retentionMaxCount: 50
-` + minimalStorageStackgraphConfig,
-		},
-	}
-	_, err := fakeClient.CoreV1().ConfigMaps(testNamespace).Create(
-		context.Background(), cm, metav1.CreateOptions{},
-	)
-	require.NoError(t, err)
-
-	// Test that config loading works
+	fakeClient := createFakeClientWithConfig(t, minimalStorageStackgraphConfig)
 	cfg, err := config.LoadConfig(fakeClient, testNamespace, testConfigMapName, "")
 	require.NoError(t, err)
 	assert.Equal(t, "backup-repo", cfg.Elasticsearch.Restore.Repository)
 	assert.Equal(t, "elasticsearch-master", cfg.Elasticsearch.Service.Name)
-	// Verify storage mode
 	assert.False(t, cfg.IsLegacyMode())
 	assert.True(t, cfg.StorageEnabled())
 	assert.Equal(t, "storage", cfg.GetStorageService().Name)
 }
 
 // TestListCmd_Unit demonstrates a unit-style test
-// This test focuses on the command structure and basic behavior
 func TestListCmd_Unit(t *testing.T) {
 	flags := config.NewCLIGlobalFlags()
 	flags.Namespace = testNamespace
@@ -374,7 +337,6 @@ func TestListCmd_Unit(t *testing.T) {
 
 	cmd := listCmd(flags)
 
-	// Test command metadata
 	assert.Equal(t, "list", cmd.Use)
 	assert.Equal(t, "List available Elasticsearch snapshots", cmd.Short)
 	assert.NotNil(t, cmd.Run)
@@ -419,16 +381,13 @@ func TestMockESClient(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Create mock client
 			mockClient := &mockESClient{
 				snapshots: tt.mockSnapshots,
 				err:       tt.mockErr,
 			}
 
-			// Call the method
 			snapshots, err := mockClient.ListSnapshots("backup-repo")
 
-			// Assertions
 			if tt.expectError {
 				assert.Error(t, err)
 				assert.Nil(t, snapshots)
