@@ -100,12 +100,13 @@ if err != nil {
 }
 
 // All dependencies available via appCtx
-appCtx.K8sClient
-appCtx.S3Client
-appCtx.ESClient
-appCtx.Config
-appCtx.Logger
-appCtx.Formatter
+appCtx.K8sClient                          // Kubernetes client
+appCtx.Config                             // Configuration
+appCtx.Logger                             // Structured logger
+appCtx.Formatter                          // Output formatter
+appCtx.NewESClient(localPort)             // Elasticsearch client factory
+appCtx.NewS3Client(localPort)             // S3/Minio client factory
+appCtx.NewCHClient(backupAPIPort, dbPort) // ClickHouse client factory
 ```
 
 **Dependency Rules**:
@@ -226,9 +227,10 @@ func runList(appCtx *app.Context) error {
     // All dependencies available immediately
     appCtx.K8sClient
     appCtx.Config
-    appCtx.S3Client
     appCtx.Logger
     appCtx.Formatter
+    // Service clients created via factory methods with port-forwarded port
+    s3Client, err := appCtx.NewS3Client(pf.LocalPort)
 }
 ```
 
@@ -455,9 +457,11 @@ func runListSnapshots(globalFlags *config.CLIGlobalFlags) error {
 ```go
 // GOOD
 func runListSnapshots(appCtx *app.Context) error {
-    // Dependencies already created
+    // Direct dependencies
     appCtx.K8sClient
-    appCtx.ESClient
+    appCtx.Config
+    // Service clients created via factory methods after port-forwarding
+    esClient, err := appCtx.NewESClient(pf.LocalPort)
 }
 ```
 

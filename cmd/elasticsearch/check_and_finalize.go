@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stackvista/stackstate-backup-cli/cmd/cmdutils"
 	"github.com/stackvista/stackstate-backup-cli/internal/app"
+	es "github.com/stackvista/stackstate-backup-cli/internal/clients/elasticsearch"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/portforward"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/restore"
@@ -39,24 +40,29 @@ If the restore is still running and --wait is specified, wait for completion bef
 func runCheckAndFinalize(appCtx *app.Context) error {
 	// Setup port-forward to Elasticsearch
 	serviceName := appCtx.Config.Elasticsearch.Service.Name
-	localPort := appCtx.Config.Elasticsearch.Service.LocalPortForwardPort
 	remotePort := appCtx.Config.Elasticsearch.Service.Port
 
-	pf, err := portforward.SetupPortForward(appCtx.K8sClient, appCtx.Namespace, serviceName, localPort, remotePort, appCtx.Logger)
+	pf, err := portforward.SetupPortForward(appCtx.K8sClient, appCtx.Namespace, serviceName, remotePort, appCtx.Logger)
 	if err != nil {
 		return err
 	}
 	defer close(pf.StopChan)
 
+	// Create ES client with actual port
+	esClient, err := appCtx.NewESClient(pf.LocalPort)
+	if err != nil {
+		return fmt.Errorf("failed to create Elasticsearch client: %w", err)
+	}
+
 	repository := appCtx.Config.Elasticsearch.Restore.Repository
 
-	return checkAndFinalize(appCtx, repository, checkOperationID, checkWait)
+	return checkAndFinalize(esClient, appCtx, repository, checkOperationID, checkWait)
 }
 
-func checkAndFinalize(appCtx *app.Context, repository, snapshotName string, waitForComplete bool) error {
+func checkAndFinalize(esClient es.Interface, appCtx *app.Context, repository, snapshotName string, waitForComplete bool) error {
 	// Get restore status
 	appCtx.Logger.Infof("Checking restore status for snapshot: %s", snapshotName)
-	status, isComplete, err := appCtx.ESClient.GetRestoreStatus(repository, snapshotName)
+	status, isComplete, err := esClient.GetRestoreStatus(repository, snapshotName)
 	if err != nil {
 		return fmt.Errorf("failed to get restore status: %w", err)
 	}
@@ -87,7 +93,7 @@ func checkAndFinalize(appCtx *app.Context, repository, snapshotName string, wait
 
 	if waitForComplete {
 		appCtx.Logger.Println()
-		return waitAndFinalize(appCtx, repository, snapshotName)
+		return waitAndFinalize(esClient, appCtx, repository, snapshotName)
 	}
 
 	// Not waiting - print status and exit
@@ -97,12 +103,12 @@ func checkAndFinalize(appCtx *app.Context, repository, snapshotName string, wait
 }
 
 // waitAndFinalize waits for restore to complete and finalizes (scale up)
-func waitAndFinalize(appCtx *app.Context, repository, snapshotName string) error {
+func waitAndFinalize(esClient es.Interface, appCtx *app.Context, repository, snapshotName string) error {
 	restore.PrintAPIWaitingMessage("elasticsearch", snapshotName, appCtx.Namespace, appCtx.Logger)
 
 	// Wait for restore to complete
 	checkStatusFn := func() (string, bool, error) {
-		return appCtx.ESClient.GetRestoreStatus(repository, snapshotName)
+		return esClient.GetRestoreStatus(repository, snapshotName)
 	}
 
 	if err := restore.WaitForAPIRestore(checkStatusFn, 0, appCtx.Logger); err != nil {

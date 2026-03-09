@@ -143,10 +143,9 @@ func waitAndCleanupRestoreJob(k8sClient *k8s.Client, namespace, jobName string, 
 func getLatestBackup(k8sClient *k8s.Client, namespace string, config *config.Config, log *logger.Logger) (string, error) {
 	// Setup port-forward to Minio
 	serviceName := config.Minio.Service.Name
-	localPort := config.Minio.Service.LocalPortForwardPort
 	remotePort := config.Minio.Service.Port
 
-	pf, err := portforward.SetupPortForward(k8sClient, namespace, serviceName, localPort, remotePort, log)
+	pf, err := portforward.SetupPortForward(k8sClient, namespace, serviceName, remotePort, log)
 	if err != nil {
 		return "", err
 	}

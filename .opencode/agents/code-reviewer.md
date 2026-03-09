@@ -108,10 +108,11 @@ Commands MUST use `app.Context` for dependencies, NOT create clients directly:
 // GOOD
 func runRestore(appCtx *app.Context) error {
     appCtx.K8sClient   // Use injected client
-    appCtx.ESClient
     appCtx.Config
     appCtx.Logger
     appCtx.Formatter
+    // Service clients created via factory methods after port-forwarding
+    esClient, err := appCtx.NewESClient(pf.LocalPort)
 }
 
 // BAD - Direct client creation in command

@@ -53,14 +53,19 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 func runRestore(appCtx *app.Context) error {
 	// Setup port-forward to Elasticsearch (needed for both snapshot selection and restore)
 	serviceName := appCtx.Config.Elasticsearch.Service.Name
-	localPort := appCtx.Config.Elasticsearch.Service.LocalPortForwardPort
 	remotePort := appCtx.Config.Elasticsearch.Service.Port
 
-	pf, err := portforward.SetupPortForward(appCtx.K8sClient, appCtx.Namespace, serviceName, localPort, remotePort, appCtx.Logger)
+	pf, err := portforward.SetupPortForward(appCtx.K8sClient, appCtx.Namespace, serviceName, remotePort, appCtx.Logger)
 	if err != nil {
 		return err
 	}
 	defer close(pf.StopChan)
+
+	// Create ES client with actual port
+	esClient, err := appCtx.NewESClient(pf.LocalPort)
+	if err != nil {
+		return fmt.Errorf("failed to create Elasticsearch client: %w", err)
+	}
 
 	repository := appCtx.Config.Elasticsearch.Restore.Repository
 
@@ -68,7 +73,7 @@ func runRestore(appCtx *app.Context) error {
 	selectedSnapshot := snapshotName
 	if useLatest {
 		appCtx.Logger.Infof("Fetching latest snapshot from repository '%s'...", repository)
-		latestSnapshot, err := getLatestSnapshot(appCtx, repository)
+		latestSnapshot, err := getLatestSnapshot(esClient, repository)
 		if err != nil {
 			return err
 		}
@@ -108,14 +113,14 @@ func runRestore(appCtx *app.Context) error {
 
 	// Delete all STS indices before restore
 	appCtx.Logger.Println()
-	if err := deleteAllSTSIndices(appCtx); err != nil {
+	if err := deleteAllSTSIndices(esClient, appCtx); err != nil {
 		return err
 	}
 
 	// Trigger async restore
 	appCtx.Logger.Println()
 	appCtx.Logger.Infof("Triggering restore for snapshot: %s", selectedSnapshot)
-	if err := appCtx.ESClient.RestoreSnapshot(repository, selectedSnapshot, appCtx.Config.Elasticsearch.Restore.IndicesPattern); err != nil {
+	if err := esClient.RestoreSnapshot(repository, selectedSnapshot, appCtx.Config.Elasticsearch.Restore.IndicesPattern); err != nil {
 		return fmt.Errorf("failed to trigger restore: %w", err)
 	}
 	appCtx.Logger.Successf("Restore triggered successfully")
@@ -125,12 +130,12 @@ func runRestore(appCtx *app.Context) error {
 		return nil
 	}
 
-	return checkAndFinalize(appCtx, repository, selectedSnapshot, !runBackground)
+	return checkAndFinalize(esClient, appCtx, repository, selectedSnapshot, !runBackground)
 }
 
 // getLatestSnapshot retrieves the most recent snapshot from the repository
-func getLatestSnapshot(appCtx *app.Context, repository string) (string, error) {
-	snapshots, err := appCtx.ESClient.ListSnapshots(repository)
+func getLatestSnapshot(esClient es.Interface, repository string) (string, error) {
+	snapshots, err := esClient.ListSnapshots(repository)
 	if err != nil {
 		return "", fmt.Errorf("failed to list snapshots: %w", err)
 	}
@@ -148,9 +153,9 @@ func getLatestSnapshot(appCtx *app.Context, repository string) (string, error) {
 }
 
 // deleteAllSTSIndices deletes all STS indices including datastream rollover if needed
-func deleteAllSTSIndices(appCtx *app.Context) error {
+func deleteAllSTSIndices(esClient es.Interface, appCtx *app.Context) error {
 	appCtx.Logger.Infof("Fetching current Elasticsearch indices...")
-	allIndices, err := appCtx.ESClient.ListIndices("*")
+	allIndices, err := esClient.ListIndices("*")
 	if err != nil {
 		return fmt.Errorf("failed to list indices: %w", err)
 	}
@@ -170,7 +175,7 @@ func deleteAllSTSIndices(appCtx *app.Context) error {
 	// Check for datastream and rollover if needed
 	if hasDatastreamIndices(stsIndices, appCtx.Config.Elasticsearch.Restore.DatastreamIndexPrefix) {
 		appCtx.Logger.Infof("Rolling over datastream '%s'...", appCtx.Config.Elasticsearch.Restore.DatastreamName)
-		if err := appCtx.ESClient.RolloverDatastream(appCtx.Config.Elasticsearch.Restore.DatastreamName); err != nil {
+		if err := esClient.RolloverDatastream(appCtx.Config.Elasticsearch.Restore.DatastreamName); err != nil {
 			return fmt.Errorf("failed to rollover datastream: %w", err)
 		}
 		appCtx.Logger.Successf("Datastream rolled over successfully")
@@ -179,7 +184,7 @@ func deleteAllSTSIndices(appCtx *app.Context) error {
 	// Delete all indices
 	appCtx.Logger.Infof("Deleting %d index(es)...", len(stsIndices))
 	for _, index := range stsIndices {
-		if err := deleteIndexWithVerification(appCtx.ESClient, index, appCtx.Logger); err != nil {
+		if err := deleteIndexWithVerification(esClient, index, appCtx.Logger); err != nil {
 			return err
 		}
 	}

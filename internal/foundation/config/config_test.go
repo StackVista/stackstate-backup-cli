@@ -106,8 +106,6 @@ func TestLoadConfig_CompleteConfiguration(t *testing.T) {
 	// Service config
 	assert.Equal(t, "suse-observability-elasticsearch-master-headless", config.Elasticsearch.Service.Name)
 	assert.Equal(t, 9200, config.Elasticsearch.Service.Port)
-	assert.Equal(t, 9200, config.Elasticsearch.Service.LocalPortForwardPort)
-
 	// Restore config
 	assert.Equal(t, "observability.suse.com/scalable-during-es-restore=true", config.Elasticsearch.Restore.ScaleDownLabelSelector)
 	assert.Equal(t, "sts", config.Elasticsearch.Restore.IndexPrefix)
@@ -328,9 +326,8 @@ func TestConfig_StructValidation(t *testing.T) {
 			config: &Config{
 				Elasticsearch: ElasticsearchConfig{
 					Service: ServiceConfig{
-						Name:                 "es-master",
-						Port:                 9200,
-						LocalPortForwardPort: 9200,
+						Name: "es-master",
+						Port: 9200,
 					},
 					Restore: RestoreConfig{
 						ScaleDownLabelSelector: "app=test",
@@ -361,9 +358,8 @@ func TestConfig_StructValidation(t *testing.T) {
 				Minio: MinioConfig{
 					Enabled: true,
 					Service: ServiceConfig{
-						Name:                 "minio",
-						Port:                 9000,
-						LocalPortForwardPort: 9000,
+						Name: "minio",
+						Port: 9000,
 					},
 					AccessKey: "minioadmin",
 					SecretKey: "minioadmin",
@@ -455,14 +451,12 @@ func TestConfig_StructValidation(t *testing.T) {
 				},
 				Clickhouse: ClickhouseConfig{
 					Service: ServiceConfig{
-						Name:                 "clickhouse",
-						Port:                 9000,
-						LocalPortForwardPort: 9000,
+						Name: "clickhouse",
+						Port: 9000,
 					},
 					BackupService: ServiceConfig{
-						Name:                 "clickhouse",
-						Port:                 7171,
-						LocalPortForwardPort: 7171,
+						Name: "clickhouse",
+						Port: 7171,
 					},
 					Database: "default",
 					Username: "default",
@@ -479,9 +473,8 @@ func TestConfig_StructValidation(t *testing.T) {
 			config: &Config{
 				Elasticsearch: ElasticsearchConfig{
 					Service: ServiceConfig{
-						Name:                 "es-master",
-						Port:                 0, // Invalid
-						LocalPortForwardPort: 9200,
+						Name: "es-master",
+						Port: 0, // Invalid
 					},
 					Restore: RestoreConfig{
 						ScaleDownLabelSelector: "app=test",
@@ -517,9 +510,8 @@ func TestConfig_StructValidation(t *testing.T) {
 			config: &Config{
 				Elasticsearch: ElasticsearchConfig{
 					Service: ServiceConfig{
-						Name:                 "es-master",
-						Port:                 9200,
-						LocalPortForwardPort: 9200,
+						Name: "es-master",
+						Port: 9200,
 					},
 					Restore: RestoreConfig{
 						ScaleDownLabelSelector: "app=test",

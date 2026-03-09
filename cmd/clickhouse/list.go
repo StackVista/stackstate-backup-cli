@@ -29,7 +29,6 @@ func runList(appCtx *app.Context) error {
 		appCtx.K8sClient,
 		appCtx.Namespace,
 		appCtx.Config.Clickhouse.BackupService.Name,
-		appCtx.Config.Clickhouse.BackupService.LocalPortForwardPort,
 		appCtx.Config.Clickhouse.BackupService.Port,
 		appCtx.Logger,
 	)
@@ -38,11 +37,17 @@ func runList(appCtx *app.Context) error {
 	}
 	defer close(pf.StopChan)
 
+	// Create CH client with backup API port only
+	chClient, err := appCtx.NewCHClient(pf.LocalPort, 0)
+	if err != nil {
+		return fmt.Errorf("failed to create ClickHouse client: %w", err)
+	}
+
 	// List backups
 	appCtx.Logger.Infof("Listing Clickhouse backups...")
 	appCtx.Logger.Println()
 
-	backups, err := appCtx.CHClient.ListBackups(appCtx.Context)
+	backups, err := chClient.ListBackups(appCtx.Context)
 	if err != nil {
 		return fmt.Errorf("failed to list backups: %w", err)
 	}

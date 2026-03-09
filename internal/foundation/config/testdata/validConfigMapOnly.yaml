@@ -49,8 +49,6 @@ elasticsearch:
     name: suse-observability-elasticsearch-master-headless
     # Port number for Elasticsearch HTTP API
     port: 9200
-    # Local port to use for port-forwarding (can be same as port)
-    localPortForwardPort: 9200
 
   # Restore operation configuration
   restore:
@@ -74,7 +72,6 @@ minio:
   service:
     name: suse-observability-minio
     port: 9000
-    localPortForwardPort: 9000
   accessKey: minioadmin
   secretKey: minioadmin
 
@@ -158,11 +155,9 @@ clickhouse:
   service:
     name: "suse-observability-clickhouse-shard0-0"
     port: 9000
-    localPortForwardPort: 9000
   backupService:
     name: "suse-observability-clickhouse-shard0-0"
     port: 7171
-    localPortForwardPort: 7171
   database: "default"
   username: "default"
   password: "password"

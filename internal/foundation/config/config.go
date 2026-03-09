@@ -72,9 +72,8 @@ type SLMConfig struct {
 
 // ServiceConfig holds service connection details
 type ServiceConfig struct {
-	Name                 string `yaml:"name" validate:"required"`
-	Port                 int    `yaml:"port" validate:"required,min=1,max=65535"`
-	LocalPortForwardPort int    `yaml:"localPortForwardPort" validate:"required,min=1,max=65535"`
+	Name string `yaml:"name" validate:"required"`
+	Port int    `yaml:"port" validate:"required,min=1,max=65535"`
 }
 
 // MinioConfig holds Minio-specific configuration

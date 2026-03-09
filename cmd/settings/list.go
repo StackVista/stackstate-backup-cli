@@ -119,14 +119,19 @@ type BackupFileInfo struct {
 func getBackupListFromS3(appCtx *app.Context) ([]BackupFileInfo, error) {
 	// Setup port-forward to Minio
 	serviceName := appCtx.Config.Minio.Service.Name
-	localPort := appCtx.Config.Minio.Service.LocalPortForwardPort
 	remotePort := appCtx.Config.Minio.Service.Port
 
-	pf, err := portforward.SetupPortForward(appCtx.K8sClient, appCtx.Namespace, serviceName, localPort, remotePort, appCtx.Logger)
+	pf, err := portforward.SetupPortForward(appCtx.K8sClient, appCtx.Namespace, serviceName, remotePort, appCtx.Logger)
 	if err != nil {
 		return nil, err
 	}
 	defer close(pf.StopChan)
+
+	// Create S3 client with actual port
+	s3Client, err := appCtx.NewS3Client(pf.LocalPort)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create S3 client: %w", err)
+	}
 
 	// List objects in bucket
 	bucket := appCtx.Config.Settings.Bucket
@@ -139,7 +144,7 @@ func getBackupListFromS3(appCtx *app.Context) ([]BackupFileInfo, error) {
 		Prefix: aws.String(prefix),
 	}
 
-	result, err := appCtx.S3Client.ListObjectsV2(context.Background(), input)
+	result, err := s3Client.ListObjectsV2(context.Background(), input)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list S3 objects: %w", err)
 	}

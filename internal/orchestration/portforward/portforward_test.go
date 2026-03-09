@@ -16,7 +16,7 @@ func TestSetupPortForward_ServiceNotFound(t *testing.T) {
 	client := k8s.NewTestClient(fakeClientset)
 	log := logger.New(true, false)
 
-	_, err := SetupPortForward(client, "default", "nonexistent-service", 8080, 9200, log)
+	_, err := SetupPortForward(client, "default", "nonexistent-service", 9200, log)
 	if err == nil {
 		t.Fatal("expected error for nonexistent service, got nil")
 	}
@@ -39,7 +39,7 @@ func TestSetupPortForward_NoPodsFound(t *testing.T) {
 	client := k8s.NewTestClient(fakeClientset)
 	log := logger.New(true, false)
 
-	_, err := SetupPortForward(client, "default", "test-service", 8080, 9200, log)
+	_, err := SetupPortForward(client, "default", "test-service", 9200, log)
 	if err == nil {
 		t.Fatal("expected error for service with no pods, got nil")
 	}
@@ -74,7 +74,7 @@ func TestSetupPortForward_NoRunningPods(t *testing.T) {
 	client := k8s.NewTestClient(fakeClientset)
 	log := logger.New(true, false)
 
-	_, err := SetupPortForward(client, "default", "test-service", 8080, 9200, log)
+	_, err := SetupPortForward(client, "default", "test-service", 9200, log)
 	if err == nil {
 		t.Fatal("expected error for service with no running pods, got nil")
 	}
@@ -82,20 +82,15 @@ func TestSetupPortForward_NoRunningPods(t *testing.T) {
 
 func TestConn_Structure(t *testing.T) {
 	stopChan := make(chan struct{})
-	readyChan := make(chan struct{})
 	localPort := 8080
 
 	result := &Conn{
 		StopChan:  stopChan,
-		ReadyChan: readyChan,
 		LocalPort: localPort,
 	}
 
 	if result.StopChan == nil {
 		t.Error("expected StopChan to be set")
-	}
-	if result.ReadyChan == nil {
-		t.Error("expected ReadyChan to be set")
 	}
 	if result.LocalPort != localPort {
 		t.Errorf("expected LocalPort to be %d, got %d", localPort, result.LocalPort)
@@ -104,11 +99,9 @@ func TestConn_Structure(t *testing.T) {
 
 func TestConn_ChannelCleanup(t *testing.T) {
 	stopChan := make(chan struct{})
-	readyChan := make(chan struct{})
 
 	result := &Conn{
 		StopChan:  stopChan,
-		ReadyChan: readyChan,
 		LocalPort: 8080,
 	}
 

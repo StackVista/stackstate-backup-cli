@@ -96,7 +96,6 @@ func executeRestore(appCtx *app.Context, backupName string, waitForComplete bool
 		appCtx.K8sClient,
 		appCtx.Namespace,
 		appCtx.Config.Clickhouse.BackupService.Name,
-		appCtx.Config.Clickhouse.BackupService.LocalPortForwardPort,
 		appCtx.Config.Clickhouse.BackupService.Port,
 		appCtx.Logger,
 	)
@@ -105,10 +104,16 @@ func executeRestore(appCtx *app.Context, backupName string, waitForComplete bool
 	}
 	defer close(pf.StopChan)
 
+	// Create CH client with backup API port only
+	chClient, err := appCtx.NewCHClient(pf.LocalPort, 0)
+	if err != nil {
+		return fmt.Errorf("failed to create ClickHouse client: %w", err)
+	}
+
 	// Trigger restore
 	appCtx.Logger.Println()
 	appCtx.Logger.Infof("Triggering restore for backup: %s", backupName)
-	operationID, err := appCtx.CHClient.TriggerRestore(appCtx.Context, backupName)
+	operationID, err := chClient.TriggerRestore(appCtx.Context, backupName)
 	if err != nil {
 		return fmt.Errorf("failed to trigger restore: %w", err)
 	}
@@ -119,7 +124,7 @@ func executeRestore(appCtx *app.Context, backupName string, waitForComplete bool
 		return nil
 	}
 
-	return checkAndFinalize(appCtx, operationID, waitForComplete)
+	return checkAndFinalize(chClient, appCtx, operationID, waitForComplete)
 }
 
 // getLatestBackupForRestore retrieves the most recent backup
@@ -129,7 +134,6 @@ func getLatestBackupForRestore(appCtx *app.Context) (string, error) {
 		appCtx.K8sClient,
 		appCtx.Namespace,
 		appCtx.Config.Clickhouse.BackupService.Name,
-		appCtx.Config.Clickhouse.BackupService.LocalPortForwardPort,
 		appCtx.Config.Clickhouse.BackupService.Port,
 		appCtx.Logger,
 	)
@@ -138,8 +142,14 @@ func getLatestBackupForRestore(appCtx *app.Context) (string, error) {
 	}
 	defer close(pf.StopChan)
 
+	// Create CH client with backup API port only
+	chClient, err := appCtx.NewCHClient(pf.LocalPort, 0)
+	if err != nil {
+		return "", fmt.Errorf("failed to create ClickHouse client: %w", err)
+	}
+
 	// List backups
-	backups, err := appCtx.CHClient.ListBackups(appCtx.Context)
+	backups, err := chClient.ListBackups(appCtx.Context)
 	if err != nil {
 		return "", fmt.Errorf("failed to list backups: %w", err)
 	}

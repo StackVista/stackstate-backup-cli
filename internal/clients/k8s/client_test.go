@@ -356,7 +356,7 @@ func TestClient_PortForwardService_ServiceNotFound(t *testing.T) {
 		clientset: fakeClient,
 	}
 
-	_, _, err := client.PortForwardService("test-ns", "nonexistent-svc", 8080, 9200)
+	_, _, err := client.PortForwardService("test-ns", "nonexistent-svc", 9200)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to get service")
 }
@@ -383,7 +383,7 @@ func TestClient_PortForwardService_NoPodsFound(t *testing.T) {
 		clientset: fakeClient,
 	}
 
-	_, _, err = client.PortForwardService("test-ns", "test-svc", 8080, 9200)
+	_, _, err = client.PortForwardService("test-ns", "test-svc", 9200)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no pods found for service")
 }
@@ -426,7 +426,7 @@ func TestClient_PortForwardService_NoRunningPods(t *testing.T) {
 		clientset: fakeClient,
 	}
 
-	_, _, err = client.PortForwardService("test-ns", "test-svc", 8080, 9200)
+	_, _, err = client.PortForwardService("test-ns", "test-svc", 9200)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "no running pods found for service")
 }
