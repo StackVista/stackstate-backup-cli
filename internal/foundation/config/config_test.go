@@ -61,7 +61,7 @@ func TestLoadConfig_FromConfigMapOnly(t *testing.T) {
 	assert.Equal(t, "configmap-secret-key", config.Elasticsearch.SnapshotRepository.SecretKey)
 	// Verify legacy mode
 	assert.True(t, config.IsLegacyMode())
-	assert.True(t, config.StorageEnabled())
+	assert.True(t, config.GlobalBackupEnabled())
 }
 
 func TestLoadConfig_Storage_FromConfigMapOnly(t *testing.T) {
@@ -96,12 +96,63 @@ func TestLoadConfig_Storage_FromConfigMapOnly(t *testing.T) {
 	assert.Equal(t, "configmap-secret-key", config.Elasticsearch.SnapshotRepository.SecretKey)
 	// Verify new storage mode (not legacy)
 	assert.False(t, config.IsLegacyMode())
-	assert.True(t, config.StorageEnabled())
+	assert.True(t, config.GlobalBackupEnabled())
 	// Verify storage accessor methods return storage config values
 	assert.Equal(t, "suse-observability-storage", config.GetStorageService().Name)
 	assert.Equal(t, 9000, config.GetStorageService().Port)
 	assert.Equal(t, "storageadmin", config.GetStorageAccessKey())
 	assert.Equal(t, "storageadmin", config.GetStorageSecretKey())
+}
+
+func TestGlobalBackupEnabled_StorageMode_Disabled(t *testing.T) {
+	config := &Config{
+		Storage: StorageConfig{
+			GlobalBackupEnabled: false,
+			Service: ServiceConfig{
+				Name:                 "storage",
+				Port:                 9000,
+				LocalPortForwardPort: 9000,
+			},
+		},
+	}
+
+	assert.False(t, config.IsLegacyMode())
+	assert.False(t, config.GlobalBackupEnabled())
+}
+
+func TestGlobalBackupEnabled_StorageMode_Enabled(t *testing.T) {
+	config := &Config{
+		Storage: StorageConfig{
+			GlobalBackupEnabled: true,
+			Service: ServiceConfig{
+				Name:                 "storage",
+				Port:                 9000,
+				LocalPortForwardPort: 9000,
+			},
+		},
+	}
+
+	assert.False(t, config.IsLegacyMode())
+	assert.True(t, config.GlobalBackupEnabled())
+}
+
+func TestGlobalBackupEnabled_LegacyMode(t *testing.T) {
+	config := &Config{
+		Minio: MinioConfig{
+			Enabled: false,
+			Service: ServiceConfig{
+				Name:                 "minio",
+				Port:                 9000,
+				LocalPortForwardPort: 9000,
+			},
+		},
+	}
+
+	assert.True(t, config.IsLegacyMode())
+	assert.False(t, config.GlobalBackupEnabled())
+
+	config.Minio.Enabled = true
+	assert.True(t, config.GlobalBackupEnabled())
 }
 
 func TestLoadConfig_CompleteConfiguration(t *testing.T) {
@@ -221,7 +272,7 @@ func TestLoadConfig_Storage_CompleteConfiguration(t *testing.T) {
 
 	// Verify new storage mode (not legacy)
 	assert.False(t, config.IsLegacyMode())
-	assert.True(t, config.StorageEnabled())
+	assert.True(t, config.GlobalBackupEnabled())
 
 	// Service config
 	assert.Equal(t, "suse-observability-elasticsearch-master-headless", config.Elasticsearch.Service.Name)

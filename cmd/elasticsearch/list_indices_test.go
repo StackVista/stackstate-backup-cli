@@ -49,7 +49,7 @@ func TestListIndicesCmd_StorageIntegration(t *testing.T) {
 	assert.Equal(t, "elasticsearch-master", cfg.Elasticsearch.Service.Name)
 	assert.Equal(t, 9200, cfg.Elasticsearch.Service.Port)
 	assert.False(t, cfg.IsLegacyMode())
-	assert.True(t, cfg.StorageEnabled())
+	assert.True(t, cfg.GlobalBackupEnabled())
 	assert.Equal(t, "storage", cfg.GetStorageService().Name)
 }
 

@@ -324,7 +324,7 @@ func TestListCmd_StorageIntegration(t *testing.T) {
 	assert.Equal(t, "backup-repo", cfg.Elasticsearch.Restore.Repository)
 	assert.Equal(t, "elasticsearch-master", cfg.Elasticsearch.Service.Name)
 	assert.False(t, cfg.IsLegacyMode())
-	assert.True(t, cfg.StorageEnabled())
+	assert.True(t, cfg.GlobalBackupEnabled())
 	assert.Equal(t, "storage", cfg.GetStorageService().Name)
 }
 

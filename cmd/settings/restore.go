@@ -197,7 +197,7 @@ func buildEnvVar(extraEnvVar []corev1.EnvVar, config *config.Config) []corev1.En
 		{Name: "RECEIVER_BASE_URL", Value: config.Settings.Restore.ReceiverBaseURL},
 		{Name: "PLATFORM_VERSION", Value: config.Settings.Restore.PlatformVersion},
 		{Name: "ZOOKEEPER_QUORUM", Value: config.Settings.Restore.ZookeeperQuorum},
-		{Name: "BACKUP_CONFIGURATION_UPLOAD_REMOTE", Value: strconv.FormatBool(config.StorageEnabled())},
+		{Name: "BACKUP_CONFIGURATION_UPLOAD_REMOTE", Value: strconv.FormatBool(config.GlobalBackupEnabled())},
 	}
 	if fromPVC {
 		// Force PVC mode in the shell script, suppress local bucket

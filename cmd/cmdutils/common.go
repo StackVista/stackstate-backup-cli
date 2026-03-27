@@ -19,7 +19,7 @@ func Run(globalFlags *config.CLIGlobalFlags, runFunc func(ctx *app.Context) erro
 		_, _ = fmt.Fprintf(os.Stderr, "❌ Error: %v\n", err)
 		os.Exit(1)
 	}
-	if storageRequired && !appCtx.Config.StorageEnabled() {
+	if storageRequired && !appCtx.Config.GlobalBackupEnabled() {
 		appCtx.Logger.Errorf("commands that interact with S3-compatible storage require SUSE Observability to be deployed with .Values.global.backup.enabled=true")
 		os.Exit(1)
 	}

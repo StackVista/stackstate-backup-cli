@@ -97,7 +97,7 @@ func getAllBackups(appCtx *app.Context) ([]BackupFileInfo, error) {
 	}
 
 	// Get backups from S3 if storage is enabled
-	if appCtx.Config.StorageEnabled() {
+	if appCtx.Config.GlobalBackupEnabled() {
 		if backups, err = getBackupListFromS3(appCtx); err != nil {
 			return nil, fmt.Errorf("failed to get list of backups from S3 storage: %v", err)
 		}

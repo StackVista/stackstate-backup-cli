@@ -415,7 +415,7 @@ storage:
 				assert.NotNil(t, cfg)
 				// Verify storage mode
 				assert.False(t, cfg.IsLegacyMode())
-				assert.True(t, cfg.StorageEnabled())
+				assert.True(t, cfg.GlobalBackupEnabled())
 				assert.NotEmpty(t, cfg.Elasticsearch.SnapshotRepository.AccessKey)
 				assert.NotEmpty(t, cfg.Elasticsearch.SnapshotRepository.SecretKey)
 			}
