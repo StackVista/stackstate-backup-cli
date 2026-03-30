@@ -109,9 +109,8 @@ func TestGlobalBackupEnabled_StorageMode_Disabled(t *testing.T) {
 		Storage: StorageConfig{
 			GlobalBackupEnabled: false,
 			Service: ServiceConfig{
-				Name:                 "storage",
-				Port:                 9000,
-
+				Name: "storage",
+				Port: 9000,
 			},
 		},
 	}
@@ -125,9 +124,8 @@ func TestGlobalBackupEnabled_StorageMode_Enabled(t *testing.T) {
 		Storage: StorageConfig{
 			GlobalBackupEnabled: true,
 			Service: ServiceConfig{
-				Name:                 "storage",
-				Port:                 9000,
-
+				Name: "storage",
+				Port: 9000,
 			},
 		},
 	}
@@ -141,9 +139,8 @@ func TestGlobalBackupEnabled_LegacyMode(t *testing.T) {
 		Minio: MinioConfig{
 			Enabled: false,
 			Service: ServiceConfig{
-				Name:                 "minio",
-				Port:                 9000,
-
+				Name: "minio",
+				Port: 9000,
 			},
 		},
 	}
@@ -277,7 +274,6 @@ func TestLoadConfig_Storage_CompleteConfiguration(t *testing.T) {
 	// Service config
 	assert.Equal(t, "suse-observability-elasticsearch-master-headless", config.Elasticsearch.Service.Name)
 	assert.Equal(t, 9200, config.Elasticsearch.Service.Port)
-
 
 	// Restore config
 	assert.Equal(t, "observability.suse.com/scalable-during-es-restore=true", config.Elasticsearch.Restore.ScaleDownLabelSelector)
@@ -733,9 +729,8 @@ func TestConfig_StructValidation(t *testing.T) {
 			config: &Config{
 				Elasticsearch: ElasticsearchConfig{
 					Service: ServiceConfig{
-						Name:                 "es-master",
-						Port:                 9200,
-
+						Name: "es-master",
+						Port: 9200,
 					},
 					Restore: RestoreConfig{
 						ScaleDownLabelSelector: "app=test",
@@ -766,9 +761,8 @@ func TestConfig_StructValidation(t *testing.T) {
 				Storage: StorageConfig{
 					GlobalBackupEnabled: true,
 					Service: ServiceConfig{
-						Name:                 "storage",
-						Port:                 9000,
-		
+						Name: "storage",
+						Port: 9000,
 					},
 					AccessKey: "storageadmin",
 					SecretKey: "storageadmin",
@@ -859,14 +853,12 @@ func TestConfig_StructValidation(t *testing.T) {
 				},
 				Clickhouse: ClickhouseConfig{
 					Service: ServiceConfig{
-						Name:                 "clickhouse",
-						Port:                 9000,
-		
+						Name: "clickhouse",
+						Port: 9000,
 					},
 					BackupService: ServiceConfig{
-						Name:                 "clickhouse",
-						Port:                 7171,
-
+						Name: "clickhouse",
+						Port: 7171,
 					},
 					Database: "default",
 					Username: "default",
