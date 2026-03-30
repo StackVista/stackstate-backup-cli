@@ -31,7 +31,7 @@ Examples:
   # Wait for job completion and cleanup
   sts-backup stackgraph check-and-finalize --job stackgraph-restore-20250128t143000 --wait -n my-namespace`,
 		Run: func(_ *cobra.Command, _ []string) {
-			cmdutils.Run(globalFlags, runCheckAndFinalize, cmdutils.MinioIsRequired)
+			cmdutils.Run(globalFlags, runCheckAndFinalize, cmdutils.StorageIsRequired)
 		},
 	}
 

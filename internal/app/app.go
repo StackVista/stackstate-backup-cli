@@ -53,7 +53,7 @@ func NewContext(flags *config.CLIGlobalFlags) (*Context, error) {
 // NewS3Client creates an S3 client connecting to the given local port-forwarded port
 func (c *Context) NewS3Client(localPort int) (s3.Interface, error) {
 	endpoint := fmt.Sprintf("http://localhost:%d", localPort)
-	return s3.NewClient(endpoint, c.Config.Minio.AccessKey, c.Config.Minio.SecretKey)
+	return s3.NewClient(endpoint, c.Config.GetStorageAccessKey(), c.Config.GetStorageSecretKey())
 }
 
 // NewESClient creates an Elasticsearch client connecting to the given local port-forwarded port

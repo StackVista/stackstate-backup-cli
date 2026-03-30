@@ -25,17 +25,18 @@ const (
 func listCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List available VictoriaMetrics backups from S3/Minio",
+		Short: "List available VictoriaMetrics backups from S3",
 		Run: func(_ *cobra.Command, _ []string) {
-			cmdutils.Run(globalFlags, runList, cmdutils.MinioIsRequired)
+			cmdutils.Run(globalFlags, runList, cmdutils.StorageIsRequired)
 		},
 	}
 }
 
 func runList(appCtx *app.Context) error {
-	// Setup port-forward to Minio
-	serviceName := appCtx.Config.Minio.Service.Name
-	remotePort := appCtx.Config.Minio.Service.Port
+	// Setup port-forward to S3-compatible storage
+	storageService := appCtx.Config.GetStorageService()
+	serviceName := storageService.Name
+	remotePort := storageService.Port
 
 	pf, err := portforward.SetupPortForward(appCtx.K8sClient, appCtx.Namespace, serviceName, remotePort, appCtx.Logger)
 	if err != nil {

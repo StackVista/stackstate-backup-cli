@@ -17,7 +17,7 @@ func listCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		Use:   "list",
 		Short: "List available Elasticsearch snapshots",
 		Run: func(_ *cobra.Command, _ []string) {
-			cmdutils.Run(globalFlags, runListSnapshots, cmdutils.MinioIsRequired)
+			cmdutils.Run(globalFlags, runListSnapshots, cmdutils.StorageIsRequired)
 		},
 	}
 }

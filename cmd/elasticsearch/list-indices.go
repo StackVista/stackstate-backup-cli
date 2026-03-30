@@ -16,7 +16,7 @@ func listIndicesCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		Use:   "list-indices",
 		Short: "List Elasticsearch indices",
 		Run: func(_ *cobra.Command, _ []string) {
-			cmdutils.Run(globalFlags, runListIndices, cmdutils.MinioIsRequired)
+			cmdutils.Run(globalFlags, runListIndices, cmdutils.StorageIsRequired)
 		},
 	}
 }

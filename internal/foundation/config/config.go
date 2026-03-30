@@ -18,11 +18,52 @@ import (
 type Config struct {
 	Kubernetes      KubernetesConfig      `yaml:"kubernetes"`
 	Elasticsearch   ElasticsearchConfig   `yaml:"elasticsearch" validate:"required"`
-	Minio           MinioConfig           `yaml:"minio" validate:"required"`
+	Minio           MinioConfig           `yaml:"minio"`
+	Storage         StorageConfig         `yaml:"storage"`
 	Stackgraph      StackgraphConfig      `yaml:"stackgraph" validate:"required"`
 	Settings        SettingsConfig        `yaml:"settings" validate:"required"`
 	VictoriaMetrics VictoriaMetricsConfig `yaml:"victoriaMetrics" validate:"required"`
 	Clickhouse      ClickhouseConfig      `yaml:"clickhouse" validate:"required"`
+}
+
+// IsLegacyMode returns true when the configuration uses the legacy Minio config.
+// Legacy mode is detected by the presence of the Minio config with a non-empty service name.
+func (c *Config) IsLegacyMode() bool {
+	return c.Minio.Service.Name != ""
+}
+
+// GlobalBackupEnabled returns true when global backup is enabled,
+// either through legacy Minio (with Enabled=true) or the new Storage config's globalBackupEnabled flag.
+func (c *Config) GlobalBackupEnabled() bool {
+	if c.IsLegacyMode() {
+		return c.Minio.Enabled
+	}
+	return c.Storage.GlobalBackupEnabled
+}
+
+// GetStorageService returns the service config for the S3-compatible storage,
+// using either Storage (new) or Minio (legacy) config.
+func (c *Config) GetStorageService() ServiceConfig {
+	if c.IsLegacyMode() {
+		return c.Minio.Service
+	}
+	return c.Storage.Service
+}
+
+// GetStorageAccessKey returns the access key for the S3-compatible storage.
+func (c *Config) GetStorageAccessKey() string {
+	if c.IsLegacyMode() {
+		return c.Minio.AccessKey
+	}
+	return c.Storage.AccessKey
+}
+
+// GetStorageSecretKey returns the secret key for the S3-compatible storage.
+func (c *Config) GetStorageSecretKey() string {
+	if c.IsLegacyMode() {
+		return c.Minio.SecretKey
+	}
+	return c.Storage.SecretKey
 }
 
 // KubernetesConfig holds Kubernetes-wide configuration
@@ -76,12 +117,20 @@ type ServiceConfig struct {
 	Port int    `yaml:"port" validate:"required,min=1,max=65535"`
 }
 
-// MinioConfig holds Minio-specific configuration
+// MinioConfig holds Minio-specific configuration (legacy mode)
 type MinioConfig struct {
 	Enabled   bool          `yaml:"enabled" validate:"boolean"`
-	Service   ServiceConfig `yaml:"service" validate:"required"`
-	AccessKey string        `yaml:"accessKey" validate:"required"` // From secret
-	SecretKey string        `yaml:"secretKey" validate:"required"` // From secret
+	Service   ServiceConfig `yaml:"service" validate:"omitempty"`
+	AccessKey string        `yaml:"accessKey"` // From secret
+	SecretKey string        `yaml:"secretKey"` // From secret
+}
+
+// StorageConfig holds S3-compatible storage configuration (new mode, replaces Minio)
+type StorageConfig struct {
+	GlobalBackupEnabled bool          `yaml:"globalBackupEnabled" validate:"boolean"`
+	Service             ServiceConfig `yaml:"service" validate:"omitempty"`
+	AccessKey           string        `yaml:"accessKey"` // From secret
+	SecretKey           string        `yaml:"secretKey"` // From secret
 }
 
 // StackgraphConfig holds Stackgraph backup-specific configuration
@@ -120,9 +169,10 @@ type StackgraphRestoreConfig struct {
 }
 
 type SettingsConfig struct {
-	Bucket   string                `yaml:"bucket" validate:"required"`
-	S3Prefix string                `yaml:"s3Prefix"`
-	Restore  SettingsRestoreConfig `yaml:"restore" validate:"required"`
+	Bucket      string                `yaml:"bucket" validate:"required"`
+	S3Prefix    string                `yaml:"s3Prefix"`
+	LocalBucket string                `yaml:"localBucket"`
+	Restore     SettingsRestoreConfig `yaml:"restore" validate:"required"`
 }
 
 type SettingsRestoreConfig struct {
@@ -133,7 +183,7 @@ type SettingsRestoreConfig struct {
 	PlatformVersion            string    `yaml:"platformVersion" validate:"required"`
 	ZookeeperQuorum            string    `yaml:"zookeeperQuorum" validate:"required"`
 	Job                        JobConfig `yaml:"job" validate:"required"`
-	PVC                        string    `yaml:"pvc" validate:"required"`
+	PVC                        string    `yaml:"pvc"` // Required only in legacy mode
 }
 
 // ClickhouseConfig holds Clickhouse-specific configuration
@@ -335,6 +385,21 @@ func LoadConfig(clientset kubernetes.Interface, namespace, configMapName, secret
 	validate := validator.New()
 	if err := validate.Struct(config); err != nil {
 		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	}
+
+	// Custom validation: either minio or storage must be configured
+	if config.Minio.Service.Name == "" && config.Storage.Service.Name == "" {
+		return nil, fmt.Errorf("configuration validation failed: either 'minio' or 'storage' must be configured")
+	}
+
+	// In legacy mode (minio), PVC is required for settings
+	if config.IsLegacyMode() && config.Settings.Restore.PVC == "" {
+		return nil, fmt.Errorf("configuration validation failed: settings.restore.pvc is required in legacy (minio) mode")
+	}
+
+	// In new mode (storage), localBucket is required for settings
+	if !config.IsLegacyMode() && config.Settings.LocalBucket == "" {
+		return nil, fmt.Errorf("configuration validation failed: settings.localBucket is required in storage mode")
 	}
 
 	return config, nil

@@ -33,7 +33,7 @@ func checkAndFinalizeCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 This command is useful when a restore was started without --wait flag or was interrupted.
 It will check the restore status and if complete, execute post-restore tasks and scale up resources.`,
 		Run: func(_ *cobra.Command, _ []string) {
-			cmdutils.Run(globalFlags, runCheckAndFinalize, cmdutils.MinioIsRequired)
+			cmdutils.Run(globalFlags, runCheckAndFinalize, cmdutils.StorageIsRequired)
 		},
 	}
 

@@ -34,9 +34,9 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "restore",
 		Short: "Restore Settings from a backup archive",
-		Long:  `Restore Settings data from a backup archive stored in S3/Minio. Can use --latest or --archive to specify which backup to restore.`,
+		Long:  `Restore Settings data from a backup archive stored in S3. Can use --latest or --archive to specify which backup to restore.`,
 		Run: func(_ *cobra.Command, _ []string) {
-			cmdutils.Run(globalFlags, runRestore, cmdutils.MinioIsNotRequired)
+			cmdutils.Run(globalFlags, runRestore, cmdutils.StorageIsNotRequired)
 		},
 	}
 
@@ -44,6 +44,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&useLatest, "latest", false, "Restore from the most recent backup")
 	cmd.Flags().BoolVar(&background, "background", false, "Run restore job in background without waiting for completion")
 	cmd.Flags().BoolVarP(&skipConfirmation, "yes", "y", false, "Skip confirmation prompt")
+	cmd.Flags().BoolVar(&fromPVC, "from-old-pvc", false, "Restore backup from legacy PVC instead of S3")
 	cmd.MarkFlagsMutuallyExclusive("archive", "latest")
 	cmd.MarkFlagsOneRequired("archive", "latest")
 
@@ -51,6 +52,11 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 }
 
 func runRestore(appCtx *app.Context) error {
+	// Validate --from-old-pvc: PVC must be configured
+	if fromPVC && appCtx.Config.Settings.Restore.PVC == "" {
+		return fmt.Errorf("--from-old-pvc requires settings.restore.pvc to be configured")
+	}
+
 	// Determine which archive to restore
 	backupFile := archiveName
 	if useLatest {
@@ -182,34 +188,45 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 
 // buildEnvVar constructs environment variables for the container spec
 func buildEnvVar(extraEnvVar []corev1.EnvVar, config *config.Config) []corev1.EnvVar {
+	storageService := config.GetStorageService()
 	commonVar := []corev1.EnvVar{
 		{Name: "BACKUP_CONFIGURATION_BUCKET_NAME", Value: config.Settings.Bucket},
 		{Name: "BACKUP_CONFIGURATION_S3_PREFIX", Value: config.Settings.S3Prefix},
-		{Name: "MINIO_ENDPOINT", Value: fmt.Sprintf("%s:%d", config.Minio.Service.Name, config.Minio.Service.Port)},
+		{Name: "MINIO_ENDPOINT", Value: fmt.Sprintf("%s:%d", storageService.Name, storageService.Port)},
 		{Name: "STACKSTATE_BASE_URL", Value: config.Settings.Restore.BaseURL},
 		{Name: "RECEIVER_BASE_URL", Value: config.Settings.Restore.ReceiverBaseURL},
 		{Name: "PLATFORM_VERSION", Value: config.Settings.Restore.PlatformVersion},
 		{Name: "ZOOKEEPER_QUORUM", Value: config.Settings.Restore.ZookeeperQuorum},
-		{Name: "BACKUP_CONFIGURATION_UPLOAD_REMOTE", Value: strconv.FormatBool(config.Minio.Enabled)},
+		{Name: "BACKUP_CONFIGURATION_UPLOAD_REMOTE", Value: strconv.FormatBool(config.GlobalBackupEnabled())},
+	}
+	if fromPVC {
+		// Force PVC mode in the shell script, suppress local bucket
+		commonVar = append(commonVar, corev1.EnvVar{Name: "BACKUP_RESTORE_FROM_PVC", Value: "true"})
+	} else if config.Settings.LocalBucket != "" {
+		commonVar = append(commonVar, corev1.EnvVar{Name: "BACKUP_CONFIGURATION_LOCAL_BUCKET", Value: config.Settings.LocalBucket})
 	}
 	commonVar = append(commonVar, extraEnvVar...)
 	return commonVar
 }
 
 // buildVolumeMounts constructs volume mounts for the restore job container
-func buildVolumeMounts() []corev1.VolumeMount {
-	return []corev1.VolumeMount{
+func buildVolumeMounts(config *config.Config) []corev1.VolumeMount {
+	mounts := []corev1.VolumeMount{
 		{Name: "backup-log", MountPath: "/opt/docker/etc_log"},
 		{Name: "backup-restore-scripts", MountPath: "/backup-restore-scripts"},
 		{Name: "minio-keys", MountPath: "/aws-keys"},
 		{Name: "tmp-data", MountPath: "/tmp-data"},
-		{Name: "settings-backup-data", MountPath: "/settings-backup-data"},
 	}
+	// Mount PVC in legacy mode or when --from-old-pvc is set
+	if config.IsLegacyMode() || fromPVC {
+		mounts = append(mounts, corev1.VolumeMount{Name: "settings-backup-data", MountPath: "/settings-backup-data"})
+	}
+	return mounts
 }
 
 // buildVolumes constructs volumes for the restore job pod
 func buildVolumes(config *config.Config, defaultMode int32) []corev1.Volume {
-	return []corev1.Volume{
+	volumes := []corev1.Volume{
 		{
 			Name: "backup-log",
 			VolumeSource: corev1.VolumeSource{
@@ -235,7 +252,7 @@ func buildVolumes(config *config.Config, defaultMode int32) []corev1.Volume {
 			Name: "minio-keys",
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
-					SecretName: restore.MinioKeysSecretName,
+					SecretName: restore.StorageKeysSecretName,
 				},
 			},
 		},
@@ -245,15 +262,19 @@ func buildVolumes(config *config.Config, defaultMode int32) []corev1.Volume {
 				EmptyDir: &corev1.EmptyDirVolumeSource{},
 			},
 		},
-		{
+	}
+	// Include PVC volume in legacy mode or when --from-old-pvc is set
+	if config.IsLegacyMode() || fromPVC {
+		volumes = append(volumes, corev1.Volume{
 			Name: "settings-backup-data",
 			VolumeSource: corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 					ClaimName: config.Settings.Restore.PVC,
 				},
 			},
-		},
+		})
 	}
+	return volumes
 }
 
 // buildContainers constructs containers for the restore job
@@ -266,6 +287,6 @@ func buildContainer(envVar []corev1.EnvVar, command []string, config *config.Con
 		Command:         command,
 		Env:             envVar,
 		Resources:       k8s.ConvertResources(config.Settings.Restore.Job.Resources),
-		VolumeMounts:    buildVolumeMounts(),
+		VolumeMounts:    buildVolumeMounts(config),
 	}
 }
