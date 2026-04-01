@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"path"
-	"path/filepath"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -36,18 +35,18 @@ func (c *Client) Clientset() kubernetes.Interface {
 	return c.clientset
 }
 
-// NewClient creates a new Kubernetes client
+// NewClient creates a new Kubernetes client.
+// Kubeconfig precedence: explicit flag > KUBECONFIG env var > ~/.kube/config
 func NewClient(kubeconfigPath string, debug bool) (*Client, error) {
-	if kubeconfigPath == "" {
-		// Use default kubeconfig location
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, fmt.Errorf("failed to get home directory: %w", err)
-		}
-		kubeconfigPath = filepath.Join(home, ".kube", "config")
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+	if kubeconfigPath != "" {
+		loadingRules.ExplicitPath = kubeconfigPath
 	}
 
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+		loadingRules,
+		&clientcmd.ConfigOverrides{},
+	).ClientConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to build config: %w", err)
 	}
