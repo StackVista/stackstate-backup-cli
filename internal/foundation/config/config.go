@@ -20,10 +20,47 @@ type Config struct {
 	Elasticsearch   ElasticsearchConfig   `yaml:"elasticsearch" validate:"required"`
 	Minio           MinioConfig           `yaml:"minio"`
 	Storage         StorageConfig         `yaml:"storage"`
+	Stackstate      StackstateConfig      `yaml:"stackstate"`
 	Stackgraph      StackgraphConfig      `yaml:"stackgraph" validate:"required"`
 	Settings        SettingsConfig        `yaml:"settings" validate:"required"`
 	VictoriaMetrics VictoriaMetricsConfig `yaml:"victoriaMetrics" validate:"required"`
 	Clickhouse      ClickhouseConfig      `yaml:"clickhouse" validate:"required"`
+}
+
+// StackstateConfig holds platform-wide configuration shared across restore operations.
+// These values are used by both Settings and Stackgraph restore jobs.
+// When set, they take precedence over the per-restore-type fields in SettingsRestoreConfig.
+type StackstateConfig struct {
+	BaseURL         string `yaml:"baseUrl"`
+	ReceiverBaseURL string `yaml:"receiverBaseUrl"`
+	PlatformVersion string `yaml:"platformVersion"`
+}
+
+// GetBaseURL returns the StackState base URL, preferring the top-level stackstate section
+// over the legacy settings.restore.baseUrl for backward compatibility.
+func (c *Config) GetBaseURL() string {
+	if c.Stackstate.BaseURL != "" {
+		return c.Stackstate.BaseURL
+	}
+	return c.Settings.Restore.BaseURL
+}
+
+// GetReceiverBaseURL returns the receiver base URL, preferring the top-level stackstate section
+// over the legacy settings.restore.receiverBaseUrl for backward compatibility.
+func (c *Config) GetReceiverBaseURL() string {
+	if c.Stackstate.ReceiverBaseURL != "" {
+		return c.Stackstate.ReceiverBaseURL
+	}
+	return c.Settings.Restore.ReceiverBaseURL
+}
+
+// GetPlatformVersion returns the platform version, preferring the top-level stackstate section
+// over the legacy settings.restore.platformVersion for backward compatibility.
+func (c *Config) GetPlatformVersion() string {
+	if c.Stackstate.PlatformVersion != "" {
+		return c.Stackstate.PlatformVersion
+	}
+	return c.Settings.Restore.PlatformVersion
 }
 
 // IsLegacyMode returns true when the configuration uses the legacy Minio config.
@@ -183,9 +220,9 @@ type SettingsRestoreConfig struct {
 	ScaleDownLabelSelector       string    `yaml:"scaleDownLabelSelector" validate:"required"`
 	LoggingConfigConfigMapName   string    `yaml:"loggingConfigConfigMap" validate:"required"`
 	StsBackupConfigConfigMapName string    `yaml:"stsBackupConfigConfigMap" validate:"required"`
-	BaseURL                      string    `yaml:"baseUrl" validate:"required"`
-	ReceiverBaseURL              string    `yaml:"receiverBaseUrl" validate:"required"`
-	PlatformVersion              string    `yaml:"platformVersion" validate:"required"`
+	BaseURL                      string    `yaml:"baseUrl"`
+	ReceiverBaseURL              string    `yaml:"receiverBaseUrl"`
+	PlatformVersion              string    `yaml:"platformVersion"`
 	ZookeeperQuorum              string    `yaml:"zookeeperQuorum" validate:"required"`
 	Job                          JobConfig `yaml:"job" validate:"required"`
 	PVC                          string    `yaml:"pvc"` // Required only in legacy mode
@@ -394,6 +431,10 @@ func LoadConfig(clientset kubernetes.Interface, namespace, configMapName, secret
 	}
 
 	// Custom validation: either minio or storage must be configured
+	if config.GetBaseURL() == "" || config.GetReceiverBaseURL() == "" || config.GetPlatformVersion() == "" {
+		return nil, fmt.Errorf("configuration validation failed: baseUrl, receiverBaseUrl, and platformVersion must be set in either 'stackstate' or 'settings.restore'")
+	}
+
 	if config.Minio.Service.Name == "" && config.Storage.Service.Name == "" {
 		return nil, fmt.Errorf("configuration validation failed: either 'minio' or 'storage' must be configured")
 	}

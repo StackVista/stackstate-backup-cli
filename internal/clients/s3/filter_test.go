@@ -366,7 +366,7 @@ func TestFilterBackupObjects_SizeSummation(t *testing.T) {
 }
 
 // TestFilterByPrefixAndRegex tests the combined filtering by prefix and regex pattern
-func TestFilterByPrefixAndRegex(t *testing.T) {
+func TestFilterByPrefixAndRegex(t *testing.T) { //nolint:funlen // Table-driven test
 	now := time.Now()
 
 	tests := []struct {

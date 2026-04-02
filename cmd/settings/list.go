@@ -238,7 +238,7 @@ func getBackupListFromLocalBucket(appCtx *app.Context) ([]BackupFileInfo, error)
 		return nil, fmt.Errorf("failed to list objects in local bucket: %w", err)
 	}
 
-	filteredObjects := s3client.FilterBackupObjects(result.Contents, isMultiPartArchive)
+	filteredObjects := s3client.FilterMultipartBackupObjects(result.Contents, isMultiPartArchive)
 
 	filteredObjects, err = s3client.FilterByPrefixAndRegex(filteredObjects, "", backupFileNameRegex)
 	if err != nil {
