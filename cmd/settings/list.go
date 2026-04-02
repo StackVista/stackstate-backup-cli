@@ -240,6 +240,11 @@ func getBackupListFromLocalBucket(appCtx *app.Context) ([]BackupFileInfo, error)
 
 	filteredObjects := s3client.FilterBackupObjects(result.Contents, isMultiPartArchive)
 
+	filteredObjects, err = s3client.FilterByPrefixAndRegex(filteredObjects, "", backupFileNameRegex)
+	if err != nil {
+		return nil, fmt.Errorf("failed to filter objects: %w", err)
+	}
+
 	var backups []BackupFileInfo
 	for _, obj := range filteredObjects {
 		backups = append(backups, BackupFileInfo{

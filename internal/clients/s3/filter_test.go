@@ -480,6 +480,19 @@ func TestFilterByPrefixAndRegex(t *testing.T) {
 			expectError:  false,
 		},
 		{
+			name: "excludes stackpacks backups when listing settings local bucket (empty prefix)",
+			objects: []Object{
+				{Key: "sts-backup-20240101.sty", Size: 1000, LastModified: now},
+				{Key: "sts-backup-20240101.sty.stackpacks.zip", Size: 500, LastModified: now},
+				{Key: "sts-backup-20240102.sty", Size: 2000, LastModified: now},
+				{Key: "sts-backup-20240102.sty.stackpacks.zip", Size: 300, LastModified: now},
+			},
+			prefix:       "",
+			pattern:      `^sts-backup-.*\.sty$`,
+			expectedKeys: []string{"sts-backup-20240101.sty", "sts-backup-20240102.sty"},
+			expectError:  false,
+		},
+		{
 			name: "filters with complex regex pattern",
 			objects: []Object{
 				{Key: "backups/sts-backup-20240101-1200.graph", Size: 1000, LastModified: now},
