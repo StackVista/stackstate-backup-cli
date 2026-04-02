@@ -30,6 +30,7 @@ var (
 	useLatest        bool
 	runBackground    bool
 	skipConfirmation bool
+	allowPartial     bool
 )
 
 func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
@@ -45,6 +46,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&useLatest, "latest", false, "Restore from the most recent snapshot (mutually exclusive with --snapshot)")
 	cmd.Flags().BoolVar(&runBackground, "background", false, "Run restore in background without waiting for completion")
 	cmd.Flags().BoolVarP(&skipConfirmation, "yes", "y", false, "Skip confirmation prompt")
+	cmd.Flags().BoolVar(&allowPartial, "allow-partial", false, "Allow restoring from a PARTIAL snapshot without extra confirmation")
 	cmd.MarkFlagsMutuallyExclusive("snapshot", "latest")
 	cmd.MarkFlagsOneRequired("snapshot", "latest")
 	return cmd
@@ -81,6 +83,17 @@ func runRestore(appCtx *app.Context) error {
 		appCtx.Logger.Successf("Latest snapshot found: %s", selectedSnapshot)
 	}
 
+	// Fetch snapshot details to check state
+	snapshotDetails, err := esClient.GetSnapshot(repository, selectedSnapshot)
+	if err != nil {
+		return fmt.Errorf("failed to get snapshot details: %w", err)
+	}
+
+	// Validate snapshot state
+	if err := validateSnapshotState(snapshotDetails, appCtx, skipConfirmation, allowPartial); err != nil {
+		return err
+	}
+
 	// Confirm with user before starting destructive operation
 	if !skipConfirmation {
 		appCtx.Logger.Println()
@@ -88,6 +101,7 @@ func runRestore(appCtx *app.Context) error {
 		appCtx.Logger.Warningf("This operation cannot be undone.")
 		appCtx.Logger.Println()
 		appCtx.Logger.Infof("Snapshot to restore: %s", selectedSnapshot)
+		appCtx.Logger.Infof("Snapshot state: %s", snapshotDetails.State)
 		appCtx.Logger.Infof("Namespace: %s", appCtx.Namespace)
 		appCtx.Logger.Println()
 
@@ -119,8 +133,9 @@ func runRestore(appCtx *app.Context) error {
 
 	// Trigger async restore
 	appCtx.Logger.Println()
+	isPartial := snapshotDetails.State == "PARTIAL"
 	appCtx.Logger.Infof("Triggering restore for snapshot: %s", selectedSnapshot)
-	if err := esClient.RestoreSnapshot(repository, selectedSnapshot, appCtx.Config.Elasticsearch.Restore.IndicesPattern); err != nil {
+	if err := esClient.RestoreSnapshot(repository, selectedSnapshot, appCtx.Config.Elasticsearch.Restore.IndicesPattern, isPartial); err != nil {
 		return fmt.Errorf("failed to trigger restore: %w", err)
 	}
 	appCtx.Logger.Successf("Restore triggered successfully")
@@ -150,6 +165,39 @@ func getLatestSnapshot(esClient es.Interface, repository string) (string, error)
 	})
 
 	return snapshots[0].Snapshot, nil
+}
+
+// validateSnapshotState checks the snapshot state and handles PARTIAL snapshots
+func validateSnapshotState(snapshot *es.Snapshot, appCtx *app.Context, skipConfirm, allowPartialFlag bool) error {
+	switch snapshot.State {
+	case es.StatusSuccess:
+		return nil
+	case "PARTIAL":
+		failureCount := len(snapshot.Failures)
+		if allowPartialFlag {
+			appCtx.Logger.Warningf("Snapshot '%s' is PARTIAL (%d shard failure(s)), proceeding due to --allow-partial flag",
+				snapshot.Snapshot, failureCount)
+			return nil
+		}
+		if skipConfirm {
+			return fmt.Errorf("snapshot '%s' is PARTIAL with %d shard failure(s); "+
+				"use --allow-partial together with --yes to restore a partial snapshot non-interactively",
+				snapshot.Snapshot, failureCount)
+		}
+		// Interactive mode: warn and ask for explicit confirmation
+		appCtx.Logger.Println()
+		appCtx.Logger.Warningf("WARNING: Snapshot '%s' is in PARTIAL state!", snapshot.Snapshot)
+		appCtx.Logger.Warningf("  %d shard(s) failed out of %d total (%d successful)",
+			snapshot.Shards.Failed, snapshot.Shards.Total, snapshot.Shards.Successful)
+		appCtx.Logger.Warningf("Restoring this snapshot will result in incomplete data for the failed shards.")
+		appCtx.Logger.Println()
+		if !restore.PromptForConfirmation() {
+			return fmt.Errorf("restore operation cancelled by user")
+		}
+		return nil
+	default:
+		return fmt.Errorf("snapshot '%s' is in %s state and cannot be restored", snapshot.Snapshot, snapshot.State)
+	}
 }
 
 // deleteAllSTSIndices deletes all STS indices including datastream rollover if needed

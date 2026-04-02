@@ -6,7 +6,7 @@ type Interface interface {
 	// Snapshot operations
 	ListSnapshots(repository string) ([]Snapshot, error)
 	GetSnapshot(repository, snapshotName string) (*Snapshot, error)
-	RestoreSnapshot(repository, snapshotName, indicesPattern string) error
+	RestoreSnapshot(repository, snapshotName, indicesPattern string, partial bool) error
 	GetRestoreStatus(repository, snapshotName string) (string, bool, error)
 
 	// Index operations

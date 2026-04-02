@@ -400,7 +400,7 @@ func TestClient_RestoreSnapshot(t *testing.T) {
 			require.NoError(t, err)
 
 			// Execute test
-			err = client.RestoreSnapshot(tt.repository, tt.snapshotName, tt.indicesPattern)
+			err = client.RestoreSnapshot(tt.repository, tt.snapshotName, tt.indicesPattern, false)
 
 			// Assertions
 			if tt.expectError {
