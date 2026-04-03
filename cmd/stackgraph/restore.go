@@ -270,7 +270,7 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 // buildRestoreEnvVars constructs environment variables for the restore job
 func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvVar {
 	storageService := config.GetStorageService()
-	return []corev1.EnvVar{
+	env := []corev1.EnvVar{
 		{Name: "BACKUP_FILE", Value: backupFile},
 		{Name: "FORCE_DELETE", Value: purgeStackgraphDataFlag},
 		{Name: "BACKUP_STACKGRAPH_BUCKET_NAME", Value: config.Stackgraph.Bucket},
@@ -284,6 +284,10 @@ func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvV
 		{Name: "ZOOKEEPER_QUORUM", Value: config.Stackgraph.Restore.ZookeeperQuorum},
 		{Name: "SKIP_STACKPACKS", Value: strconv.FormatBool(skipStackpacks)},
 	}
+	if config.Stackgraph.Restore.StackpacksPVCName != "" {
+		env = append(env, corev1.EnvVar{Name: "CONFIG_FORCE_stackstate_stackPacks_localStackPacksUri", Value: "/var/stackpacks_local"})
+	}
+	return env
 }
 
 // buildRestoreVolumeMounts constructs volume mounts for the restore job container
@@ -296,7 +300,7 @@ func buildRestoreVolumeMounts(config *config.Config) []corev1.VolumeMount {
 		{Name: "tmp-data", MountPath: "/tmp-data"},
 	}
 
-	if config.Settings.Restore.StackpacksPVCName != "" {
+	if config.Stackgraph.Restore.StackpacksPVCName != "" {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name:      "stackpacks-local",
 			MountPath: "/var/stackpacks_local",
@@ -375,12 +379,12 @@ func buildRestoreVolumes(jobName string, config *config.Config, defaultMode int3
 			},
 		},
 	}
-	if config.Settings.Restore.StackpacksPVCName != "" {
+	if config.Stackgraph.Restore.StackpacksPVCName != "" {
 		volumes = append(volumes, corev1.Volume{
 			Name: "stackpacks-local",
 			VolumeSource: corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: config.Settings.Restore.StackpacksPVCName,
+					ClaimName: config.Stackgraph.Restore.StackpacksPVCName,
 				},
 			},
 		})

@@ -209,6 +209,9 @@ func buildEnvVar(extraEnvVar []corev1.EnvVar, config *config.Config) []corev1.En
 	} else if config.Settings.LocalBucket != "" {
 		commonVar = append(commonVar, corev1.EnvVar{Name: "BACKUP_CONFIGURATION_LOCAL_BUCKET", Value: config.Settings.LocalBucket})
 	}
+	if config.Settings.Restore.StackpacksPVCName != "" {
+		commonVar = append(commonVar, corev1.EnvVar{Name: "CONFIG_FORCE_stackstate_stackPacks_localStackPacksUri", Value: "/var/stackpacks_local"})
+	}
 	commonVar = append(commonVar, extraEnvVar...)
 	return commonVar
 }
