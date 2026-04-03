@@ -263,7 +263,7 @@ func (m *mockESClient) IndexExists(_ string) (bool, error) {
 	return false, fmt.Errorf("not implemented")
 }
 
-func (m *mockESClient) RestoreSnapshot(_, _, _ string) error {
+func (m *mockESClient) RestoreSnapshot(_, _, _ string, _ bool) error {
 	return fmt.Errorf("not implemented")
 }
 

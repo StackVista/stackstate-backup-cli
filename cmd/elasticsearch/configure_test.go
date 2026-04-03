@@ -92,7 +92,7 @@ func (m *mockESClientForConfigure) IndexExists(_ string) (bool, error) {
 	return false, fmt.Errorf("not implemented")
 }
 
-func (m *mockESClientForConfigure) RestoreSnapshot(_, _, _ string) error {
+func (m *mockESClientForConfigure) RestoreSnapshot(_, _, _ string, _ bool) error {
 	return fmt.Errorf("not implemented")
 }
 

@@ -5,8 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stackvista/stackstate-backup-cli/internal/app"
 	"github.com/stackvista/stackstate-backup-cli/internal/clients/elasticsearch"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -60,7 +62,7 @@ func (m *mockESClientForRestore) IndexExists(index string) (bool, error) {
 	return exists, nil
 }
 
-func (m *mockESClientForRestore) RestoreSnapshot(_, snapshotName, _ string) error {
+func (m *mockESClientForRestore) RestoreSnapshot(_, snapshotName, _ string, _ bool) error {
 	if m.restoreErr != nil {
 		return m.restoreErr
 	}
@@ -348,7 +350,7 @@ func TestMockESClientForRestore(t *testing.T) {
 			}
 
 			// Test restore
-			err := mockClient.RestoreSnapshot("backup-repo", "test-snapshot", "sts_*")
+			err := mockClient.RestoreSnapshot("backup-repo", "test-snapshot", "sts_*", false)
 			if tt.expectRestoreOK {
 				assert.NoError(t, err)
 				assert.Equal(t, "test-snapshot", mockClient.restoredSnapshot)
@@ -428,6 +430,94 @@ func TestRestoreSnapshot_Integration(t *testing.T) {
 	assert.Equal(t, "backup-2024-01-01", snapshot.Snapshot)
 	assert.Equal(t, "SUCCESS", snapshot.State)
 	assert.Equal(t, 3, len(snapshot.Indices))
+}
+
+// TestRestoreCmd_AllowPartialFlag tests that the allow-partial flag is registered
+func TestRestoreCmd_AllowPartialFlag(t *testing.T) {
+	flags := config.NewCLIGlobalFlags()
+	flags.Namespace = testNamespace
+	flags.ConfigMapName = testConfigMapName
+	cmd := restoreCmd(flags)
+
+	allowPartialFlag := cmd.Flags().Lookup("allow-partial")
+	require.NotNil(t, allowPartialFlag)
+	assert.Equal(t, "false", allowPartialFlag.DefValue)
+}
+
+// TestValidateSnapshotState tests snapshot state validation logic
+func TestValidateSnapshotState(t *testing.T) {
+	appCtx := &app.Context{
+		Logger: logger.New(false, false),
+	}
+
+	tests := []struct {
+		name         string
+		state        string
+		failures     []elasticsearch.SnapshotFailure
+		shards       struct{ Total, Failed, Successful int }
+		skipConfirm  bool
+		allowPartial bool
+		expectErr    bool
+		errContains  string
+	}{
+		{
+			name:  "SUCCESS state passes",
+			state: "SUCCESS",
+		},
+		{
+			name:         "PARTIAL with --allow-partial passes",
+			state:        "PARTIAL",
+			failures:     []elasticsearch.SnapshotFailure{{Index: "idx1", Reason: "conn refused"}},
+			allowPartial: true,
+		},
+		{
+			name:        "PARTIAL with --yes but no --allow-partial fails",
+			state:       "PARTIAL",
+			failures:    []elasticsearch.SnapshotFailure{{Index: "idx1", Reason: "conn refused"}},
+			skipConfirm: true,
+			expectErr:   true,
+			errContains: "use --allow-partial together with --yes",
+		},
+		{
+			name:        "FAILED state is rejected",
+			state:       "FAILED",
+			expectErr:   true,
+			errContains: "FAILED state and cannot be restored",
+		},
+		{
+			name:        "IN_PROGRESS state is rejected",
+			state:       "IN_PROGRESS",
+			expectErr:   true,
+			errContains: "IN_PROGRESS state and cannot be restored",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			snapshot := &elasticsearch.Snapshot{
+				Snapshot: "test-snapshot",
+				State:    tt.state,
+				Failures: tt.failures,
+				Shards: struct {
+					Total      int `json:"total"`
+					Failed     int `json:"failed"`
+					Successful int `json:"successful"`
+				}{
+					Total:      tt.shards.Total,
+					Failed:     tt.shards.Failed,
+					Successful: tt.shards.Successful,
+				},
+			}
+
+			err := validateSnapshotState(snapshot, appCtx, tt.skipConfirm, tt.allowPartial)
+			if tt.expectErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
 }
 
 // TestRestoreConstants tests the restore command constants

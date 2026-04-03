@@ -38,19 +38,29 @@ type IndexInfo struct {
 	DatasetSize  string `json:"dataset.size"`
 }
 
+// SnapshotFailure represents a shard-level failure in an Elasticsearch snapshot
+type SnapshotFailure struct {
+	Index     string `json:"index"`
+	IndexUUID string `json:"index_uuid"`
+	ShardID   int    `json:"shard_id"`
+	Reason    string `json:"reason"`
+	NodeID    string `json:"node_id"`
+	Status    string `json:"status"`
+}
+
 // Snapshot represents an Elasticsearch snapshot
 type Snapshot struct {
-	Snapshot         string   `json:"snapshot"`
-	UUID             string   `json:"uuid"`
-	Repository       string   `json:"repository"`
-	State            string   `json:"state"`
-	StartTime        string   `json:"start_time"`
-	StartTimeMillis  int64    `json:"start_time_in_millis"`
-	EndTime          string   `json:"end_time"`
-	EndTimeMillis    int64    `json:"end_time_in_millis"`
-	DurationInMillis int64    `json:"duration_in_millis"`
-	Indices          []string `json:"indices"`
-	Failures         []string `json:"failures"`
+	Snapshot         string            `json:"snapshot"`
+	UUID             string            `json:"uuid"`
+	Repository       string            `json:"repository"`
+	State            string            `json:"state"`
+	StartTime        string            `json:"start_time"`
+	StartTimeMillis  int64             `json:"start_time_in_millis"`
+	EndTime          string            `json:"end_time"`
+	EndTimeMillis    int64             `json:"end_time_in_millis"`
+	DurationInMillis int64             `json:"duration_in_millis"`
+	Indices          []string          `json:"indices"`
+	Failures         []SnapshotFailure `json:"failures"`
 	Shards           struct {
 		Total      int `json:"total"`
 		Failed     int `json:"failed"`
@@ -350,9 +360,10 @@ func (c *Client) ConfigureSLMPolicy(name, schedule, snapshotName, repository, in
 // RestoreSnapshot restores a snapshot from a repository asynchronously
 // The restore is triggered and returns immediately (waitForCompletion=false)
 // Use GetRestoreStatus to check the progress of the restore operation
-func (c *Client) RestoreSnapshot(repository, snapshotName, indicesPattern string) error {
+func (c *Client) RestoreSnapshot(repository, snapshotName, indicesPattern string, partial bool) error {
 	body := map[string]interface{}{
 		"indices": indicesPattern,
+		"partial": partial,
 	}
 
 	bodyJSON, err := json.Marshal(body)
