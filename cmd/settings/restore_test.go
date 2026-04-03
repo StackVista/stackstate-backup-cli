@@ -21,18 +21,18 @@ func TestBuildVolumeMounts_StackpacksLocalFileURI(t *testing.T) {
 		},
 		{
 			name:             "stackpacks with no PVC",
-			stackpacks:       &config.StackpacksConfig{LocalStackPacksUri: "file:///var/stackpacks_local"},
+			stackpacks:       &config.StackpacksConfig{LocalStackPacksURI: "file:///var/stackpacks_local"},
 			expectStackpacks: false,
 		},
 		{
 			name:              "stackpacks with file:// URI and PVC",
-			stackpacks:        &config.StackpacksConfig{LocalStackPacksUri: "file:///var/stackpacks_local", PVC: "stackpacks-pvc"},
+			stackpacks:        &config.StackpacksConfig{LocalStackPacksURI: "file:///var/stackpacks_local", PVC: "stackpacks-pvc"},
 			expectStackpacks:  true,
 			expectedMountPath: "/var/stackpacks_local",
 		},
 		{
 			name:             "stackpacks with non-file URI and PVC",
-			stackpacks:       &config.StackpacksConfig{LocalStackPacksUri: "s3://my-bucket/stackpacks", PVC: "stackpacks-pvc"},
+			stackpacks:       &config.StackpacksConfig{LocalStackPacksURI: "s3://my-bucket/stackpacks", PVC: "stackpacks-pvc"},
 			expectStackpacks: false,
 		},
 	}

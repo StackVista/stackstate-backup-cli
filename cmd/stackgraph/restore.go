@@ -42,7 +42,9 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "restore",
 		Short: "Restore Stackgraph from a backup archive",
-		Long:  `Restore Stackgraph data from a backup archive stored in S3. Automatically also restores Stackpacks backup that was made at the same time, it can be skipped with --skip-stackpacks. Can use --latest or --archive to specify which backup to restore.`,
+		Long: "Restore Stackgraph data from a backup archive stored in S3. Automatically also restores " +
+			"Stackpacks backup that was made at the same time, it can be skipped with --skip-stackpacks. " +
+			"Can use --latest or --archive to specify which backup to restore.",
 		Run: func(_ *cobra.Command, _ []string) {
 			cmdutils.Run(globalFlags, runRestore, cmdutils.StorageIsRequired)
 		},
@@ -286,7 +288,7 @@ func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvV
 		{Name: "SKIP_STACKPACKS", Value: strconv.FormatBool(skipStackpacks)},
 	}
 	if config.Stackpacks != nil {
-		env = append(env, corev1.EnvVar{Name: "CONFIG_FORCE_stackstate_stackPacks_localStackPacksUri", Value: config.Stackpacks.LocalStackPacksUri})
+		env = append(env, corev1.EnvVar{Name: "CONFIG_FORCE_stackstate_stackPacks_localStackPacksUri", Value: config.Stackpacks.LocalStackPacksURI})
 	}
 	return env
 }
@@ -300,10 +302,10 @@ func buildRestoreVolumeMounts(config *config.Config) []corev1.VolumeMount {
 		{Name: "tmp-data", MountPath: "/tmp-data"},
 	}
 
-	if config.Stackpacks != nil && config.Stackpacks.PVC != "" && strings.HasPrefix(config.Stackpacks.LocalStackPacksUri, "file://") {
+	if config.Stackpacks != nil && config.Stackpacks.PVC != "" && strings.HasPrefix(config.Stackpacks.LocalStackPacksURI, "file://") {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name:      "stackpacks-local",
-			MountPath: strings.TrimPrefix(config.Stackpacks.LocalStackPacksUri, "file://"),
+			MountPath: strings.TrimPrefix(config.Stackpacks.LocalStackPacksURI, "file://"),
 		})
 	}
 

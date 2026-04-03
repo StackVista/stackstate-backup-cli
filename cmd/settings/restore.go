@@ -36,7 +36,9 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "restore",
 		Short: "Restore Settings from a backup archive",
-		Long:  `Restore Settings data from a backup archive stored in S3. Automatically also restores Stackpacks backup that was made at the same time, it can be skipped with --skip-stackpacks. Can use --latest or --archive to specify which backup to restore.`,
+		Long: "Restore Settings data from a backup archive stored in S3. Automatically also restores " +
+			"Stackpacks backup that was made at the same time, it can be skipped with --skip-stackpacks. " +
+			"Can use --latest or --archive to specify which backup to restore.",
 		Run: func(_ *cobra.Command, _ []string) {
 			cmdutils.Run(globalFlags, runRestore, cmdutils.StorageIsNotRequired)
 		},
@@ -211,7 +213,7 @@ func buildEnvVar(extraEnvVar []corev1.EnvVar, config *config.Config) []corev1.En
 		commonVar = append(commonVar, corev1.EnvVar{Name: "BACKUP_CONFIGURATION_LOCAL_BUCKET", Value: config.Settings.LocalBucket})
 	}
 	if config.Stackpacks != nil {
-		commonVar = append(commonVar, corev1.EnvVar{Name: "CONFIG_FORCE_stackstate_stackPacks_localStackPacksUri", Value: config.Stackpacks.LocalStackPacksUri})
+		commonVar = append(commonVar, corev1.EnvVar{Name: "CONFIG_FORCE_stackstate_stackPacks_localStackPacksUri", Value: config.Stackpacks.LocalStackPacksURI})
 	}
 	commonVar = append(commonVar, extraEnvVar...)
 	return commonVar
@@ -230,10 +232,10 @@ func buildVolumeMounts(config *config.Config) []corev1.VolumeMount {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: "settings-backup-data", MountPath: "/settings-backup-data"})
 	}
 
-	if config.Stackpacks != nil && config.Stackpacks.PVC != "" && strings.HasPrefix(config.Stackpacks.LocalStackPacksUri, "file://") {
+	if config.Stackpacks != nil && config.Stackpacks.PVC != "" && strings.HasPrefix(config.Stackpacks.LocalStackPacksURI, "file://") {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name:      "stackpacks-local",
-			MountPath: strings.TrimPrefix(config.Stackpacks.LocalStackPacksUri, "file://"),
+			MountPath: strings.TrimPrefix(config.Stackpacks.LocalStackPacksURI, "file://"),
 		})
 	}
 
