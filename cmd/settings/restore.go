@@ -3,6 +3,7 @@ package settings
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -229,10 +230,10 @@ func buildVolumeMounts(config *config.Config) []corev1.VolumeMount {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: "settings-backup-data", MountPath: "/settings-backup-data"})
 	}
 
-	if config.Stackpacks != nil && config.Stackpacks.PVC != "" {
+	if config.Stackpacks != nil && config.Stackpacks.PVC != "" && strings.HasPrefix(config.Stackpacks.LocalStackPacksUri, "file://") {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name:      "stackpacks-local",
-			MountPath: config.Stackpacks.LocalStackPacksUri,
+			MountPath: strings.TrimPrefix(config.Stackpacks.LocalStackPacksUri, "file://"),
 		})
 	}
 

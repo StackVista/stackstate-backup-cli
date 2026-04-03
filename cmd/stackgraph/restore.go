@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -299,10 +300,10 @@ func buildRestoreVolumeMounts(config *config.Config) []corev1.VolumeMount {
 		{Name: "tmp-data", MountPath: "/tmp-data"},
 	}
 
-	if config.Stackpacks != nil && config.Stackpacks.PVC != "" {
+	if config.Stackpacks != nil && config.Stackpacks.PVC != "" && strings.HasPrefix(config.Stackpacks.LocalStackPacksUri, "file://") {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name:      "stackpacks-local",
-			MountPath: config.Stackpacks.LocalStackPacksUri,
+			MountPath: strings.TrimPrefix(config.Stackpacks.LocalStackPacksUri, "file://"),
 		})
 	}
 
