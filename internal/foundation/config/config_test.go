@@ -627,8 +627,7 @@ func TestConfig_StructValidation(t *testing.T) {
 					Restore: StackgraphRestoreConfig{
 						ScaleDownLabelSelector:       "app=stackgraph",
 						LoggingConfigConfigMapName:   "logging-config",
-						StsBackupConfigConfigMapName: "backup-config",
-						ZookeeperQuorum:              "zookeeper:2181",
+							ZookeeperQuorum:              "zookeeper:2181",
 						Job: JobConfig{
 							Image:     "backup:latest",
 							WaitImage: "wait:latest",
@@ -685,8 +684,7 @@ func TestConfig_StructValidation(t *testing.T) {
 					Restore: SettingsRestoreConfig{
 						ScaleDownLabelSelector:       "app=settings",
 						LoggingConfigConfigMapName:   "logging-config",
-						StsBackupConfigConfigMapName: "backup-config",
-						BaseURL:                      "http://server:7070",
+							BaseURL:                      "http://server:7070",
 						ReceiverBaseURL:              "http://receiver:7077",
 						PlatformVersion:              "5.2.0",
 						ZookeeperQuorum:              "zookeeper:2181",
@@ -776,8 +774,7 @@ func TestConfig_StructValidation(t *testing.T) {
 					Restore: StackgraphRestoreConfig{
 						ScaleDownLabelSelector:       "app=stackgraph",
 						LoggingConfigConfigMapName:   "logging-config",
-						StsBackupConfigConfigMapName: "backup-config",
-						ZookeeperQuorum:              "zookeeper:2181",
+							ZookeeperQuorum:              "zookeeper:2181",
 						Job: JobConfig{
 							Image:     "backup:latest",
 							WaitImage: "wait:latest",
@@ -834,8 +831,7 @@ func TestConfig_StructValidation(t *testing.T) {
 					Restore: SettingsRestoreConfig{
 						ScaleDownLabelSelector:       "app=settings",
 						LoggingConfigConfigMapName:   "logging-config",
-						StsBackupConfigConfigMapName: "backup-config",
-						BaseURL:                      "http://server:7070",
+							BaseURL:                      "http://server:7070",
 						ReceiverBaseURL:              "http://receiver:7077",
 						PlatformVersion:              "5.2.0",
 						ZookeeperQuorum:              "zookeeper:2181",

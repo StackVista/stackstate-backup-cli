@@ -20,45 +20,48 @@ type Config struct {
 	Elasticsearch   ElasticsearchConfig   `yaml:"elasticsearch" validate:"required"`
 	Minio           MinioConfig           `yaml:"minio"`
 	Storage         StorageConfig         `yaml:"storage"`
-	Stackstate      StackstateConfig      `yaml:"stackstate"`
+	Stackpacks      *StackpacksConfig     `yaml:"stackpacks"`
 	Stackgraph      StackgraphConfig      `yaml:"stackgraph" validate:"required"`
 	Settings        SettingsConfig        `yaml:"settings" validate:"required"`
 	VictoriaMetrics VictoriaMetricsConfig `yaml:"victoriaMetrics" validate:"required"`
 	Clickhouse      ClickhouseConfig      `yaml:"clickhouse" validate:"required"`
 }
 
-// StackstateConfig holds platform-wide configuration shared across restore operations.
-// These values are used by both Settings and Stackgraph restore jobs.
-// When set, they take precedence over the per-restore-type fields in SettingsRestoreConfig.
-type StackstateConfig struct {
-	BaseURL         string `yaml:"baseUrl"`
-	ReceiverBaseURL string `yaml:"receiverBaseUrl"`
-	PlatformVersion string `yaml:"platformVersion"`
+// StackpacksConfig holds stackpacks-specific configuration shared across restore operations.
+// This section is optional. When present, its values are provided to restore pods/scripts.
+// BaseURL, ReceiverBaseURL, and PlatformVersion take precedence over the per-restore-type
+// fields in SettingsRestoreConfig when set.
+type StackpacksConfig struct {
+	BaseURL             string `yaml:"baseUrl"`
+	ReceiverBaseURL     string `yaml:"receiverBaseUrl"`
+	PlatformVersion     string `yaml:"platformVersion"`
+	LocalStackPacksUri string `yaml:"localStackPacksUri" validate:"required"`
+	PVC                string `yaml:"pvc"`
 }
 
-// GetBaseURL returns the StackState base URL, preferring the top-level stackstate section
+// GetBaseURL returns the StackState base URL, preferring the top-level stackpacks section
 // over the legacy settings.restore.baseUrl for backward compatibility.
 func (c *Config) GetBaseURL() string {
-	if c.Stackstate.BaseURL != "" {
-		return c.Stackstate.BaseURL
+	if c.Stackpacks != nil && c.Stackpacks.BaseURL != "" {
+		return c.Stackpacks.BaseURL
 	}
 	return c.Settings.Restore.BaseURL
 }
 
-// GetReceiverBaseURL returns the receiver base URL, preferring the top-level stackstate section
+// GetReceiverBaseURL returns the receiver base URL, preferring the top-level stackpacks section
 // over the legacy settings.restore.receiverBaseUrl for backward compatibility.
 func (c *Config) GetReceiverBaseURL() string {
-	if c.Stackstate.ReceiverBaseURL != "" {
-		return c.Stackstate.ReceiverBaseURL
+	if c.Stackpacks != nil && c.Stackpacks.ReceiverBaseURL != "" {
+		return c.Stackpacks.ReceiverBaseURL
 	}
 	return c.Settings.Restore.ReceiverBaseURL
 }
 
-// GetPlatformVersion returns the platform version, preferring the top-level stackstate section
+// GetPlatformVersion returns the platform version, preferring the top-level stackpacks section
 // over the legacy settings.restore.platformVersion for backward compatibility.
 func (c *Config) GetPlatformVersion() string {
-	if c.Stackstate.PlatformVersion != "" {
-		return c.Stackstate.PlatformVersion
+	if c.Stackpacks != nil && c.Stackpacks.PlatformVersion != "" {
+		return c.Stackpacks.PlatformVersion
 	}
 	return c.Settings.Restore.PlatformVersion
 }
@@ -201,11 +204,9 @@ type S3Location struct {
 type StackgraphRestoreConfig struct {
 	ScaleDownLabelSelector       string    `yaml:"scaleDownLabelSelector" validate:"required"`
 	LoggingConfigConfigMapName   string    `yaml:"loggingConfigConfigMap" validate:"required"`
-	StsBackupConfigConfigMapName string    `yaml:"stsBackupConfigConfigMap" validate:"required"`
-	ZookeeperQuorum              string    `yaml:"zookeeperQuorum" validate:"required"`
-	Job                          JobConfig `yaml:"job" validate:"required"`
-	PVC                          PVCConfig `yaml:"pvc" validate:"required"`
-	StackpacksPVCName            string    `yaml:"stackpacksPvc"`
+	ZookeeperQuorum string    `yaml:"zookeeperQuorum" validate:"required"`
+	Job             JobConfig `yaml:"job" validate:"required"`
+	PVC             PVCConfig `yaml:"pvc" validate:"required"`
 }
 
 type SettingsConfig struct {
@@ -219,14 +220,12 @@ type SettingsConfig struct {
 type SettingsRestoreConfig struct {
 	ScaleDownLabelSelector       string    `yaml:"scaleDownLabelSelector" validate:"required"`
 	LoggingConfigConfigMapName   string    `yaml:"loggingConfigConfigMap" validate:"required"`
-	StsBackupConfigConfigMapName string    `yaml:"stsBackupConfigConfigMap" validate:"required"`
-	BaseURL                      string    `yaml:"baseUrl"`
-	ReceiverBaseURL              string    `yaml:"receiverBaseUrl"`
-	PlatformVersion              string    `yaml:"platformVersion"`
-	ZookeeperQuorum              string    `yaml:"zookeeperQuorum" validate:"required"`
-	Job                          JobConfig `yaml:"job" validate:"required"`
-	PVC                          string    `yaml:"pvc"` // Required only in legacy mode
-	StackpacksPVCName            string    `yaml:"stackpacksPvc"`
+	BaseURL           string    `yaml:"baseUrl"`
+	ReceiverBaseURL   string    `yaml:"receiverBaseUrl"`
+	PlatformVersion   string    `yaml:"platformVersion"`
+	ZookeeperQuorum string    `yaml:"zookeeperQuorum" validate:"required"`
+	Job             JobConfig `yaml:"job" validate:"required"`
+	PVC             string    `yaml:"pvc"` // Required only in legacy mode
 }
 
 // ClickhouseConfig holds Clickhouse-specific configuration

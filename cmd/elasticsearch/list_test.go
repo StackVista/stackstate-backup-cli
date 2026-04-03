@@ -68,7 +68,6 @@ stackgraph:
   restore:
     scaleDownLabelSelector: "app=stackgraph"
     loggingConfigConfigMap: logging-config
-    stsBackupConfigConfigMap: backup-config
     zookeeperQuorum: "zookeeper:2181"
     job:
       image: backup:latest
@@ -108,7 +107,6 @@ settings:
   restore:
     scaleDownLabelSelector: "app=settings"
     loggingConfigConfigMap: logging-config
-    stsBackupConfigConfigMap: backup-config
     baseUrl: "http://server:7070"
     receiverBaseUrl: "http://receiver:7077"
     platformVersion: "5.2.0"
@@ -154,7 +152,6 @@ stackgraph:
   restore:
     scaleDownLabelSelector: "app=stackgraph"
     loggingConfigConfigMap: logging-config
-    stsBackupConfigConfigMap: backup-config
     zookeeperQuorum: "zookeeper:2181"
     job:
       image: backup:latest
@@ -195,7 +192,6 @@ settings:
   restore:
     scaleDownLabelSelector: "app=settings"
     loggingConfigConfigMap: logging-config
-    stsBackupConfigConfigMap: backup-config
     baseUrl: "http://server:7070"
     receiverBaseUrl: "http://receiver:7077"
     platformVersion: "5.2.0"

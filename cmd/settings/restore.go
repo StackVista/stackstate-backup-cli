@@ -209,8 +209,8 @@ func buildEnvVar(extraEnvVar []corev1.EnvVar, config *config.Config) []corev1.En
 	} else if config.Settings.LocalBucket != "" {
 		commonVar = append(commonVar, corev1.EnvVar{Name: "BACKUP_CONFIGURATION_LOCAL_BUCKET", Value: config.Settings.LocalBucket})
 	}
-	if config.Settings.Restore.StackpacksPVCName != "" {
-		commonVar = append(commonVar, corev1.EnvVar{Name: "CONFIG_FORCE_stackstate_stackPacks_localStackPacksUri", Value: "/var/stackpacks_local"})
+	if config.Stackpacks != nil {
+		commonVar = append(commonVar, corev1.EnvVar{Name: "CONFIG_FORCE_stackstate_stackPacks_localStackPacksUri", Value: config.Stackpacks.LocalStackPacksUri})
 	}
 	commonVar = append(commonVar, extraEnvVar...)
 	return commonVar
@@ -220,7 +220,6 @@ func buildEnvVar(extraEnvVar []corev1.EnvVar, config *config.Config) []corev1.En
 func buildVolumeMounts(config *config.Config) []corev1.VolumeMount {
 	volumeMounts := []corev1.VolumeMount{
 		{Name: "backup-log", MountPath: "/opt/docker/etc_log"},
-		{Name: "config-volume", MountPath: "/opt/docker/etc/application_stackstate.conf", SubPath: "application_stackstate.conf"},
 		{Name: "backup-restore-scripts", MountPath: "/backup-restore-scripts"},
 		{Name: "minio-keys", MountPath: "/aws-keys"},
 		{Name: "tmp-data", MountPath: "/tmp-data"},
@@ -230,10 +229,10 @@ func buildVolumeMounts(config *config.Config) []corev1.VolumeMount {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: "settings-backup-data", MountPath: "/settings-backup-data"})
 	}
 
-	if config.Settings.Restore.StackpacksPVCName != "" {
+	if config.Stackpacks != nil && config.Stackpacks.PVC != "" {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name:      "stackpacks-local",
-			MountPath: "/var/stackpacks_local",
+			MountPath: config.Stackpacks.LocalStackPacksUri,
 		})
 	}
 
@@ -249,16 +248,6 @@ func buildVolumes(config *config.Config, defaultMode int32) []corev1.Volume {
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{
 						Name: config.Settings.Restore.LoggingConfigConfigMapName,
-					},
-				},
-			},
-		},
-		{
-			Name: "config-volume",
-			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: config.Settings.Restore.StsBackupConfigConfigMapName,
 					},
 				},
 			},
@@ -300,12 +289,12 @@ func buildVolumes(config *config.Config, defaultMode int32) []corev1.Volume {
 			},
 		})
 	}
-	if config.Settings.Restore.StackpacksPVCName != "" {
+	if config.Stackpacks != nil && config.Stackpacks.PVC != "" {
 		volumes = append(volumes, corev1.Volume{
 			Name: "stackpacks-local",
 			VolumeSource: corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: config.Settings.Restore.StackpacksPVCName,
+					ClaimName: config.Stackpacks.PVC,
 				},
 			},
 		})

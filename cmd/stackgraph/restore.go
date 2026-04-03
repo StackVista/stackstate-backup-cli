@@ -284,8 +284,8 @@ func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvV
 		{Name: "ZOOKEEPER_QUORUM", Value: config.Stackgraph.Restore.ZookeeperQuorum},
 		{Name: "SKIP_STACKPACKS", Value: strconv.FormatBool(skipStackpacks)},
 	}
-	if config.Stackgraph.Restore.StackpacksPVCName != "" {
-		env = append(env, corev1.EnvVar{Name: "CONFIG_FORCE_stackstate_stackPacks_localStackPacksUri", Value: "/var/stackpacks_local"})
+	if config.Stackpacks != nil {
+		env = append(env, corev1.EnvVar{Name: "CONFIG_FORCE_stackstate_stackPacks_localStackPacksUri", Value: config.Stackpacks.LocalStackPacksUri})
 	}
 	return env
 }
@@ -294,16 +294,15 @@ func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvV
 func buildRestoreVolumeMounts(config *config.Config) []corev1.VolumeMount {
 	volumeMounts := []corev1.VolumeMount{
 		{Name: "backup-log", MountPath: "/opt/docker/etc_log"},
-		{Name: "config-volume", MountPath: "/opt/docker/etc/application_stackstate.conf", SubPath: "application_stackstate.conf"},
 		{Name: "backup-restore-scripts", MountPath: "/backup-restore-scripts"},
 		{Name: "minio-keys", MountPath: "/aws-keys"},
 		{Name: "tmp-data", MountPath: "/tmp-data"},
 	}
 
-	if config.Stackgraph.Restore.StackpacksPVCName != "" {
+	if config.Stackpacks != nil && config.Stackpacks.PVC != "" {
 		volumeMounts = append(volumeMounts, corev1.VolumeMount{
 			Name:      "stackpacks-local",
-			MountPath: "/var/stackpacks_local",
+			MountPath: config.Stackpacks.LocalStackPacksUri,
 		})
 	}
 
@@ -342,16 +341,6 @@ func buildRestoreVolumes(jobName string, config *config.Config, defaultMode int3
 			},
 		},
 		{
-			Name: "config-volume",
-			VolumeSource: corev1.VolumeSource{
-				ConfigMap: &corev1.ConfigMapVolumeSource{
-					LocalObjectReference: corev1.LocalObjectReference{
-						Name: config.Stackgraph.Restore.StsBackupConfigConfigMapName,
-					},
-				},
-			},
-		},
-		{
 			Name: "backup-restore-scripts",
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
@@ -379,12 +368,12 @@ func buildRestoreVolumes(jobName string, config *config.Config, defaultMode int3
 			},
 		},
 	}
-	if config.Stackgraph.Restore.StackpacksPVCName != "" {
+	if config.Stackpacks != nil && config.Stackpacks.PVC != "" {
 		volumes = append(volumes, corev1.Volume{
 			Name: "stackpacks-local",
 			VolumeSource: corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: config.Stackgraph.Restore.StackpacksPVCName,
+					ClaimName: config.Stackpacks.PVC,
 				},
 			},
 		})
