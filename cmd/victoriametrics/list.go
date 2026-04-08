@@ -78,6 +78,7 @@ func runList(appCtx *app.Context) error {
 			vmBackups = append(vmBackups, s3client.Object{
 				Key:          fmt.Sprintf("%s/%s", bucket, key.Key),
 				LastModified: getVMBackupTime(s3Client, bucket, key.Key),
+				Size:         getVMBackupSize(s3Client, bucket, key.Key),
 			})
 		}
 	}
@@ -92,7 +93,7 @@ func runList(appCtx *app.Context) error {
 	})
 
 	table := output.Table{
-		Headers: []string{"NAME ({bucket}/{instance}-{created})", "UPDATED"},
+		Headers: []string{"NAME ({bucket}/{instance}-{created})", "UPDATED", "SIZE"},
 		Rows:    make([][]string, 0, len(vmBackups)),
 	}
 
@@ -100,6 +101,7 @@ func runList(appCtx *app.Context) error {
 		row := []string{
 			obj.Key,
 			obj.LastModified.Format("2006-01-02 15:04:05 MST"),
+			output.FormatBytes(obj.Size),
 		}
 		table.Rows = append(table.Rows, row)
 	}
@@ -122,4 +124,34 @@ func getVMBackupTime(s3client s3client.Interface, bucket, key string) time.Time 
 	vmbackup := result.Contents[0]
 
 	return *vmbackup.LastModified
+}
+
+// getVMBackupSize calculates total size of all objects in a VM backup directory
+func getVMBackupSize(client s3client.Interface, bucket, prefix string) int64 {
+	var totalSize int64
+	var continuationToken *string
+
+	for {
+		input := &s3.ListObjectsV2Input{
+			Bucket:            aws.String(bucket),
+			Prefix:            aws.String(prefix),
+			ContinuationToken: continuationToken,
+		}
+
+		result, err := client.ListObjectsV2(context.Background(), input)
+		if err != nil {
+			return 0
+		}
+
+		for _, obj := range result.Contents {
+			totalSize += aws.ToInt64(obj.Size)
+		}
+
+		if !aws.ToBool(result.IsTruncated) {
+			break
+		}
+		continuationToken = result.NextContinuationToken
+	}
+
+	return totalSize
 }
