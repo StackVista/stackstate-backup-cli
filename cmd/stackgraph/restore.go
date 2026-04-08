@@ -35,13 +35,16 @@ var (
 	useLatest        bool
 	background       bool
 	skipConfirmation bool
+	skipStackpacks   bool
 )
 
 func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "restore",
 		Short: "Restore Stackgraph from a backup archive",
-		Long:  `Restore Stackgraph data from a backup archive stored in S3. Can use --latest or --archive to specify which backup to restore.`,
+		Long: "Restore Stackgraph data from a backup archive stored in S3. Automatically also restores " +
+			"Stackpacks backup that was made at the same time, it can be skipped with --skip-stackpacks. " +
+			"Can use --latest or --archive to specify which backup to restore.",
 		Run: func(_ *cobra.Command, _ []string) {
 			cmdutils.Run(globalFlags, runRestore, cmdutils.StorageIsRequired)
 		},
@@ -51,6 +54,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&useLatest, "latest", false, "Restore from the most recent backup")
 	cmd.Flags().BoolVar(&background, "background", false, "Run restore job in background without waiting for completion")
 	cmd.Flags().BoolVarP(&skipConfirmation, "yes", "y", false, "Skip confirmation prompt")
+	cmd.Flags().BoolVar(&skipStackpacks, "skip-stackpacks", false, "Skip restoring stackpacks backup")
 	cmd.MarkFlagsMutuallyExclusive("archive", "latest")
 	cmd.MarkFlagsOneRequired("archive", "latest")
 
@@ -178,7 +182,14 @@ func getLatestBackup(k8sClient *k8s.Client, namespace string, config *config.Con
 	}
 
 	// Filter objects based on whether the archive is split or not
-	filteredObjects := s3client.FilterBackupObjects(result.Contents, multipartArchive)
+	filteredObjects := s3client.FilterMultipartBackupObjects(result.Contents, multipartArchive)
+
+	// Filter to only include direct children of the prefix that match the backup filename pattern,
+	// and strip the prefix from the key
+	filteredObjects, err = s3client.FilterByPrefixAndRegex(filteredObjects, prefix, backupFileNameRegex)
+	if err != nil {
+		return "", fmt.Errorf("failed to filter objects: %w", err)
+	}
 
 	if len(filteredObjects) == 0 {
 		return "", fmt.Errorf("no backups found in bucket %s", bucket)
@@ -188,8 +199,7 @@ func getLatestBackup(k8sClient *k8s.Client, namespace string, config *config.Con
 	sort.Slice(filteredObjects, func(i, j int) bool {
 		return filteredObjects[i].LastModified.After(filteredObjects[j].LastModified)
 	})
-	latestBackup := strings.TrimPrefix(filteredObjects[0].Key, prefix)
-	return latestBackup, nil
+	return filteredObjects[0].Key, nil
 }
 
 // buildPVCSpec builds a PVCSpec from configuration
@@ -263,25 +273,43 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 // buildRestoreEnvVars constructs environment variables for the restore job
 func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvVar {
 	storageService := config.GetStorageService()
-	return []corev1.EnvVar{
+	env := []corev1.EnvVar{
 		{Name: "BACKUP_FILE", Value: backupFile},
 		{Name: "FORCE_DELETE", Value: purgeStackgraphDataFlag},
 		{Name: "BACKUP_STACKGRAPH_BUCKET_NAME", Value: config.Stackgraph.Bucket},
 		{Name: "BACKUP_STACKGRAPH_S3_PREFIX", Value: config.Stackgraph.S3Prefix},
+		{Name: "BACKUP_STACKGRAPH_STACKPACKS_S3_PREFIX", Value: config.Stackgraph.StackpacksS3Prefix},
 		{Name: "BACKUP_STACKGRAPH_MULTIPART_ARCHIVE", Value: strconv.FormatBool(config.Stackgraph.MultipartArchive)},
 		{Name: "MINIO_ENDPOINT", Value: fmt.Sprintf("%s:%d", storageService.Name, storageService.Port)},
+		{Name: "STACKSTATE_BASE_URL", Value: config.GetBaseURL()},
+		{Name: "RECEIVER_BASE_URL", Value: config.GetReceiverBaseURL()},
+		{Name: "PLATFORM_VERSION", Value: config.GetPlatformVersion()},
 		{Name: "ZOOKEEPER_QUORUM", Value: config.Stackgraph.Restore.ZookeeperQuorum},
+		{Name: "SKIP_STACKPACKS", Value: strconv.FormatBool(skipStackpacks)},
 	}
+	if config.Stackpacks != nil {
+		env = append(env, corev1.EnvVar{Name: "CONFIG_FORCE_stackstate_stackPacks_localStackPacksUri", Value: config.Stackpacks.LocalStackPacksURI})
+	}
+	return env
 }
 
 // buildRestoreVolumeMounts constructs volume mounts for the restore job container
-func buildRestoreVolumeMounts() []corev1.VolumeMount {
-	return []corev1.VolumeMount{
+func buildRestoreVolumeMounts(config *config.Config) []corev1.VolumeMount {
+	volumeMounts := []corev1.VolumeMount{
 		{Name: "backup-log", MountPath: "/opt/docker/etc_log"},
 		{Name: "backup-restore-scripts", MountPath: "/backup-restore-scripts"},
 		{Name: "minio-keys", MountPath: "/aws-keys"},
 		{Name: "tmp-data", MountPath: "/tmp-data"},
 	}
+
+	if config.Stackpacks != nil && config.Stackpacks.PVC != "" && strings.HasPrefix(config.Stackpacks.LocalStackPacksURI, "file://") {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "stackpacks-local",
+			MountPath: strings.TrimPrefix(config.Stackpacks.LocalStackPacksURI, "file://"),
+		})
+	}
+
+	return volumeMounts
 }
 
 // buildRestoreInitContainers constructs init containers for the restore job
@@ -304,7 +332,7 @@ func buildRestoreInitContainers(config *config.Config) []corev1.Container {
 
 // buildRestoreVolumes constructs volumes for the restore job pod
 func buildRestoreVolumes(jobName string, config *config.Config, defaultMode int32) []corev1.Volume {
-	return []corev1.Volume{
+	volumes := []corev1.Volume{
 		{
 			Name: "backup-log",
 			VolumeSource: corev1.VolumeSource{
@@ -343,6 +371,18 @@ func buildRestoreVolumes(jobName string, config *config.Config, defaultMode int3
 			},
 		},
 	}
+	if config.Stackpacks != nil && config.Stackpacks.PVC != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "stackpacks-local",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: config.Stackpacks.PVC,
+				},
+			},
+		})
+	}
+
+	return volumes
 }
 
 // buildRestoreContainers constructs containers for the restore job
@@ -356,7 +396,7 @@ func buildRestoreContainers(backupFile string, config *config.Config) []corev1.C
 			Command:         []string{"/backup-restore-scripts/restore-stackgraph-backup.sh"},
 			Env:             buildRestoreEnvVars(backupFile, config),
 			Resources:       k8s.ConvertResources(config.Stackgraph.Restore.Job.Resources),
-			VolumeMounts:    buildRestoreVolumeMounts(),
+			VolumeMounts:    buildRestoreVolumeMounts(config),
 		},
 	}
 }

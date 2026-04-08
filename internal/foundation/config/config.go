@@ -20,10 +20,50 @@ type Config struct {
 	Elasticsearch   ElasticsearchConfig   `yaml:"elasticsearch" validate:"required"`
 	Minio           MinioConfig           `yaml:"minio"`
 	Storage         StorageConfig         `yaml:"storage"`
+	Stackpacks      *StackpacksConfig     `yaml:"stackpacks"`
 	Stackgraph      StackgraphConfig      `yaml:"stackgraph" validate:"required"`
 	Settings        SettingsConfig        `yaml:"settings" validate:"required"`
 	VictoriaMetrics VictoriaMetricsConfig `yaml:"victoriaMetrics" validate:"required"`
 	Clickhouse      ClickhouseConfig      `yaml:"clickhouse" validate:"required"`
+}
+
+// StackpacksConfig holds stackpacks-specific configuration shared across restore operations.
+// This section is optional. When present, its values are provided to restore pods/scripts.
+// BaseURL, ReceiverBaseURL, and PlatformVersion take precedence over the per-restore-type
+// fields in SettingsRestoreConfig when set.
+type StackpacksConfig struct {
+	BaseURL            string `yaml:"baseUrl"`
+	ReceiverBaseURL    string `yaml:"receiverBaseUrl"`
+	PlatformVersion    string `yaml:"platformVersion"`
+	LocalStackPacksURI string `yaml:"localStackPacksUri" validate:"required"`
+	PVC                string `yaml:"pvc"`
+}
+
+// GetBaseURL returns the StackState base URL, preferring the top-level stackpacks section
+// over the legacy settings.restore.baseUrl for backward compatibility.
+func (c *Config) GetBaseURL() string {
+	if c.Stackpacks != nil && c.Stackpacks.BaseURL != "" {
+		return c.Stackpacks.BaseURL
+	}
+	return c.Settings.Restore.BaseURL
+}
+
+// GetReceiverBaseURL returns the receiver base URL, preferring the top-level stackpacks section
+// over the legacy settings.restore.receiverBaseUrl for backward compatibility.
+func (c *Config) GetReceiverBaseURL() string {
+	if c.Stackpacks != nil && c.Stackpacks.ReceiverBaseURL != "" {
+		return c.Stackpacks.ReceiverBaseURL
+	}
+	return c.Settings.Restore.ReceiverBaseURL
+}
+
+// GetPlatformVersion returns the platform version, preferring the top-level stackpacks section
+// over the legacy settings.restore.platformVersion for backward compatibility.
+func (c *Config) GetPlatformVersion() string {
+	if c.Stackpacks != nil && c.Stackpacks.PlatformVersion != "" {
+		return c.Stackpacks.PlatformVersion
+	}
+	return c.Settings.Restore.PlatformVersion
 }
 
 // IsLegacyMode returns true when the configuration uses the legacy Minio config.
@@ -135,10 +175,11 @@ type StorageConfig struct {
 
 // StackgraphConfig holds Stackgraph backup-specific configuration
 type StackgraphConfig struct {
-	Bucket           string                  `yaml:"bucket" validate:"required"`
-	S3Prefix         string                  `yaml:"s3Prefix"`
-	MultipartArchive bool                    `yaml:"multipartArchive" validate:"boolean"`
-	Restore          StackgraphRestoreConfig `yaml:"restore" validate:"required"`
+	Bucket             string                  `yaml:"bucket" validate:"required"`
+	S3Prefix           string                  `yaml:"s3Prefix"`
+	StackpacksS3Prefix string                  `yaml:"stackpacksS3Prefix"`
+	MultipartArchive   bool                    `yaml:"multipartArchive" validate:"boolean"`
+	Restore            StackgraphRestoreConfig `yaml:"restore" validate:"required"`
 }
 
 type VictoriaMetricsConfig struct {
@@ -169,18 +210,19 @@ type StackgraphRestoreConfig struct {
 }
 
 type SettingsConfig struct {
-	Bucket      string                `yaml:"bucket" validate:"required"`
-	S3Prefix    string                `yaml:"s3Prefix"`
-	LocalBucket string                `yaml:"localBucket"`
-	Restore     SettingsRestoreConfig `yaml:"restore" validate:"required"`
+	Bucket             string                `yaml:"bucket" validate:"required"`
+	S3Prefix           string                `yaml:"s3Prefix"`
+	StackpacksS3Prefix string                `yaml:"stackpacksS3Prefix"`
+	LocalBucket        string                `yaml:"localBucket"`
+	Restore            SettingsRestoreConfig `yaml:"restore" validate:"required"`
 }
 
 type SettingsRestoreConfig struct {
 	ScaleDownLabelSelector     string    `yaml:"scaleDownLabelSelector" validate:"required"`
 	LoggingConfigConfigMapName string    `yaml:"loggingConfigConfigMap" validate:"required"`
-	BaseURL                    string    `yaml:"baseUrl" validate:"required"`
-	ReceiverBaseURL            string    `yaml:"receiverBaseUrl" validate:"required"`
-	PlatformVersion            string    `yaml:"platformVersion" validate:"required"`
+	BaseURL                    string    `yaml:"baseUrl"`
+	ReceiverBaseURL            string    `yaml:"receiverBaseUrl"`
+	PlatformVersion            string    `yaml:"platformVersion"`
 	ZookeeperQuorum            string    `yaml:"zookeeperQuorum" validate:"required"`
 	Job                        JobConfig `yaml:"job" validate:"required"`
 	PVC                        string    `yaml:"pvc"` // Required only in legacy mode
@@ -388,6 +430,10 @@ func LoadConfig(clientset kubernetes.Interface, namespace, configMapName, secret
 	}
 
 	// Custom validation: either minio or storage must be configured
+	if config.GetBaseURL() == "" || config.GetReceiverBaseURL() == "" || config.GetPlatformVersion() == "" {
+		return nil, fmt.Errorf("configuration validation failed: baseUrl, receiverBaseUrl, and platformVersion must be set in either 'stackstate' or 'settings.restore'")
+	}
+
 	if config.Minio.Service.Name == "" && config.Storage.Service.Name == "" {
 		return nil, fmt.Errorf("configuration validation failed: either 'minio' or 'storage' must be configured")
 	}

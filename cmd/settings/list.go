@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -29,6 +30,7 @@ const (
 	isMultiPartArchive            = false
 	expectedListJobPodCount       = 1
 	expectedListJobContainerCount = 1
+	backupFileNameRegex           = `^sts-backup-.*\.sty$`
 )
 
 // Shared flag for --from-old-pvc, used by both list and restore commands
@@ -182,7 +184,14 @@ func getBackupListFromS3(appCtx *app.Context) ([]BackupFileInfo, error) {
 	}
 
 	// Filter objects based on whether the archive is split or not
-	filteredObjects := s3client.FilterBackupObjects(result.Contents, isMultiPartArchive)
+	filteredObjects := s3client.FilterMultipartBackupObjects(result.Contents, isMultiPartArchive)
+
+	// Filter to only include direct children of the prefix that match the backup filename pattern,
+	// and strip the prefix from the key
+	filteredObjects, err = s3client.FilterByPrefixAndRegex(filteredObjects, prefix, backupFileNameRegex)
+	if err != nil {
+		return nil, fmt.Errorf("failed to filter objects: %w", err)
+	}
 
 	var backups []BackupFileInfo
 	for _, obj := range filteredObjects {
@@ -229,7 +238,12 @@ func getBackupListFromLocalBucket(appCtx *app.Context) ([]BackupFileInfo, error)
 		return nil, fmt.Errorf("failed to list objects in local bucket: %w", err)
 	}
 
-	filteredObjects := s3client.FilterBackupObjects(result.Contents, isMultiPartArchive)
+	filteredObjects := s3client.FilterMultipartBackupObjects(result.Contents, isMultiPartArchive)
+
+	filteredObjects, err = s3client.FilterByPrefixAndRegex(filteredObjects, "", backupFileNameRegex)
+	if err != nil {
+		return nil, fmt.Errorf("failed to filter objects: %w", err)
+	}
 
 	var backups []BackupFileInfo
 	for _, obj := range filteredObjects {
@@ -297,6 +311,9 @@ func getBackupListFromPVC(appCtx *app.Context) ([]BackupFileInfo, error) {
 		fmt.Printf("Error parsing files: %v\n", err)
 		return nil, fmt.Errorf("failed to parse list job output: %w", err)
 	}
+
+	// Filter by backup filename pattern
+	files = filterBackupsByRegex(files, backupFileNameRegex)
 
 	return files, nil
 }
@@ -375,4 +392,16 @@ func ParseListJobOutput(input string) ([]BackupFileInfo, error) {
 	}
 
 	return files, nil
+}
+
+// filterBackupsByRegex filters BackupFileInfo by matching filename against a regex pattern
+func filterBackupsByRegex(backups []BackupFileInfo, pattern string) []BackupFileInfo {
+	re := regexp.MustCompile(pattern)
+	var filtered []BackupFileInfo
+	for _, b := range backups {
+		if re.MatchString(b.Filename) {
+			filtered = append(filtered, b)
+		}
+	}
+	return filtered
 }

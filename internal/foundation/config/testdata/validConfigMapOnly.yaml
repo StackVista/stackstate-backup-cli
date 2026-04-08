@@ -66,6 +66,12 @@ elasticsearch:
     # Pattern for indices to restore from snapshot (comma-separated glob patterns)
     indicesPattern: sts*,.ds-sts_k8s_logs*
 
+stackpacks:
+  baseUrl: "http://suse-observability-server:7070"
+  receiverBaseUrl: "http://suse-observability-receiver:7077"
+  platformVersion: "5.2.0"
+  localStackPacksUri: "/var/stackpacks_local"
+
 # Minio configuration for S3-compatible storage
 minio:
   enabled: true
@@ -132,9 +138,6 @@ settings:
   restore:
     scaleDownLabelSelector: "observability.suse.com/scalable-during-settings-restore=true"
     loggingConfigConfigMap: suse-observability-logging
-    baseUrl: "http://suse-observability-server:7070"
-    receiverBaseUrl: "http://suse-observability-receiver:7077"
-    platformVersion: "5.2.0"
     zookeeperQuorum: "suse-observability-zookeeper:2181"
     pvc: "suse-observability-settings-backup-data"
     job:

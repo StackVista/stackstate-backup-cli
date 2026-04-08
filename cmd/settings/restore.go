@@ -3,6 +3,7 @@ package settings
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -28,13 +29,16 @@ var (
 	useLatest        bool
 	background       bool
 	skipConfirmation bool
+	skipStackpacks   bool
 )
 
 func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "restore",
 		Short: "Restore Settings from a backup archive",
-		Long:  `Restore Settings data from a backup archive stored in S3. Can use --latest or --archive to specify which backup to restore.`,
+		Long: "Restore Settings data from a backup archive stored in S3. Automatically also restores " +
+			"Stackpacks backup that was made at the same time, it can be skipped with --skip-stackpacks. " +
+			"Can use --latest or --archive to specify which backup to restore.",
 		Run: func(_ *cobra.Command, _ []string) {
 			cmdutils.Run(globalFlags, runRestore, cmdutils.StorageIsNotRequired)
 		},
@@ -45,6 +49,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&background, "background", false, "Run restore job in background without waiting for completion")
 	cmd.Flags().BoolVarP(&skipConfirmation, "yes", "y", false, "Skip confirmation prompt")
 	cmd.Flags().BoolVar(&fromPVC, "from-old-pvc", false, "Restore backup from legacy PVC instead of S3")
+	cmd.Flags().BoolVar(&skipStackpacks, "skip-stackpacks", false, "Skip restoring stackpacks backup")
 	cmd.MarkFlagsMutuallyExclusive("archive", "latest")
 	cmd.MarkFlagsOneRequired("archive", "latest")
 
@@ -192,12 +197,14 @@ func buildEnvVar(extraEnvVar []corev1.EnvVar, config *config.Config) []corev1.En
 	commonVar := []corev1.EnvVar{
 		{Name: "BACKUP_CONFIGURATION_BUCKET_NAME", Value: config.Settings.Bucket},
 		{Name: "BACKUP_CONFIGURATION_S3_PREFIX", Value: config.Settings.S3Prefix},
+		{Name: "BACKUP_CONFIGURATION_STACKPACKS_S3_PREFIX", Value: config.Settings.StackpacksS3Prefix},
 		{Name: "MINIO_ENDPOINT", Value: fmt.Sprintf("%s:%d", storageService.Name, storageService.Port)},
-		{Name: "STACKSTATE_BASE_URL", Value: config.Settings.Restore.BaseURL},
-		{Name: "RECEIVER_BASE_URL", Value: config.Settings.Restore.ReceiverBaseURL},
-		{Name: "PLATFORM_VERSION", Value: config.Settings.Restore.PlatformVersion},
+		{Name: "STACKSTATE_BASE_URL", Value: config.GetBaseURL()},
+		{Name: "RECEIVER_BASE_URL", Value: config.GetReceiverBaseURL()},
+		{Name: "PLATFORM_VERSION", Value: config.GetPlatformVersion()},
 		{Name: "ZOOKEEPER_QUORUM", Value: config.Settings.Restore.ZookeeperQuorum},
 		{Name: "BACKUP_CONFIGURATION_UPLOAD_REMOTE", Value: strconv.FormatBool(config.GlobalBackupEnabled())},
+		{Name: "SKIP_STACKPACKS", Value: strconv.FormatBool(skipStackpacks)},
 	}
 	if fromPVC {
 		// Force PVC mode in the shell script, suppress local bucket
@@ -205,13 +212,16 @@ func buildEnvVar(extraEnvVar []corev1.EnvVar, config *config.Config) []corev1.En
 	} else if config.Settings.LocalBucket != "" {
 		commonVar = append(commonVar, corev1.EnvVar{Name: "BACKUP_CONFIGURATION_LOCAL_BUCKET", Value: config.Settings.LocalBucket})
 	}
+	if config.Stackpacks != nil {
+		commonVar = append(commonVar, corev1.EnvVar{Name: "CONFIG_FORCE_stackstate_stackPacks_localStackPacksUri", Value: config.Stackpacks.LocalStackPacksURI})
+	}
 	commonVar = append(commonVar, extraEnvVar...)
 	return commonVar
 }
 
 // buildVolumeMounts constructs volume mounts for the restore job container
 func buildVolumeMounts(config *config.Config) []corev1.VolumeMount {
-	mounts := []corev1.VolumeMount{
+	volumeMounts := []corev1.VolumeMount{
 		{Name: "backup-log", MountPath: "/opt/docker/etc_log"},
 		{Name: "backup-restore-scripts", MountPath: "/backup-restore-scripts"},
 		{Name: "minio-keys", MountPath: "/aws-keys"},
@@ -219,9 +229,17 @@ func buildVolumeMounts(config *config.Config) []corev1.VolumeMount {
 	}
 	// Mount PVC in legacy mode or when --from-old-pvc is set
 	if config.IsLegacyMode() || fromPVC {
-		mounts = append(mounts, corev1.VolumeMount{Name: "settings-backup-data", MountPath: "/settings-backup-data"})
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{Name: "settings-backup-data", MountPath: "/settings-backup-data"})
 	}
-	return mounts
+
+	if config.Stackpacks != nil && config.Stackpacks.PVC != "" && strings.HasPrefix(config.Stackpacks.LocalStackPacksURI, "file://") {
+		volumeMounts = append(volumeMounts, corev1.VolumeMount{
+			Name:      "stackpacks-local",
+			MountPath: strings.TrimPrefix(config.Stackpacks.LocalStackPacksURI, "file://"),
+		})
+	}
+
+	return volumeMounts
 }
 
 // buildVolumes constructs volumes for the restore job pod
@@ -274,6 +292,17 @@ func buildVolumes(config *config.Config, defaultMode int32) []corev1.Volume {
 			},
 		})
 	}
+	if config.Stackpacks != nil && config.Stackpacks.PVC != "" {
+		volumes = append(volumes, corev1.Volume{
+			Name: "stackpacks-local",
+			VolumeSource: corev1.VolumeSource{
+				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+					ClaimName: config.Stackpacks.PVC,
+				},
+			},
+		})
+	}
+
 	return volumes
 }
 
