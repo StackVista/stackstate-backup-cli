@@ -278,17 +278,17 @@ func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvV
 		{Name: "FORCE_DELETE", Value: purgeStackgraphDataFlag},
 		{Name: "BACKUP_STACKGRAPH_BUCKET_NAME", Value: config.Stackgraph.Bucket},
 		{Name: "BACKUP_STACKGRAPH_S3_PREFIX", Value: config.Stackgraph.S3Prefix},
-		{Name: "BACKUP_STACKGRAPH_STACKPACKS_S3_PREFIX", Value: config.Stackgraph.StackpacksS3Prefix},
 		{Name: "BACKUP_STACKGRAPH_MULTIPART_ARCHIVE", Value: strconv.FormatBool(config.Stackgraph.MultipartArchive)},
 		{Name: "MINIO_ENDPOINT", Value: fmt.Sprintf("%s:%d", storageService.Name, storageService.Port)},
 		{Name: "STACKSTATE_BASE_URL", Value: config.GetBaseURL()},
 		{Name: "RECEIVER_BASE_URL", Value: config.GetReceiverBaseURL()},
 		{Name: "PLATFORM_VERSION", Value: config.GetPlatformVersion()},
 		{Name: "ZOOKEEPER_QUORUM", Value: config.Stackgraph.Restore.ZookeeperQuorum},
-		{Name: "SKIP_STACKPACKS", Value: strconv.FormatBool(skipStackpacks)},
+		{Name: "SKIP_STACKPACKS", Value: strconv.FormatBool(skipStackpacks || config.Stackpacks == nil)},
 	}
 	if config.Stackpacks != nil {
 		env = append(env, corev1.EnvVar{Name: "CONFIG_FORCE_stackstate_stackPacks_localStackPacksUri", Value: config.Stackpacks.LocalStackPacksURI})
+		env = append(env, corev1.EnvVar{Name: "BACKUP_STACKGRAPH_STACKPACKS_DIR", Value: config.Stackpacks.BackupDirectory})
 	}
 	return env
 }

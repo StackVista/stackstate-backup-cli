@@ -407,6 +407,39 @@ func TestLoadConfig_Storage_WithSecretOverride(t *testing.T) {
 	assert.Equal(t, "secret-storage-secret-key", config.GetStorageSecretKey())
 }
 
+func TestLoadConfig_MissingStackpacksSection(t *testing.T) {
+	fakeClient := fake.NewClientset()
+	validConfigYAML := loadTestData(t, "validStorageConfigMapNoStackpacks.yaml")
+
+	// Create ConfigMap without stackpacks section
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "backup-config",
+			Namespace: "test-ns",
+		},
+		Data: map[string]string{
+			"config": validConfigYAML,
+		},
+	}
+	_, err := fakeClient.CoreV1().ConfigMaps("test-ns").Create(
+		context.Background(), cm, metav1.CreateOptions{},
+	)
+	require.NoError(t, err)
+
+	// Load config
+	config, err := LoadConfig(fakeClient, "test-ns", "backup-config", "")
+
+	// Assertions
+	require.NoError(t, err)
+	assert.NotNil(t, config)
+	// When stackpacks section is missing, Stackpacks should be nil
+	assert.Nil(t, config.Stackpacks)
+	// baseUrl/receiverBaseUrl/platformVersion should fall back to settings.restore values
+	assert.Equal(t, "http://suse-observability-server:7070", config.GetBaseURL())
+	assert.Equal(t, "http://suse-observability-receiver:7077", config.GetReceiverBaseURL())
+	assert.Equal(t, "5.2.0", config.GetPlatformVersion())
+}
+
 func TestLoadConfig_ConfigMapNotFound(t *testing.T) {
 	fakeClient := fake.NewClientset()
 

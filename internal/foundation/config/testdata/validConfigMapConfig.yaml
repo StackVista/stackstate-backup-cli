@@ -65,6 +65,7 @@ stackpacks:
   receiverBaseUrl: "http://suse-observability-receiver:7077"
   platformVersion: "5.2.0"
   localStackPacksUri: "/var/stackpacks_local"
+  backupDir: stackpacks/
 
 # Minio configuration for S3-compatible storage
 minio:
@@ -84,7 +85,6 @@ stackgraph:
   # S3 prefix path for backups
   s3Prefix: ""
   # S3 prefix path for stackpacks backups
-  stackpacksS3Prefix: "stackpacks/"
   # Archive split to multiple parts
   multipartArchive: true
   # Restore configuration
@@ -148,7 +148,6 @@ victoriaMetrics:
 settings:
   bucket: sts-settings-backup
   s3Prefix: ""
-  stackpacksS3Prefix: "stackpacks/"
   restore:
     scaleDownLabelSelector: "observability.suse.com/scalable-during-settings-restore=true"
     loggingConfigConfigMap: suse-observability-logging

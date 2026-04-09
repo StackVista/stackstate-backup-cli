@@ -7,6 +7,78 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestBuildEnvVar_SkipStackpacksWhenMissing(t *testing.T) {
+	tests := []struct {
+		name               string
+		stackpacks         *config.StackpacksConfig
+		skipStackpacksFlag bool
+		expectedValue      string
+	}{
+		{
+			name:               "stackpacks nil and flag false",
+			stackpacks:         nil,
+			skipStackpacksFlag: false,
+			expectedValue:      "true",
+		},
+		{
+			name:               "stackpacks nil and flag true",
+			stackpacks:         nil,
+			skipStackpacksFlag: true,
+			expectedValue:      "true",
+		},
+		{
+			name: "stackpacks present and flag false",
+			stackpacks: &config.StackpacksConfig{
+				LocalStackPacksURI: "/var/stackpacks_local",
+				BackupDirectory:    "stackpacks/",
+			},
+			skipStackpacksFlag: false,
+			expectedValue:      "false",
+		},
+		{
+			name: "stackpacks present and flag true",
+			stackpacks: &config.StackpacksConfig{
+				LocalStackPacksURI: "/var/stackpacks_local",
+				BackupDirectory:    "stackpacks/",
+			},
+			skipStackpacksFlag: true,
+			expectedValue:      "true",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set the package-level flags
+			skipStackpacks = tt.skipStackpacksFlag
+			fromPVC = false
+
+			cfg := &config.Config{
+				Stackpacks: tt.stackpacks,
+				Storage: config.StorageConfig{
+					GlobalBackupEnabled: true,
+					Service:             config.ServiceConfig{Name: "storage", Port: 9000},
+				},
+				Settings: config.SettingsConfig{
+					Bucket: "settings-backup",
+					Restore: config.SettingsRestoreConfig{
+						ZookeeperQuorum: "zk:2181",
+					},
+				},
+			}
+			envVars := buildEnvVar(nil, cfg)
+
+			var skipValue string
+			for _, env := range envVars {
+				if env.Name == "SKIP_STACKPACKS" {
+					skipValue = env.Value
+					break
+				}
+			}
+			assert.Equal(t, tt.expectedValue, skipValue)
+		})
+	}
+}
+
 func TestBuildVolumeMounts_StackpacksLocalFileURI(t *testing.T) {
 	tests := []struct {
 		name              string

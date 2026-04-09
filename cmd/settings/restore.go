@@ -197,14 +197,13 @@ func buildEnvVar(extraEnvVar []corev1.EnvVar, config *config.Config) []corev1.En
 	commonVar := []corev1.EnvVar{
 		{Name: "BACKUP_CONFIGURATION_BUCKET_NAME", Value: config.Settings.Bucket},
 		{Name: "BACKUP_CONFIGURATION_S3_PREFIX", Value: config.Settings.S3Prefix},
-		{Name: "BACKUP_CONFIGURATION_STACKPACKS_S3_PREFIX", Value: config.Settings.StackpacksS3Prefix},
 		{Name: "MINIO_ENDPOINT", Value: fmt.Sprintf("%s:%d", storageService.Name, storageService.Port)},
 		{Name: "STACKSTATE_BASE_URL", Value: config.GetBaseURL()},
 		{Name: "RECEIVER_BASE_URL", Value: config.GetReceiverBaseURL()},
 		{Name: "PLATFORM_VERSION", Value: config.GetPlatformVersion()},
 		{Name: "ZOOKEEPER_QUORUM", Value: config.Settings.Restore.ZookeeperQuorum},
 		{Name: "BACKUP_CONFIGURATION_UPLOAD_REMOTE", Value: strconv.FormatBool(config.GlobalBackupEnabled())},
-		{Name: "SKIP_STACKPACKS", Value: strconv.FormatBool(skipStackpacks)},
+		{Name: "SKIP_STACKPACKS", Value: strconv.FormatBool(skipStackpacks || config.Stackpacks == nil)},
 	}
 	if fromPVC {
 		// Force PVC mode in the shell script, suppress local bucket
@@ -214,6 +213,7 @@ func buildEnvVar(extraEnvVar []corev1.EnvVar, config *config.Config) []corev1.En
 	}
 	if config.Stackpacks != nil {
 		commonVar = append(commonVar, corev1.EnvVar{Name: "CONFIG_FORCE_stackstate_stackPacks_localStackPacksUri", Value: config.Stackpacks.LocalStackPacksURI})
+		commonVar = append(commonVar, corev1.EnvVar{Name: "BACKUP_CONFIGURATION_STACKPACKS_DIR", Value: config.Stackpacks.BackupDirectory})
 	}
 	commonVar = append(commonVar, extraEnvVar...)
 	return commonVar

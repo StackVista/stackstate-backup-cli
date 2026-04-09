@@ -70,11 +70,11 @@ else
     echo "=== Checking for StackPacks backup \"${STACKPACKS_FILE}\" in bucket \"${BACKUP_CONFIGURATION_LOCAL_BUCKET}\"..."
     setup_aws_credentials
 
-    if download_from_s3 "${BACKUP_CONFIGURATION_LOCAL_BUCKET}" "${BACKUP_CONFIGURATION_STACKPACKS_S3_PREFIX}" "${TMP_DIR}" "${STACKPACKS_FILE}"; then
+    if download_from_s3 "${BACKUP_CONFIGURATION_LOCAL_BUCKET}" "${BACKUP_CONFIGURATION_S3_PREFIX}${BACKUP_CONFIGURATION_STACKPACKS_DIR}" "${TMP_DIR}" "${STACKPACKS_FILE}"; then
       STACKPACKS_RESTORE_FILE="${TMP_DIR}/${STACKPACKS_FILE}"
     elif [ "${BACKUP_CONFIGURATION_UPLOAD_REMOTE}" == "true" ]; then
       echo "=== StackPacks backup not found in kubernetes settings storage, trying main backups storage..."
-      if download_from_s3 "${BACKUP_CONFIGURATION_BUCKET_NAME}" "${BACKUP_CONFIGURATION_STACKPACKS_S3_PREFIX}" "${TMP_DIR}" "${STACKPACKS_FILE}"; then
+      if download_from_s3 "${BACKUP_CONFIGURATION_BUCKET_NAME}" "${BACKUP_CONFIGURATION_S3_PREFIX}${BACKUP_CONFIGURATION_STACKPACKS_DIR}" "${TMP_DIR}" "${STACKPACKS_FILE}"; then
         STACKPACKS_RESTORE_FILE="${TMP_DIR}/${STACKPACKS_FILE}"
       fi
     fi
