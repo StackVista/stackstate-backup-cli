@@ -7,6 +7,70 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestBuildRestoreEnvVars_SkipStackpacksWhenMissing(t *testing.T) {
+	tests := []struct {
+		name               string
+		stackpacks         *config.StackpacksConfig
+		skipStackpacksFlag bool
+		expectedValue      string
+	}{
+		{
+			name:               "stackpacks nil and flag false",
+			stackpacks:         nil,
+			skipStackpacksFlag: false,
+			expectedValue:      "true",
+		},
+		{
+			name:               "stackpacks nil and flag true",
+			stackpacks:         nil,
+			skipStackpacksFlag: true,
+			expectedValue:      "true",
+		},
+		{
+			name: "stackpacks present and flag false",
+			stackpacks: &config.StackpacksConfig{
+				LocalStackPacksURI: "/var/stackpacks_local",
+				BackupDirectory:    "stackpacks/",
+			},
+			skipStackpacksFlag: false,
+			expectedValue:      "false",
+		},
+		{
+			name: "stackpacks present and flag true",
+			stackpacks: &config.StackpacksConfig{
+				LocalStackPacksURI: "/var/stackpacks_local",
+				BackupDirectory:    "stackpacks/",
+			},
+			skipStackpacksFlag: true,
+			expectedValue:      "true",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Set the package-level flag
+			skipStackpacks = tt.skipStackpacksFlag
+
+			cfg := &config.Config{
+				Stackpacks: tt.stackpacks,
+				Storage: config.StorageConfig{
+					Service: config.ServiceConfig{Name: "storage", Port: 9000},
+				},
+			}
+			envVars := buildRestoreEnvVars("backup.graph", cfg)
+
+			var skipValue string
+			for _, env := range envVars {
+				if env.Name == "SKIP_STACKPACKS" {
+					skipValue = env.Value
+					break
+				}
+			}
+			assert.Equal(t, tt.expectedValue, skipValue)
+		})
+	}
+}
+
 func TestBuildRestoreVolumeMounts_StackpacksLocalFileURI(t *testing.T) {
 	tests := []struct {
 		name              string

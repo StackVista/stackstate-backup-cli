@@ -71,6 +71,7 @@ stackpacks:
   receiverBaseUrl: "http://suse-observability-receiver:7077"
   platformVersion: "5.2.0"
   localStackPacksUri: "/var/stackpacks_local"
+  backupDir: "stackpacks/"
 
 # Minio configuration for S3-compatible storage
 minio:
