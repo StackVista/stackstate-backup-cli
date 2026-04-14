@@ -654,9 +654,8 @@ func TestConfig_StructValidation(t *testing.T) {
 					SecretKey: "minioadmin",
 				},
 				Stackgraph: StackgraphConfig{
-					Bucket:           "stackgraph-bucket",
-					S3Prefix:         "",
-					MultipartArchive: true,
+					Bucket:   "stackgraph-bucket",
+					S3Prefix: "",
 					Restore: StackgraphRestoreConfig{
 						ScaleDownLabelSelector:     "app=stackgraph",
 						LoggingConfigConfigMapName: "logging-config",
@@ -801,9 +800,8 @@ func TestConfig_StructValidation(t *testing.T) {
 					SecretKey: "storageadmin",
 				},
 				Stackgraph: StackgraphConfig{
-					Bucket:           "stackgraph-bucket",
-					S3Prefix:         "",
-					MultipartArchive: true,
+					Bucket:   "stackgraph-bucket",
+					S3Prefix: "",
 					Restore: StackgraphRestoreConfig{
 						ScaleDownLabelSelector:     "app=stackgraph",
 						LoggingConfigConfigMapName: "logging-config",

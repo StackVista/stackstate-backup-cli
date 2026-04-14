@@ -176,10 +176,9 @@ type StorageConfig struct {
 
 // StackgraphConfig holds Stackgraph backup-specific configuration
 type StackgraphConfig struct {
-	Bucket           string                  `yaml:"bucket" validate:"required"`
-	S3Prefix         string                  `yaml:"s3Prefix"`
-	MultipartArchive bool                    `yaml:"multipartArchive" validate:"boolean"`
-	Restore          StackgraphRestoreConfig `yaml:"restore" validate:"required"`
+	Bucket   string                  `yaml:"bucket" validate:"required"`
+	S3Prefix string                  `yaml:"s3Prefix"`
+	Restore  StackgraphRestoreConfig `yaml:"restore" validate:"required"`
 }
 
 type VictoriaMetricsConfig struct {
