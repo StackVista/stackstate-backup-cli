@@ -16,15 +16,11 @@ else
     # Check if the filename of the snapshot is one of the multiparts
     # sts-backup-20240222-0730.graph.00 -> sts-backup-20240222-0730.graph
     BACKUP_FILE="${BACKUP_FILE/%.[0-9]*/}"
-    rm -f "${TMP_DIR}/${BACKUP_FILE}.*"
-    sts-toolbox aws s3 ls --endpoint "http://${MINIO_ENDPOINT}" --region minio --bucket "${BACKUP_STACKGRAPH_BUCKET_NAME}" --prefix "${BACKUP_STACKGRAPH_S3_PREFIX}${BACKUP_FILE}" | while read -r backup_file
+    rm -f "${TMP_DIR}/${BACKUP_FILE}"
+    # Download and concatenate multipart files in a single pass (streaming to stdout)
+    sts-toolbox aws s3 ls --endpoint "http://${MINIO_ENDPOINT}" --region minio --bucket "${BACKUP_STACKGRAPH_BUCKET_NAME}" --prefix "${BACKUP_STACKGRAPH_S3_PREFIX}${BACKUP_FILE}" | sort | while read -r backup_file
     do
-      sts-toolbox aws s3 cp --endpoint "http://${MINIO_ENDPOINT}" --region minio "s3://${BACKUP_STACKGRAPH_BUCKET_NAME}/${BACKUP_STACKGRAPH_S3_PREFIX}${backup_file}" "${TMP_DIR}/${backup_file}"
-    done
-    # Concatenate a multipart arhive
-    find ${TMP_DIR} -name "${BACKUP_FILE}.*" | sort | while read -r multipart
-    do
-      cat "${multipart}" >> "${TMP_DIR}/${BACKUP_FILE}"
+      sts-toolbox aws s3 cp --endpoint "http://${MINIO_ENDPOINT}" --region minio "s3://${BACKUP_STACKGRAPH_BUCKET_NAME}/${BACKUP_STACKGRAPH_S3_PREFIX}${backup_file}" - >> "${TMP_DIR}/${BACKUP_FILE}"
     done
 fi
 
