@@ -64,7 +64,6 @@ minio:
   secretKey: minioadmin
 stackgraph:
   bucket: stackgraph-bucket
-  multipartArchive: true
   restore:
     scaleDownLabelSelector: "app=stackgraph"
     loggingConfigConfigMap: logging-config
@@ -148,7 +147,6 @@ storage:
   secretKey: storageadmin
 stackgraph:
   bucket: stackgraph-bucket
-  multipartArchive: true
   restore:
     scaleDownLabelSelector: "app=stackgraph"
     loggingConfigConfigMap: logging-config
