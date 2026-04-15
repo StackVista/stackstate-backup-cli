@@ -169,7 +169,6 @@ func getLatestBackup(k8sClient *k8s.Client, namespace string, config *config.Con
 	// List objects in bucket
 	bucket := config.Stackgraph.Bucket
 	prefix := config.Stackgraph.S3Prefix
-	multipartArchive := config.Stackgraph.MultipartArchive
 
 	input := &s3.ListObjectsV2Input{
 		Bucket: aws.String(bucket),
@@ -181,8 +180,7 @@ func getLatestBackup(k8sClient *k8s.Client, namespace string, config *config.Con
 		return "", fmt.Errorf("failed to list S3 objects: %w", err)
 	}
 
-	// Filter objects based on whether the archive is split or not
-	filteredObjects := s3client.FilterMultipartBackupObjects(result.Contents, multipartArchive)
+	filteredObjects := s3client.FilterBackupObjects(result.Contents)
 
 	// Filter to only include direct children of the prefix that match the backup filename pattern,
 	// and strip the prefix from the key
@@ -278,7 +276,6 @@ func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvV
 		{Name: "FORCE_DELETE", Value: purgeStackgraphDataFlag},
 		{Name: "BACKUP_STACKGRAPH_BUCKET_NAME", Value: config.Stackgraph.Bucket},
 		{Name: "BACKUP_STACKGRAPH_S3_PREFIX", Value: config.Stackgraph.S3Prefix},
-		{Name: "BACKUP_STACKGRAPH_MULTIPART_ARCHIVE", Value: strconv.FormatBool(config.Stackgraph.MultipartArchive)},
 		{Name: "MINIO_ENDPOINT", Value: fmt.Sprintf("%s:%d", storageService.Name, storageService.Port)},
 		{Name: "STACKSTATE_BASE_URL", Value: config.GetBaseURL()},
 		{Name: "RECEIVER_BASE_URL", Value: config.GetReceiverBaseURL()},

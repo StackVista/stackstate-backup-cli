@@ -84,9 +84,6 @@ stackgraph:
   bucket: sts-stackgraph-backup
   # S3 prefix path for backups
   s3Prefix: ""
-  # S3 prefix path for stackpacks backups
-  # Archive split to multiple parts
-  multipartArchive: true
   # Restore configuration
   restore:
     # Label selector for deployments to scale down during restore

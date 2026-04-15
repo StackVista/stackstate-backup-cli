@@ -27,7 +27,6 @@ import (
 )
 
 const (
-	isMultiPartArchive            = false
 	expectedListJobPodCount       = 1
 	expectedListJobContainerCount = 1
 	backupFileNameRegex           = `^sts-backup-.*\.sty$`
@@ -183,8 +182,7 @@ func getBackupListFromS3(appCtx *app.Context) ([]BackupFileInfo, error) {
 		return nil, fmt.Errorf("failed to list S3 objects: %w", err)
 	}
 
-	// Filter objects based on whether the archive is split or not
-	filteredObjects := s3client.FilterMultipartBackupObjects(result.Contents, isMultiPartArchive)
+	filteredObjects := s3client.FilterBackupObjects(result.Contents)
 
 	// Filter to only include direct children of the prefix that match the backup filename pattern,
 	// and strip the prefix from the key
@@ -238,7 +236,7 @@ func getBackupListFromLocalBucket(appCtx *app.Context) ([]BackupFileInfo, error)
 		return nil, fmt.Errorf("failed to list objects in local bucket: %w", err)
 	}
 
-	filteredObjects := s3client.FilterMultipartBackupObjects(result.Contents, isMultiPartArchive)
+	filteredObjects := s3client.FilterBackupObjects(result.Contents)
 
 	filteredObjects, err = s3client.FilterByPrefixAndRegex(filteredObjects, "", backupFileNameRegex)
 	if err != nil {

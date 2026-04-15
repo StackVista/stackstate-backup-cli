@@ -52,7 +52,6 @@ func runList(appCtx *app.Context) error {
 	// List objects in bucket
 	bucket := appCtx.Config.Stackgraph.Bucket
 	prefix := appCtx.Config.Stackgraph.S3Prefix
-	multipartArchive := appCtx.Config.Stackgraph.MultipartArchive
 
 	appCtx.Logger.Infof("Listing Stackgraph backups in bucket '%s'...", bucket)
 
@@ -66,8 +65,7 @@ func runList(appCtx *app.Context) error {
 		return fmt.Errorf("failed to list S3 objects: %w", err)
 	}
 
-	// Filter objects based on whether the archive is split or not
-	filteredObjects := s3client.FilterMultipartBackupObjects(result.Contents, multipartArchive)
+	filteredObjects := s3client.FilterBackupObjects(result.Contents)
 
 	// Filter to only include direct children of the prefix that match the backup filename pattern,
 	// and strip the prefix from the key
