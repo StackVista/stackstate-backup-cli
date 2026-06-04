@@ -130,7 +130,7 @@ func TestClient_CreateJob(t *testing.T) {
 			validateFunc: func(t *testing.T, job *batchv1.Job) {
 				assert.Equal(t, "backup-job", job.Name)
 				assert.Equal(t, map[string]string{"app": "backup"}, job.Labels)
-				assert.Equal(t, int32(1), *job.Spec.BackoffLimit)
+				assert.Equal(t, int32(0), *job.Spec.BackoffLimit)
 				assert.Equal(t, int32(defaultJobTTLSeconds), *job.Spec.TTLSecondsAfterFinished)
 				assert.Equal(t, corev1.RestartPolicyNever, job.Spec.Template.Spec.RestartPolicy)
 			},
