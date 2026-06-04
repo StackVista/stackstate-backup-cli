@@ -97,7 +97,7 @@ func (c *Client) CreateJob(namespace string, spec JobSpec) (*batchv1.Job, error)
 			Labels: spec.Labels,
 		},
 		Spec: batchv1.JobSpec{
-			BackoffLimit:            ptr(int32(1)),
+			BackoffLimit:            ptr(int32(0)),
 			TTLSecondsAfterFinished: ptr(int32(defaultJobTTLSeconds)),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
