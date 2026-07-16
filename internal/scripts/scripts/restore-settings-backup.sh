@@ -17,7 +17,7 @@ download_from_s3() {
   local dest="$3"
   local backup_file="$4"
   echo "=== Downloading Settings backup \"${backup_file}\" from bucket \"${bucket}\"..."
-  sts-toolbox aws s3 --endpoint "http://${MINIO_ENDPOINT}" --region minio cp "s3://${bucket}/${prefix}${backup_file}" "${dest}/${backup_file}"
+  sts-toolbox aws s3 --endpoint "http://${S3_ENDPOINT}" --region us-east-1 cp "s3://${bucket}/${prefix}${backup_file}" "${dest}/${backup_file}"
 }
 
 RESTORE_FILE=""

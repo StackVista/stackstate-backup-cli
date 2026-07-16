@@ -38,6 +38,23 @@ func FilterBackupObjects(objects []s3types.Object) []Object {
 	return filteredObjects
 }
 
+// ConvertBackupObjects filters out backup part files ending with .digits.
+func ConvertBackupObjects(objects []s3types.Object) []Object {
+	var filteredObjects []Object
+
+	for _, obj := range objects {
+		key := aws.ToString(obj.Key)
+
+		filteredObjects = append(filteredObjects, Object{
+			Key:          key,
+			LastModified: aws.ToTime(obj.LastModified),
+			Size:         aws.ToInt64(obj.Size),
+		})
+	}
+
+	return filteredObjects
+}
+
 func hasNumericFileSuffix(key string) bool {
 	if !strings.Contains(key, ".") {
 		return false

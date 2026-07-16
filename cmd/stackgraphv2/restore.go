@@ -1,4 +1,4 @@
-package stackgraph
+package stackgraphv2
 
 import (
 	"context"
@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	jobNameTemplate          = "stackgraph-restore"
+	jobNameTemplate          = "stackgraph-restore-v2"
 	configMapDefaultFileMode = 0755
 	purgeStackgraphDataFlag  = "-force"
 )
@@ -33,7 +33,6 @@ const (
 var (
 	archiveName      string
 	useLatest        bool
-	background       bool
 	skipConfirmation bool
 	skipStackpacks   bool
 )
@@ -44,7 +43,8 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		Short: "Restore Stackgraph from a backup archive",
 		Long: "Restore Stackgraph data from a backup archive stored in S3. Automatically also restores " +
 			"Stackpacks backup that was made at the same time, it can be skipped with --skip-stackpacks. " +
-			"Can use --latest or --archive to specify which backup to restore.",
+			"Can use --latest or --archive to specify which backup to restore." +
+			"The process is split into two phases: restoring live data, which takes the system down. And a backfill stage which loads historic data.",
 		Run: func(_ *cobra.Command, _ []string) {
 			cmdutils.Run(globalFlags, runRestore, cmdutils.StorageIsRequired)
 		},
@@ -52,7 +52,6 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 
 	cmd.Flags().StringVar(&archiveName, "archive", "", "Specific archive name to restore (e.g., sts-backup-20210216-0300.graph)")
 	cmd.Flags().BoolVar(&useLatest, "latest", false, "Restore from the most recent backup")
-	cmd.Flags().BoolVar(&background, "background", false, "Run restore job in background without waiting for completion")
 	cmd.Flags().BoolVarP(&skipConfirmation, "yes", "y", false, "Skip confirmation prompt")
 	cmd.Flags().BoolVar(&skipStackpacks, "skip-stackpacks", false, "Skip restoring stackpacks backup")
 	cmd.MarkFlagsMutuallyExclusive("archive", "latest")
@@ -62,6 +61,19 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 }
 
 func runRestore(appCtx *app.Context) error {
+	err := liveRestore(appCtx)
+	if err != nil {
+		return err
+	}
+
+	appCtx.Logger.Println()
+	appCtx.Logger.Infof("The system is back up and accessible. Continuing with backfilling historical data, this will happen while the system is running.")
+	appCtx.Logger.Infof("During this process not all historical data might be available.")
+
+	return runBackfill(appCtx)
+}
+
+func liveRestore(appCtx *app.Context) error {
 	// Determine which archive to restore
 	backupFile := archiveName
 	if useLatest {
@@ -106,7 +118,7 @@ func runRestore(appCtx *app.Context) error {
 
 	// Ensure deployments are scaled back up and lock released on exit (even if restore fails)
 	defer func() {
-		if len(scaledDeployments) > 0 && !background {
+		if len(scaledDeployments) > 0 {
 			appCtx.Logger.Println()
 			if err := scale.ScaleUpAndReleaseLock(appCtx.K8sClient, appCtx.Namespace, scaleDownLabelSelector, appCtx.Logger); err != nil {
 				appCtx.Logger.Warningf("Failed to scale up deployments: %v", err)
@@ -122,7 +134,7 @@ func runRestore(appCtx *app.Context) error {
 
 	// Create restore job
 	appCtx.Logger.Println()
-	appCtx.Logger.Infof("Creating restore job for backup: %s", backupFile)
+	appCtx.Logger.Infof("Creating restore of live data job for backup: %s", backupFile)
 
 	jobName := fmt.Sprintf("%s-%s", jobNameTemplate, time.Now().Format("20060102t150405"))
 
@@ -132,17 +144,19 @@ func runRestore(appCtx *app.Context) error {
 
 	appCtx.Logger.Successf("Restore job created: %s", jobName)
 
-	if background {
-		restore.PrintRunningJobStatus(appCtx.Logger, "stackgraph", jobName, appCtx.Namespace, 0)
-		return nil
+	err = waitAndCleanupRestoreJob(appCtx.K8sClient, appCtx.Namespace, jobName, appCtx.Logger)
+	if err != nil {
+		return err
 	}
 
-	return waitAndCleanupRestoreJob(appCtx.K8sClient, appCtx.Namespace, jobName, appCtx.Logger)
+	appCtx.Logger.Println()
+	appCtx.Logger.Infof("Successfully restored live data for: %s", backupFile)
+	return nil
 }
 
 // waitAndCleanupRestoreJob waits for job completion and cleans up resources
 func waitAndCleanupRestoreJob(k8sClient *k8s.Client, namespace, jobName string, log *logger.Logger) error {
-	restore.PrintWaitingMessage(log, "stackgraph", jobName, namespace)
+	restore.PrintWaitingMessage(log, "stackgraph-v2", jobName, namespace)
 	return restore.WaitAndCleanup(k8sClient, namespace, jobName, log, true)
 }
 
@@ -168,11 +182,12 @@ func getLatestBackup(k8sClient *k8s.Client, namespace string, config *config.Con
 
 	// List objects in bucket
 	bucket := config.Stackgraph.Bucket
-	prefix := config.Stackgraph.S3Prefix
+	prefix := config.Stackgraph.S3Prefix + "v2/"
 
 	input := &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
-		Prefix: aws.String(prefix),
+		Bucket:    aws.String(bucket),
+		Prefix:    aws.String(prefix),
+		Delimiter: aws.String("/"),
 	}
 
 	result, err := s3Client.ListObjectsV2(context.Background(), input)
@@ -180,7 +195,7 @@ func getLatestBackup(k8sClient *k8s.Client, namespace string, config *config.Con
 		return "", fmt.Errorf("failed to list S3 objects: %w", err)
 	}
 
-	filteredObjects := s3client.FilterBackupObjects(result.Contents)
+	filteredObjects := s3client.ConvertBackupObjects(result.Contents)
 
 	// Filter to only include direct children of the prefix that match the backup filename pattern,
 	// and strip the prefix from the key
@@ -220,9 +235,10 @@ func buildPVCSpec(name string, config *config.Config, labels map[string]string) 
 	}
 
 	return k8s.PVCSpec{
-		Name:         name,
-		Labels:       labels,
-		StorageSize:  pvcConfig.Size,
+		Name:   name,
+		Labels: labels,
+		// This is not derived from the restore pvc size, the tmp pvc for restore only needs a bounded buffer for stackpacks.
+		StorageSize:  "5Gi",
 		AccessModes:  accessModes,
 		StorageClass: storageClass,
 	}
@@ -390,7 +406,7 @@ func buildRestoreContainers(backupFile string, config *config.Config) []corev1.C
 			Image:           config.Stackgraph.Restore.Job.Image,
 			ImagePullPolicy: corev1.PullIfNotPresent,
 			SecurityContext: k8s.ConvertSecurityContext(config.Stackgraph.Restore.Job.ContainerSecurityContext),
-			Command:         []string{"/backup-restore-scripts/restore-stackgraph-backup.sh"},
+			Command:         []string{"/backup-restore-scripts/restore-stackgraph-backup-v2-live.sh"},
 			Env:             buildRestoreEnvVars(backupFile, config),
 			Resources:       k8s.ConvertResources(config.Stackgraph.Restore.Job.Resources),
 			VolumeMounts:    buildRestoreVolumeMounts(config),

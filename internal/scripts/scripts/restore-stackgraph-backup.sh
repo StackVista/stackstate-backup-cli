@@ -9,7 +9,7 @@ export AWS_SECRET_ACCESS_KEY
 AWS_SECRET_ACCESS_KEY="$(cat /aws-keys/secretkey)"
 
 echo "=== Downloading StackGraph backup \"${BACKUP_FILE}\" from bucket \"${BACKUP_STACKGRAPH_BUCKET_NAME}\"..."
-sts-toolbox aws s3 cp --endpoint "http://${MINIO_ENDPOINT}" --region minio "s3://${BACKUP_STACKGRAPH_BUCKET_NAME}/${BACKUP_STACKGRAPH_S3_PREFIX}${BACKUP_FILE}" "${TMP_DIR}/${BACKUP_FILE}"
+sts-toolbox aws s3 cp --endpoint "http://${S3_ENDPOINT}" --region us-east-1 "s3://${BACKUP_STACKGRAPH_BUCKET_NAME}/${BACKUP_STACKGRAPH_S3_PREFIX}${BACKUP_FILE}" "${TMP_DIR}/${BACKUP_FILE}"
 
 echo "=== Importing StackGraph data from \"${BACKUP_FILE}\"..."
 /opt/docker/bin/stackstate-server -Dlogback.configurationFile=/opt/docker/etc_log/logback.xml -import "${TMP_DIR}/${BACKUP_FILE}" "${FORCE_DELETE}"
@@ -25,13 +25,13 @@ else
     echo "=== Checking for StackPacks backup \"${STACKPACKS_FILE}\" in bucket \"${BACKUP_STACKGRAPH_BUCKET_NAME}\"..."
 
     # Check if stackpacks backup exists in S3
-    if ! sts-toolbox aws s3 ls --endpoint "http://${MINIO_ENDPOINT}" --region minio --bucket "${BACKUP_STACKGRAPH_BUCKET_NAME}" --prefix "${BACKUP_STACKGRAPH_S3_PREFIX}${BACKUP_STACKGRAPH_STACKPACKS_DIR}${STACKPACKS_FILE}" 2>/dev/null | grep -q "${STACKPACKS_FILE}"; then
+    if ! sts-toolbox aws s3 ls --endpoint "http://${S3_ENDPOINT}" --region us-east-1 --bucket "${BACKUP_STACKGRAPH_BUCKET_NAME}" --prefix "${BACKUP_STACKGRAPH_S3_PREFIX}${BACKUP_STACKGRAPH_STACKPACKS_DIR}${STACKPACKS_FILE}" 2>/dev/null | grep -q "${STACKPACKS_FILE}"; then
         echo "=== ERROR: StackPacks backup \"${STACKPACKS_FILE}\" not found in S3"
         exit 1
     fi
 
     echo "=== Downloading StackPacks backup..."
-    sts-toolbox aws s3 cp --endpoint "http://${MINIO_ENDPOINT}" --region minio "s3://${BACKUP_STACKGRAPH_BUCKET_NAME}/${BACKUP_STACKGRAPH_S3_PREFIX}${BACKUP_STACKGRAPH_STACKPACKS_DIR}${STACKPACKS_FILE}" "${TMP_DIR}/${STACKPACKS_FILE}"
+    sts-toolbox aws s3 cp --endpoint "http://${S3_ENDPOINT}" --region us-east-1 "s3://${BACKUP_STACKGRAPH_BUCKET_NAME}/${BACKUP_STACKGRAPH_S3_PREFIX}${BACKUP_STACKGRAPH_STACKPACKS_DIR}${STACKPACKS_FILE}" "${TMP_DIR}/${STACKPACKS_FILE}"
 
     echo "=== Restoring StackPacks from \"${STACKPACKS_FILE}\"..."
     /opt/docker/bin/stack-packs-backup -Dlogback.configurationFile=/opt/docker/etc_log/logback.xml -restore "${TMP_DIR}/${STACKPACKS_FILE}"
