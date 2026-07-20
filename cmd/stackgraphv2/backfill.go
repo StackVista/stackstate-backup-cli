@@ -21,9 +21,11 @@ const (
 func backfillCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backfill",
-		Short: "Complete a restore by backfilling old data",
-		Long: "Complete a restore by backfilling old data. This process can run while the system is already up and running " +
-			"After the backfill is done, the restore process is complete. ",
+		Short: "Complete an interrupted restore by backfilling old data",
+		Long: "Complete an interrupted restore by backfilling old data. This process can run while the system is already up and running." +
+			"After the backfill is done, the restore process is complete. " +
+			"During a normal restore the restore command will take care of backfilling the data, but if that gets interrupted (Ctrl-C) " +
+			"or somehow crashes due to cluster instability, this command allows retrying the backfill portion of the restore.",
 		Run: func(_ *cobra.Command, _ []string) {
 			cmdutils.Run(globalFlags, runBackfill, cmdutils.StorageIsRequired)
 		},
