@@ -21,15 +21,15 @@ func checkAndFinalizeCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 		Short: "Check and finalize a Stackgraph restore (v2) job",
 		Long: `Check the status of a background Stackgraph restore job and clean up resources.
 
-This command is useful when a restore job was started with --background flag or was interrupted (Ctrl+C).
+This command is useful when a restore/backfill/abort job was interrupted (Ctrl+C).
 It will check the job status, print logs if it failed, and clean up the job and PVC resources.
 
 Examples:
   # Check job status without waiting
-  sts-backup stackgraph-v2 check-and-finalize --job stackgraph-restore-20250128t143000 -n my-namespace
+  sts-backup stackgraph-v2 check-and-finalize --job stackgraph-v2-restore-20250128t143000 -n my-namespace
 
   # Wait for job completion and cleanup
-  sts-backup stackgraph-v2 check-and-finalize --job stackgraph-restore-20250128t143000 --wait -n my-namespace`,
+  sts-backup stackgraph-v2 check-and-finalize --job stackgraph-v2-restore-20250128t143000 --wait -n my-namespace`,
 		Run: func(_ *cobra.Command, _ []string) {
 			cmdutils.Run(globalFlags, runCheckAndFinalize, cmdutils.StorageIsRequired)
 		},
@@ -43,11 +43,11 @@ Examples:
 }
 
 func runCheckAndFinalize(appCtx *app.Context) error {
-	return restore.CheckAndFinalize(restore.CheckAndFinalizeParams{
+	err := restore.CheckAndFinalize(restore.CheckAndFinalizeParams{
 		K8sClient:     appCtx.K8sClient,
 		Namespace:     appCtx.Namespace,
 		JobName:       checkJobName,
-		ServiceName:   "stackgraph",
+		ServiceName:   "stackgraph-v2",
 		ScaleUpFn:     scale.ScaleUpAndReleaseLock,
 		ScaleDownFn:   scale.ScaleDown,
 		ScaleSelector: appCtx.Config.Stackgraph.Restore.ScaleDownLabelSelector,
@@ -55,4 +55,6 @@ func runCheckAndFinalize(appCtx *app.Context) error {
 		WaitForJob:    waitForJob,
 		Log:           appCtx.Logger,
 	})
+	logAfterJobResult(appCtx.Logger, checkJobName, err == nil)
+	return err
 }

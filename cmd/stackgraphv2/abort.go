@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	abortNameTemplate = "stackgraph-abort-v2"
+	abortNameTemplate = "stackgraph-v2-abort"
 	abortScript       = "/backup-restore-scripts/restore-stackgraph-backup-v2-abort.sh"
 )
 
@@ -52,7 +52,14 @@ func runAbort(appCtx *app.Context) error {
 
 	appCtx.Logger.Successf("Abort job created: %s", jobName)
 
-	return waitAndCleanupAbortJob(appCtx.K8sClient, appCtx.Namespace, jobName, appCtx.Logger)
+	err := waitAndCleanupAbortJob(appCtx.K8sClient, appCtx.Namespace, jobName, appCtx.Logger)
+
+	if err != nil {
+		logAfterJobResult(appCtx.Logger, checkJobName, false)
+		return err
+	}
+
+	return nil
 }
 
 // waitAndCleanupAbortJob waits for job completion and cleans up resources

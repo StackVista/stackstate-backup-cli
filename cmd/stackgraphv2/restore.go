@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	jobNameTemplate          = "stackgraph-restore-v2"
+	restoreNameTemplate      = "stackgraph-v2-restore"
 	configMapDefaultFileMode = 0755
 	purgeStackgraphDataFlag  = "-force"
 )
@@ -136,7 +136,7 @@ func liveRestore(appCtx *app.Context) error {
 	appCtx.Logger.Println()
 	appCtx.Logger.Infof("Creating restore of live data job for backup: %s", backupFile)
 
-	jobName := fmt.Sprintf("%s-%s", jobNameTemplate, time.Now().Format("20060102t150405"))
+	jobName := fmt.Sprintf("%s-%s", restoreNameTemplate, time.Now().Format("20060102t150405"))
 
 	if err = createRestoreJob(appCtx.K8sClient, appCtx.Namespace, jobName, backupFile, appCtx.Config); err != nil {
 		return fmt.Errorf("failed to create restore job: %w", err)
@@ -146,6 +146,7 @@ func liveRestore(appCtx *app.Context) error {
 
 	err = waitAndCleanupRestoreJob(appCtx.K8sClient, appCtx.Namespace, jobName, appCtx.Logger)
 	if err != nil {
+		logAfterJobResult(appCtx.Logger, checkJobName, false)
 		return err
 	}
 

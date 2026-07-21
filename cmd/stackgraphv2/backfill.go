@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	backfillNameTemplate = "stackgraph-backfill-v2"
+	backfillNameTemplate = "stackgraph-v2-backfill"
 	backfillScript       = "/backup-restore-scripts/restore-stackgraph-backup-v2-backfill.sh"
 )
 
@@ -56,8 +56,7 @@ func runBackfill(appCtx *app.Context) error {
 	err := waitAndCleanupBackfillJob(appCtx.K8sClient, appCtx.Namespace, jobName, appCtx.Logger)
 
 	if err != nil {
-		appCtx.Logger.Println()
-		appCtx.Logger.Infof("Backfill failed. It is possible to restart the backfill without starting a complete restore.")
+		logAfterJobResult(appCtx.Logger, checkJobName, false)
 		return err
 	}
 

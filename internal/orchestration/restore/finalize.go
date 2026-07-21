@@ -117,6 +117,7 @@ type CheckAndFinalizeParams struct {
 
 // CheckAndFinalize checks the status of a background restore job and cleans up resources
 // This is useful when a restore job was started with --background flag or was interrupted (Ctrl+C)
+// Returns whether the job succeeded
 func CheckAndFinalize(params CheckAndFinalizeParams) error {
 	// Get job
 	params.Log.Infof("Checking status of job: %s", params.JobName)
