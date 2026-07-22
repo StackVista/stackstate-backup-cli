@@ -85,6 +85,11 @@ func WaitAndFinalize(params WaitAndFinalizeParams) error {
 		// Still cleanup even if failed
 		params.Log.Println()
 		_ = CleanupResources(params.K8sClient, params.Namespace, params.JobName, "", params.Log, params.CleanupPVC)
+
+		// Scale up deployments that were scaled down before restore
+		if errScaleUp := params.ScaleUpFn(params.K8sClient, params.Namespace, params.ScaleSelector, params.Log); err != nil {
+			params.Log.Warningf("Failed to scale up workload: %v", errScaleUp)
+		}
 		return err
 	}
 
