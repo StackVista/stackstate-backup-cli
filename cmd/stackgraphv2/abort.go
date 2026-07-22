@@ -55,7 +55,7 @@ func runAbort(appCtx *app.Context) error {
 	err := waitAndCleanupAbortJob(appCtx.K8sClient, appCtx.Namespace, jobName, appCtx.Logger)
 
 	if err != nil {
-		logAfterJobResult(appCtx.Logger, checkJobName, false)
+		logAfterJobResult(appCtx.Logger, jobName, false)
 		return err
 	}
 

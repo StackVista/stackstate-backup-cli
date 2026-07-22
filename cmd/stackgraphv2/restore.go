@@ -146,7 +146,7 @@ func liveRestore(appCtx *app.Context) error {
 
 	err = waitAndCleanupRestoreJob(appCtx.K8sClient, appCtx.Namespace, jobName, appCtx.Logger)
 	if err != nil {
-		logAfterJobResult(appCtx.Logger, checkJobName, false)
+		logAfterJobResult(appCtx.Logger, jobName, false)
 		return err
 	}
 

@@ -56,7 +56,7 @@ func runBackfill(appCtx *app.Context) error {
 	err := waitAndCleanupBackfillJob(appCtx.K8sClient, appCtx.Namespace, jobName, appCtx.Logger)
 
 	if err != nil {
-		logAfterJobResult(appCtx.Logger, checkJobName, false)
+		logAfterJobResult(appCtx.Logger, jobName, false)
 		return err
 	}
 
