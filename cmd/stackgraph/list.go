@@ -3,7 +3,6 @@ package stackgraph
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -74,10 +73,7 @@ func runList(appCtx *app.Context) error {
 		return fmt.Errorf("failed to filter objects: %w", err)
 	}
 
-	// Sort by LastModified time (most recent first)
-	sort.Slice(filteredObjects, func(i, j int) bool {
-		return filteredObjects[i].LastModified.After(filteredObjects[j].LastModified)
-	})
+	s3client.SortByKeyDescending(filteredObjects)
 
 	if len(filteredObjects) == 0 {
 		appCtx.Formatter.PrintMessage("No backups found")

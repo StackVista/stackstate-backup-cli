@@ -3,7 +3,6 @@ package stackgraph
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -193,10 +192,7 @@ func getLatestBackup(k8sClient *k8s.Client, namespace string, config *config.Con
 		return "", fmt.Errorf("no backups found in bucket %s", bucket)
 	}
 
-	// Sort by LastModified time (most recent first)
-	sort.Slice(filteredObjects, func(i, j int) bool {
-		return filteredObjects[i].LastModified.After(filteredObjects[j].LastModified)
-	})
+	s3client.SortByKeyDescending(filteredObjects)
 	return filteredObjects[0].Key, nil
 }
 

@@ -3,6 +3,7 @@ package s3
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,6 +16,17 @@ type Object struct {
 	Key          string
 	LastModified time.Time
 	Size         int64
+}
+
+// SortByKeyDescending orders objects newest-first for backup names that embed a
+// lexicographically sortable timestamp (sts-backup-YYYYMMDD-HHMM...).
+// LastModified cannot be used as the ordering key: copying a bucket restamps it,
+// so `aws s3 sync` leaves every synced archive with the same value and the real
+// backup order is lost.
+func SortByKeyDescending(objects []Object) {
+	sort.Slice(objects, func(i, j int) bool {
+		return objects[i].Key > objects[j].Key
+	})
 }
 
 // FilterBackupObjects filters out backup part files ending with .digits.

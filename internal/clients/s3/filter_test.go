@@ -375,3 +375,40 @@ func TestFilterByPrefixAndRegex_PreservesMetadata(t *testing.T) {
 	assert.Equal(t, int64(1234567890), result[0].Size)
 	assert.Equal(t, now.Unix(), result[0].LastModified.Unix())
 }
+
+// TestSortByKeyDescending_IdenticalLastModified covers the case that broke `restore --latest`:
+// syncing a bucket gives every copied archive the same LastModified, so the ordering has to
+// come from the timestamp in the key.
+func TestSortByKeyDescending_IdenticalLastModified(t *testing.T) {
+	synced := time.Now()
+
+	objects := []Object{
+		{Key: "sts-backup-20260724-0642.graph.v2", LastModified: synced},
+		{Key: "sts-backup-20260724-0701.graph.v2", LastModified: synced},
+		{Key: "sts-backup-20260723-0300.graph.v2", LastModified: synced},
+	}
+
+	SortByKeyDescending(objects)
+
+	assert.Equal(t, []string{
+		"sts-backup-20260724-0701.graph.v2",
+		"sts-backup-20260724-0642.graph.v2",
+		"sts-backup-20260723-0300.graph.v2",
+	}, []string{objects[0].Key, objects[1].Key, objects[2].Key})
+}
+
+// TestSortByKeyDescending_IgnoresLastModified tests that a restamped LastModified which
+// contradicts the backup name does not affect the ordering.
+func TestSortByKeyDescending_IgnoresLastModified(t *testing.T) {
+	now := time.Now()
+
+	objects := []Object{
+		{Key: "sts-backup-20260101-0300.graph", LastModified: now},
+		{Key: "sts-backup-20260201-0300.graph", LastModified: now.Add(-48 * time.Hour)},
+	}
+
+	SortByKeyDescending(objects)
+
+	assert.Equal(t, "sts-backup-20260201-0300.graph", objects[0].Key)
+	assert.Equal(t, "sts-backup-20260101-0300.graph", objects[1].Key)
+}
