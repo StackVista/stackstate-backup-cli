@@ -412,6 +412,96 @@ func TestClient_RestoreSnapshot(t *testing.T) {
 	}
 }
 
+func TestClient_GetIndicesHealth(t *testing.T) {
+	tests := []struct {
+		name           string
+		responseBody   string
+		expectedCount  int
+		assertContents func(t *testing.T, health map[string]IndexHealth)
+	}{
+		{
+			name: "indices are keyed by name",
+			responseBody: `{
+				"cluster_name": "test",
+				"status": "green",
+				"indices": {
+					"sts_topology": {
+						"status": "green",
+						"number_of_shards": 3,
+						"number_of_replicas": 1,
+						"active_primary_shards": 3,
+						"active_shards": 6,
+						"initializing_shards": 0,
+						"unassigned_shards": 0
+					},
+					"sts_events": {
+						"status": "yellow",
+						"number_of_shards": 1,
+						"number_of_replicas": 1,
+						"active_primary_shards": 1,
+						"active_shards": 1,
+						"initializing_shards": 0,
+						"unassigned_shards": 1
+					}
+				}
+			}`,
+			expectedCount: 2,
+			assertContents: func(t *testing.T, health map[string]IndexHealth) {
+				assert.Equal(t, 3, health["sts_topology"].NumberOfShards)
+				assert.Equal(t, 3, health["sts_topology"].ActivePrimaryShards)
+				assert.Equal(t, "yellow", health["sts_events"].Status)
+				assert.Equal(t, 1, health["sts_events"].UnassignedShards)
+			},
+		},
+		{
+			name:          "no indices section yields an empty map",
+			responseBody:  `{"cluster_name": "test", "status": "green"}`,
+			expectedCount: 0,
+			assertContents: func(t *testing.T, health map[string]IndexHealth) {
+				assert.NotNil(t, health)
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := mockESServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/_cluster/health", r.URL.Path)
+				assert.Equal(t, "indices", r.URL.Query().Get("level"))
+
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(tt.responseBody))
+			}))
+			defer server.Close()
+
+			client, err := NewClient(server.URL)
+			require.NoError(t, err)
+
+			health, err := client.GetIndicesHealth()
+
+			require.NoError(t, err)
+			assert.Len(t, health, tt.expectedCount)
+			tt.assertContents(t, health)
+		})
+	}
+}
+
+func TestClient_GetIndicesHealth_ElasticsearchError(t *testing.T) {
+	server := mockESServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error": "boom"}`))
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	require.NoError(t, err)
+
+	health, err := client.GetIndicesHealth()
+
+	require.Error(t, err)
+	assert.Nil(t, health)
+}
+
 func TestNewClient(t *testing.T) {
 	client, err := NewClient("http://localhost:9200")
 	require.NoError(t, err)

@@ -94,8 +94,8 @@ func (m *mockESClientForRestore) ConfigureSLMPolicy(_, _, _, _, _, _ string, _, 
 	return fmt.Errorf("not implemented")
 }
 
-func (m *mockESClientForRestore) GetRestoreStatus(_, _ string) (string, bool, error) {
-	return "SUCCESS", true, nil
+func (m *mockESClientForRestore) GetIndicesHealth() (map[string]elasticsearch.IndexHealth, error) {
+	return nil, fmt.Errorf("not implemented")
 }
 
 // TestRestoreCmd_Unit tests the command structure

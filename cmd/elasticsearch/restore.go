@@ -26,11 +26,12 @@ const (
 
 // Restore command flags
 var (
-	snapshotName     string
-	useLatest        bool
-	runBackground    bool
-	skipConfirmation bool
-	allowPartial     bool
+	snapshotName        string
+	useLatest           bool
+	runBackground       bool
+	skipConfirmation    bool
+	allowPartial        bool
+	restoreNoProgressIn time.Duration
 )
 
 func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
@@ -47,6 +48,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&runBackground, "background", false, "Run restore in background without waiting for completion")
 	cmd.Flags().BoolVarP(&skipConfirmation, "yes", "y", false, "Skip confirmation prompt")
 	cmd.Flags().BoolVar(&allowPartial, "allow-partial", false, "Allow restoring from a PARTIAL snapshot without extra confirmation")
+	cmd.Flags().DurationVar(&restoreNoProgressIn, "no-progress-timeout", defaultNoProgressTimeout, noProgressTimeoutUsage)
 	cmd.MarkFlagsMutuallyExclusive("snapshot", "latest")
 	cmd.MarkFlagsOneRequired("snapshot", "latest")
 	return cmd
@@ -145,7 +147,7 @@ func runRestore(appCtx *app.Context) error {
 		return nil
 	}
 
-	return checkAndFinalize(esClient, appCtx, repository, selectedSnapshot, !runBackground)
+	return checkAndFinalize(esClient, appCtx, repository, selectedSnapshot, !runBackground, restoreNoProgressIn)
 }
 
 // getLatestSnapshot retrieves the most recent snapshot from the repository
