@@ -390,52 +390,43 @@ func (c *Client) RestoreSnapshot(repository, snapshotName, indicesPattern string
 	return nil
 }
 
-// RecoveryInfo represents the recovery status of a shard from _cat/recovery API
-type RecoveryInfo struct {
-	Index      string `json:"index"`
-	Shard      string `json:"shard"`
-	Type       string `json:"type"`
-	Stage      string `json:"stage"`
-	Repository string `json:"repository"`
-	Snapshot   string `json:"snapshot"`
+// IndexHealth is the per-index section of the _cluster/health response
+type IndexHealth struct {
+	Status              string `json:"status"`
+	NumberOfShards      int    `json:"number_of_shards"`
+	NumberOfReplicas    int    `json:"number_of_replicas"`
+	ActivePrimaryShards int    `json:"active_primary_shards"`
+	ActiveShards        int    `json:"active_shards"`
+	InitializingShards  int    `json:"initializing_shards"`
+	UnassignedShards    int    `json:"unassigned_shards"`
 }
 
-// GetRestoreStatus checks the status of a restore operation by examining active shard recoveries.
-// When a snapshot is being restored, shards are recovered with type "snapshot".
-// Returns: (statusMessage, isComplete, error)
-// Status can be: "IN_PROGRESS", "SUCCESS"
-func (c *Client) GetRestoreStatus(repository, snapshotName string) (string, bool, error) {
-	// Use _cat/recovery API to check for active snapshot recoveries.
-	// This shows shards that are currently being recovered from a snapshot.
-	res, err := c.es.Cat.Recovery(
-		c.es.Cat.Recovery.WithContext(context.Background()),
-		c.es.Cat.Recovery.WithFormat("json"),
-		c.es.Cat.Recovery.WithActiveOnly(true),
-		c.es.Cat.Recovery.WithH("index,shard,type,stage,repository,snapshot"),
+// GetIndicesHealth returns per-index cluster health keyed by index name.
+// Indices that do not exist are simply absent from the result.
+func (c *Client) GetIndicesHealth() (map[string]IndexHealth, error) {
+	res, err := c.es.Cluster.Health(
+		c.es.Cluster.Health.WithContext(context.Background()),
+		c.es.Cluster.Health.WithLevel("indices"),
 	)
 	if err != nil {
-		return "", false, fmt.Errorf("failed to get recovery status: %w", err)
+		return nil, fmt.Errorf("failed to get cluster health: %w", err)
 	}
 	defer res.Body.Close()
 
 	if res.IsError() {
-		return "", false, fmt.Errorf("elasticsearch returned error: %s", res.String())
+		return nil, fmt.Errorf("elasticsearch returned error: %s", res.String())
 	}
 
-	var recoveries []RecoveryInfo
-	if err := json.NewDecoder(res.Body).Decode(&recoveries); err != nil {
-		return "", false, fmt.Errorf("failed to decode response: %w", err)
+	var health struct {
+		Indices map[string]IndexHealth `json:"indices"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&health); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// Check if any active recovery is from the specified snapshot
-	for _, recovery := range recoveries {
-		if recovery.Type == "snapshot" &&
-			recovery.Repository == repository &&
-			recovery.Snapshot == snapshotName {
-			return StatusInProgress, false, nil
-		}
+	if health.Indices == nil {
+		health.Indices = map[string]IndexHealth{}
 	}
 
-	// No active recoveries from this snapshot - restore is complete
-	return StatusSuccess, true, nil
+	return health.Indices, nil
 }
