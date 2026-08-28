@@ -1,83 +1,68 @@
 package portforward
 
 import (
+	"errors"
 	"testing"
 
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes/fake"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
-	"github.com/stackvista/stackstate-backup-cli/internal/clients/k8s"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
 )
 
-func TestSetupPortForward_ServiceNotFound(t *testing.T) {
-	fakeClientset := fake.NewSimpleClientset()
-	client := k8s.NewTestClient(fakeClientset)
-	log := logger.New(true, false)
-
-	_, err := SetupPortForward(client, "default", "nonexistent-service", 9200, log)
-	if err == nil {
-		t.Fatal("expected error for nonexistent service, got nil")
-	}
+type portForwardResult struct {
+	stopChan  chan struct{}
+	localPort int
+	err       error
 }
 
-func TestSetupPortForward_NoPodsFound(t *testing.T) {
-	fakeClientset := fake.NewSimpleClientset(
-		&corev1.Service{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-service",
-				Namespace: "default",
-			},
-			Spec: corev1.ServiceSpec{
-				Selector: map[string]string{
-					"app": "test",
-				},
-			},
-		},
-	)
-	client := k8s.NewTestClient(fakeClientset)
-	log := logger.New(true, false)
-
-	_, err := SetupPortForward(client, "default", "test-service", 9200, log)
-	if err == nil {
-		t.Fatal("expected error for service with no pods, got nil")
-	}
+type fakeClient struct {
+	results []portForwardResult
+	calls   int
 }
 
-func TestSetupPortForward_NoRunningPods(t *testing.T) {
-	fakeClientset := fake.NewSimpleClientset(
-		&corev1.Service{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-service",
-				Namespace: "default",
-			},
-			Spec: corev1.ServiceSpec{
-				Selector: map[string]string{
-					"app": "test",
-				},
-			},
+func (f *fakeClient) PortForwardService(_, _ string, _ int) (chan struct{}, int, error) {
+	result := f.results[f.calls]
+	f.calls++
+	return result.stopChan, result.localPort, result.err
+}
+
+func TestSetupPortForward_RetriesTransientFailure(t *testing.T) {
+	stopChan := make(chan struct{})
+	client := &fakeClient{
+		results: []portForwardResult{
+			{err: errors.New("connection reset by peer")},
+			{err: errors.New("error upgrading connection")},
+			{stopChan: stopChan, localPort: 43210},
 		},
-		&corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      "test-pod",
-				Namespace: "default",
-				Labels: map[string]string{
-					"app": "test",
-				},
-			},
-			Status: corev1.PodStatus{
-				Phase: corev1.PodPending,
-			},
-		},
-	)
-	client := k8s.NewTestClient(fakeClientset)
+	}
 	log := logger.New(true, false)
 
-	_, err := SetupPortForward(client, "default", "test-service", 9200, log)
-	if err == nil {
-		t.Fatal("expected error for service with no running pods, got nil")
+	result, err := setupPortForward(client, "default", "test-service", 9200, log, 3, 0)
+
+	require.NoError(t, err)
+	assert.Equal(t, 3, client.calls)
+	assert.Equal(t, stopChan, result.StopChan)
+	assert.Equal(t, 43210, result.LocalPort)
+}
+
+func TestSetupPortForward_ReturnsLastErrorAfterRetries(t *testing.T) {
+	client := &fakeClient{
+		results: []portForwardResult{
+			{err: errors.New("first failure")},
+			{err: errors.New("second failure")},
+			{err: errors.New("last failure")},
+		},
 	}
+	log := logger.New(true, false)
+
+	result, err := setupPortForward(client, "default", "test-service", 9200, log, 3, 0)
+
+	require.Error(t, err)
+	assert.Nil(t, result)
+	assert.Equal(t, 3, client.calls)
+	assert.ErrorContains(t, err, "failed to setup port-forward after 3 attempts")
+	assert.ErrorContains(t, err, "last failure")
 }
 
 func TestConn_Structure(t *testing.T) {
