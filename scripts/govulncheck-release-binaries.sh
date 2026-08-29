@@ -3,10 +3,13 @@
 # Binary-mode govulncheck can only judge which packages are linked while the
 # release binaries keep their symbol table, so stripping it again (`-s` in the
 # GoReleaser ldflags) makes this fail instead of publishing artifacts whose
-# reachability nobody can assess.
+# reachability nobody can assess. The symbol table is asserted separately rather
+# than inferred from govulncheck's exit status, which would only catch a stripped
+# binary while some advisory still matched one of its modules.
 
 set -euo pipefail
 
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 rootfs_dir="${1:-artifact-scan/rootfs}"
 govulncheck_version="${GOVULNCHECK_VERSION:-v1.6.0}"
 expected_binaries=5
@@ -20,6 +23,8 @@ if [[ "${#binaries[@]}" -ne "${expected_binaries}" ]]; then
   echo "Expected ${expected_binaries} release binaries under '${rootfs_dir}', found ${#binaries[@]}" >&2
   exit 1
 fi
+
+"${script_dir}/assert-go-symbols.sh" "${binaries[@]}"
 
 status=0
 for binary in "${binaries[@]}"; do
