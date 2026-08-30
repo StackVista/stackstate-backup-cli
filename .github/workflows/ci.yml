@@ -126,6 +126,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: read
+    env:
+      GOVULNCHECK_VERSION: v1.6.0
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -135,8 +137,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Check reachable Go vulnerabilities
-        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+      - name: Check reachable Go vulnerabilities in the source
+        run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
+      - name: Test that the symbol-table guard rejects a stripped binary
+        run: scripts/assert-go-symbols-test.sh
       - name: Build GoReleaser snapshot artifacts
         uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         with:
@@ -145,6 +149,8 @@ jobs:
           args: release --snapshot --clean --skip=publish
       - name: Verify and prepare all release artifacts
         run: scripts/prepare-artifact-scan-rootfs.sh
+      - name: Check reachable Go vulnerabilities in each release binary
+        run: scripts/govulncheck-release-binaries.sh
       - name: Import release artifacts for scanning
         run: docker import artifact-scan/rootfs.tar stackstate-backup-cli:security-scan
       - name: Scan release artifacts with Trivy, Grype, and VEX
