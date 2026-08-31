@@ -1,5 +1,7 @@
 bin/
 dist/
+artifact-scan/
+reports/
 .idea/
 sts-backup
 stackstate-backup-cli

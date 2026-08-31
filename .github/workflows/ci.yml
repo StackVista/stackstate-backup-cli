@@ -12,6 +12,12 @@ on:
   # Allows to run this via the Actions tab
   workflow_dispatch:
 
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     permissions:
@@ -25,40 +31,47 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          go-version: "1.25.x"
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
           cache: false
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
         with:
           # Require: The version of golangci-lint to use.
           # When `install-mode` is `binary` (default) the value can be v1.2 or v1.2.3 or `latest` to use the latest version.
           # When `install-mode` is `goinstall` the value can be v1.2.3, `latest`, or the hash of a commit.
-          version: v2.5.0
+          version: v2.11.3
 
   check-license:
     name: License scan
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
     env:
       REPORT_FILE: gl-license-scanning-report.json
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          go-version: "1.25.x"
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: License scanning
         run: |
-          go install github.com/google/go-licenses@latest
+          go install github.com/google/go-licenses@v1.6.0
           go-licenses check . --disallowed_types=forbidden,restricted
       - name: Generate license report
         run: |
           go-licenses report . > licenses.csv
       - name: Save license scan report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: license_scanning
           path: licenses.csv
@@ -67,14 +80,19 @@ jobs:
     name: Go releaser check
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          go-version: "1.25.x"
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v5
+        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         with:
           # either 'goreleaser' (default) or 'goreleaser-pro'
           distribution: goreleaser
@@ -88,33 +106,96 @@ jobs:
       - lint
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
 
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          go-version: "1.25.x"
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: Run tests
         run: go test -v ./...
+
+  security:
+    name: GoReleaser artifacts - govulncheck, Trivy secrets/vulns, Grype
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      GOVULNCHECK_VERSION: v1.6.0
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Check reachable Go vulnerabilities in the source
+        run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
+      - name: Test that the symbol-table guard rejects a stripped binary
+        run: scripts/assert-go-symbols-test.sh
+      - name: Build GoReleaser snapshot artifacts
+        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
+        with:
+          distribution: goreleaser
+          version: v1.25.1
+          args: release --snapshot --clean --skip=publish
+      - name: Verify and prepare all release artifacts
+        run: scripts/prepare-artifact-scan-rootfs.sh
+      - name: Check reachable Go vulnerabilities in each release binary
+        run: scripts/govulncheck-release-binaries.sh
+      - name: Import release artifacts for scanning
+        run: docker import artifact-scan/rootfs.tar stackstate-backup-cli:security-scan
+      - name: Scan release artifacts with Trivy, Grype, and VEX
+        uses: StackVista/image-pipeline/.github/actions/scan-image@6284a6fc006a7cc46a7f00d02c50d5f21b117b63 # main as of 2026-07-10
+        with:
+          image: stackstate-backup-cli:security-scan
+          mode: gate
+          severity: CRITICAL,HIGH,MEDIUM,LOW
+          with-grype: "true"
+          upload-sarif: "false"
+      - name: Upload security evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-artifact-security
+          path: |
+            artifact-scan/metadata/
+            dist/*_checksums.txt
+            reports/
+          if-no-files-found: warn
 
   publish:
     name: Publish the release
     if: ${{ github.ref_type == 'tag' }}
     needs:
       - test
+      - security
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write
     env:
       TAG: ${{ github.ref_name }}
       S3_BUCKET: "s3://cli-dl.stackstate.com/stackstate-backup-cli/"
       GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          go-version: "1.25.x"
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: Go releaser publish
-        uses: goreleaser/goreleaser-action@v5
+        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -127,10 +208,10 @@ jobs:
           version: v1.25.1
           args: release
       - name: Write latest version to file
-        run: mkdir -p dist && echo "${{ env.TAG }}" > dist/LATEST_VERSION
+        run: mkdir -p dist && echo "${TAG}" > dist/LATEST_VERSION
 
       - name: Authenticate with AWS
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -138,5 +219,5 @@ jobs:
 
       - name: Publish latest version to S3
         run: |
-          echo "aws s3 cp dist/LATEST_VERSION ${{ env.S3_BUCKET }}"
-          aws s3 cp dist/LATEST_VERSION ${{ env.S3_BUCKET }}
+          echo "aws s3 cp dist/LATEST_VERSION ${S3_BUCKET}"
+          aws s3 cp dist/LATEST_VERSION "${S3_BUCKET}"
