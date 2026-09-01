@@ -30,7 +30,8 @@ func WaitForAPIRestore(
 		<-ticker.C
 		statusMsg, isComplete, err := checkStatusFn()
 		if err != nil {
-			return fmt.Errorf("failed to check restore status: %w", err)
+			// Not necessarily a failed check: a status function may also stop the wait deliberately.
+			return fmt.Errorf("stopped waiting for restore: %w", err)
 		}
 
 		log.Debugf("Restore status: %s (complete: %v)", statusMsg, isComplete)
@@ -53,7 +54,7 @@ func PrintAPIWaitingMessage(serviceName, identifier, namespace string, log *logg
 	log.Println()
 	log.Infof("You can safely interrupt this command with Ctrl+C.")
 	log.Infof("To check status and finalize later, run:")
-	log.Infof("  sts-backup %s check-and-finalize --operation-id %s -n %s", serviceName, identifier, namespace)
+	log.Infof("  sts-backup %s check-and-finalize --operation-id %s --wait -n %s", serviceName, identifier, namespace)
 }
 
 // PrintAPIRunningRestoreStatus prints status and instructions for a running restore

@@ -7,9 +7,9 @@ type Interface interface {
 	ListSnapshots(repository string) ([]Snapshot, error)
 	GetSnapshot(repository, snapshotName string) (*Snapshot, error)
 	RestoreSnapshot(repository, snapshotName, indicesPattern string, partial bool) error
-	GetRestoreStatus(repository, snapshotName string) (string, bool, error)
 
 	// Index operations
+	GetIndicesHealth() (map[string]IndexHealth, error)
 	ListIndices(pattern string) ([]string, error)
 	ListIndicesDetailed() ([]IndexInfo, error)
 	DeleteIndex(index string) error

@@ -197,7 +197,7 @@ func buildEnvVar(extraEnvVar []corev1.EnvVar, config *config.Config) []corev1.En
 	commonVar := []corev1.EnvVar{
 		{Name: "BACKUP_CONFIGURATION_BUCKET_NAME", Value: config.Settings.Bucket},
 		{Name: "BACKUP_CONFIGURATION_S3_PREFIX", Value: config.Settings.S3Prefix},
-		{Name: "MINIO_ENDPOINT", Value: fmt.Sprintf("%s:%d", storageService.Name, storageService.Port)},
+		{Name: "S3_ENDPOINT", Value: fmt.Sprintf("%s:%d", storageService.Name, storageService.Port)},
 		{Name: "STACKSTATE_BASE_URL", Value: config.GetBaseURL()},
 		{Name: "RECEIVER_BASE_URL", Value: config.GetReceiverBaseURL()},
 		{Name: "PLATFORM_VERSION", Value: config.GetPlatformVersion()},
