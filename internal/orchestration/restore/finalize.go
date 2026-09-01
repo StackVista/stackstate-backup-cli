@@ -39,6 +39,12 @@ type HandleCompletedJobParams struct {
 // HandleCompletedJob handles a job that's already complete
 // This includes printing status, fetching logs on failure, scaling up, and cleanup
 func HandleCompletedJob(params HandleCompletedJobParams) error {
+	defer func() {
+		// Cleanup resources
+		params.Log.Println()
+		_ = CleanupResources(params.K8sClient, params.Namespace, params.JobName, "", params.Log, params.CleanupPVC)
+	}()
+
 	params.Log.Println()
 	if params.JobSucceeded {
 		params.Log.Successf("Job completed successfully: %s", params.JobName)
@@ -48,19 +54,18 @@ func HandleCompletedJob(params HandleCompletedJobParams) error {
 		if err := params.ScaleUpFn(params.K8sClient, params.Namespace, params.ScaleSelector, params.Log); err != nil {
 			params.Log.Warningf("Failed to scale up workload: %v", err)
 		}
-	} else {
-		params.Log.Errorf("Job failed: %s", params.JobName)
-		params.Log.Println()
-		params.Log.Infof("Fetching logs...")
-		params.Log.Println()
-		if err := PrintJobLogs(params.K8sClient, params.Namespace, params.JobName, params.Log); err != nil {
-			params.Log.Warningf("Failed to fetch logs: %v", err)
-		}
+
+		return nil
 	}
 
-	// Cleanup resources
+	params.Log.Errorf("Job failed: %s", params.JobName)
 	params.Log.Println()
-	return CleanupResources(params.K8sClient, params.Namespace, params.JobName, "", params.Log, params.CleanupPVC)
+	params.Log.Infof("Fetching logs...")
+	params.Log.Println()
+	if err := PrintJobLogs(params.K8sClient, params.Namespace, params.JobName, params.Log); err != nil {
+		params.Log.Warningf("Failed to fetch logs: %v", err)
+	}
+	return fmt.Errorf("job failed: %s", params.JobName)
 }
 
 // WaitAndFinalizeParams contains parameters for WaitAndFinalize
