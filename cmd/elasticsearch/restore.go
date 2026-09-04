@@ -2,6 +2,7 @@ package elasticsearch
 
 import (
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -96,6 +97,13 @@ func runRestore(appCtx *app.Context) error {
 		return err
 	}
 
+	// Reject snapshots that cannot be monitored safely before scaling down workloads or deleting
+	// any indices. check-and-finalize repeats this validation for independently resumed operations.
+	restoreIndices, err := restorableSnapshotIndices(snapshotDetails, appCtx.Config.Elasticsearch.Restore)
+	if err != nil {
+		return err
+	}
+
 	// Confirm with user before starting destructive operation
 	if !skipConfirmation {
 		appCtx.Logger.Println()
@@ -137,7 +145,7 @@ func runRestore(appCtx *app.Context) error {
 	appCtx.Logger.Println()
 	isPartial := snapshotDetails.State == "PARTIAL"
 	appCtx.Logger.Infof("Triggering restore for snapshot: %s", selectedSnapshot)
-	if err := esClient.RestoreSnapshot(repository, selectedSnapshot, appCtx.Config.Elasticsearch.Restore.IndicesPattern, isPartial); err != nil {
+	if err := esClient.RestoreSnapshot(repository, selectedSnapshot, strings.Join(restoreIndices, ","), isPartial); err != nil {
 		return fmt.Errorf("failed to trigger restore: %w", err)
 	}
 	appCtx.Logger.Successf("Restore triggered successfully")
@@ -211,6 +219,10 @@ func deleteAllSTSIndices(esClient es.Interface, appCtx *app.Context) error {
 	}
 
 	stsIndices := filterSTSIndices(allIndices, appCtx.Config.Elasticsearch.Restore.IndexPrefix, appCtx.Config.Elasticsearch.Restore.DatastreamIndexPrefix)
+	stsIndices, err = filterIndicesByPattern(stsIndices, appCtx.Config.Elasticsearch.Restore.IndicesPattern)
+	if err != nil {
+		return fmt.Errorf("invalid Elasticsearch restore indicesPattern: %w", err)
+	}
 
 	if len(stsIndices) == 0 {
 		appCtx.Logger.Infof("No STS indices found to delete")
@@ -246,17 +258,79 @@ func deleteAllSTSIndices(esClient es.Interface, appCtx *app.Context) error {
 func filterSTSIndices(allIndices []string, indexPrefix, datastreamPrefix string) []string {
 	var stsIndices []string
 	for _, index := range allIndices {
-		if strings.HasPrefix(index, indexPrefix) || strings.HasPrefix(index, datastreamPrefix) {
+		if strings.HasPrefix(index, indexPrefix) || isDatastreamBackingIndex(index, datastreamPrefix) {
 			stsIndices = append(stsIndices, index)
 		}
 	}
 	return stsIndices
 }
 
+func filterIndicesByPattern(indices []string, expression string) ([]string, error) {
+	type pattern struct {
+		value   string
+		exclude bool
+	}
+
+	var patterns []pattern
+	hasInclude := false
+	for _, value := range strings.Split(expression, ",") {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, fmt.Errorf("contains an empty pattern")
+		}
+
+		exclude := strings.HasPrefix(value, "-")
+		if exclude {
+			value = strings.TrimPrefix(value, "-")
+			if value == "" {
+				return nil, fmt.Errorf("contains an empty exclusion")
+			}
+		} else {
+			hasInclude = true
+		}
+
+		if value == "_all" {
+			value = "*"
+		}
+		if _, err := path.Match(value, ""); err != nil {
+			return nil, fmt.Errorf("invalid pattern %q: %w", value, err)
+		}
+		patterns = append(patterns, pattern{value: value, exclude: exclude})
+	}
+	if !hasInclude {
+		return nil, fmt.Errorf("must contain at least one inclusion pattern")
+	}
+
+	var matched []string
+	for _, index := range indices {
+		included := false
+		excluded := false
+		for _, candidate := range patterns {
+			isMatch, err := path.Match(candidate.value, index)
+			if err != nil {
+				return nil, fmt.Errorf("invalid pattern %q: %w", candidate.value, err)
+			}
+			if !isMatch {
+				continue
+			}
+			if candidate.exclude {
+				excluded = true
+			} else {
+				included = true
+			}
+		}
+		if included && !excluded {
+			matched = append(matched, index)
+		}
+	}
+
+	return matched, nil
+}
+
 // hasDatastreamIndices checks if any indices belong to a datastream
 func hasDatastreamIndices(indices []string, datastreamPrefix string) bool {
 	for _, index := range indices {
-		if strings.HasPrefix(index, datastreamPrefix+"-") {
+		if isDatastreamBackingIndex(index, datastreamPrefix) {
 			return true
 		}
 	}

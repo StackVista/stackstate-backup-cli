@@ -2,6 +2,8 @@ package elasticsearch
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -167,13 +169,39 @@ func expectedRestoredIndices(esClient es.Interface, appCtx *app.Context, reposit
 		return nil, fmt.Errorf("failed to get snapshot details: %w", err)
 	}
 
-	expected := filterSTSIndices(
+	return restorableSnapshotIndices(snapshot, appCtx.Config.Elasticsearch.Restore)
+}
+
+func restorableSnapshotIndices(snapshot *es.Snapshot, restoreConfig config.RestoreConfig) ([]string, error) {
+	candidates := filterSTSIndices(
 		snapshot.Indices,
-		appCtx.Config.Elasticsearch.Restore.IndexPrefix,
-		appCtx.Config.Elasticsearch.Restore.DatastreamIndexPrefix,
+		restoreConfig.IndexPrefix,
+		restoreConfig.DatastreamIndexPrefix,
 	)
+	expected, err := filterIndicesByPattern(candidates, restoreConfig.IndicesPattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Elasticsearch restore indicesPattern: %w", err)
+	}
 	if len(expected) == 0 {
-		return nil, fmt.Errorf("snapshot %s contains no indices matching the configured STS prefixes", snapshotName)
+		return nil, fmt.Errorf(
+			"snapshot %s contains no indices matching the configured STS prefixes and indicesPattern",
+			snapshot.Snapshot,
+		)
+	}
+
+	hasRequiredIndex := false
+	for _, index := range expected {
+		if !isDatastreamBackingIndex(index, restoreConfig.DatastreamIndexPrefix) {
+			hasRequiredIndex = true
+			break
+		}
+	}
+	if !hasRequiredIndex {
+		return nil, fmt.Errorf(
+			"snapshot %s contains only lifecycle-managed data-stream backing indices; "+
+				"restore completion cannot be determined safely",
+			snapshot.Snapshot,
+		)
 	}
 
 	return expected, nil
@@ -183,17 +211,33 @@ func expectedRestoredIndices(esClient es.Interface, appCtx *app.Context, reposit
 // cluster with fewer nodes than replicas keeps them unassigned forever, so requiring green would
 // never complete there.
 type restoreProgress struct {
-	// indicesRestored counts expected indices with every primary shard active, and decides completion.
+	// indicesRestored counts present expected indices with every primary shard active.
 	indicesRestored int
 	// primariesActive counts active primary shards, and drives stall detection. Whole indices are
 	// too coarse for that: a large multi-shard index can restore for a long time without finishing.
 	primariesActive int
+	// requiredExpected and requiredRestored track indices that ILM cannot remove.
+	requiredExpected int
+	requiredRestored int
+	// lifecycleExpected and lifecyclePresent track data-stream backing indices. ILM can remove an
+	// oldest contiguous prefix while the restore is running.
+	lifecycleExpected int
+	lifecyclePresent  int
+	lifecycleMissing  int
+	lifecycleGap      bool
 }
 
-func measureRestore(expected []string, health map[string]es.IndexHealth) restoreProgress {
+func measureRestore(expected []string, datastreamPrefix string, health map[string]es.IndexHealth) restoreProgress {
 	var progress restoreProgress
+	var lifecycleIndices []string
 
 	for _, index := range expected {
+		if isDatastreamBackingIndex(index, datastreamPrefix) {
+			lifecycleIndices = append(lifecycleIndices, index)
+			continue
+		}
+
+		progress.requiredExpected++
 		indexHealth, exists := health[index]
 		if !exists {
 			continue
@@ -202,10 +246,57 @@ func measureRestore(expected []string, health map[string]es.IndexHealth) restore
 		progress.primariesActive += indexHealth.ActivePrimaryShards
 		if indexHealth.NumberOfShards > 0 && indexHealth.ActivePrimaryShards == indexHealth.NumberOfShards {
 			progress.indicesRestored++
+			progress.requiredRestored++
+		}
+	}
+
+	sort.Strings(lifecycleIndices)
+	progress.lifecycleExpected = len(lifecycleIndices)
+
+	seenPresent := false
+	for _, index := range lifecycleIndices {
+		indexHealth, exists := health[index]
+		if !exists {
+			progress.lifecycleMissing++
+			if seenPresent {
+				progress.lifecycleGap = true
+			}
+			continue
+		}
+
+		seenPresent = true
+		progress.lifecyclePresent++
+		progress.primariesActive += indexHealth.ActivePrimaryShards
+		if indexHealth.NumberOfShards > 0 && indexHealth.ActivePrimaryShards == indexHealth.NumberOfShards {
+			progress.indicesRestored++
 		}
 	}
 
 	return progress
+}
+
+func isDatastreamBackingIndex(index, datastreamPrefix string) bool {
+	return strings.HasPrefix(index, datastreamPrefix+"-")
+}
+
+func (p restoreProgress) complete() bool {
+	if p.requiredExpected == 0 {
+		return false
+	}
+
+	if p.requiredRestored != p.requiredExpected {
+		return false
+	}
+
+	// Required indices prove the restore's cluster-state update has applied; target index metadata
+	// is created together before shard recovery starts.
+	if p.lifecycleExpected == 0 || p.lifecyclePresent == 0 {
+		return true
+	}
+
+	// With any backing indices left, only an oldest prefix may be absent.
+	return !p.lifecycleGap &&
+		p.indicesRestored == p.requiredRestored+p.lifecyclePresent
 }
 
 type indicesHealthGetter interface {
@@ -219,10 +310,12 @@ func newRestoreStatusFn(
 	esClient indicesHealthGetter,
 	log *logger.Logger,
 	expected []string,
+	datastreamPrefix string,
 	noProgressTimeout time.Duration,
 	maxErrors int,
 ) func() (string, bool, error) {
 	lastPrimariesActive := -1
+	lastLifecyclePresent := -1
 	lastProgressAt := time.Now()
 	errCount := 0
 
@@ -240,29 +333,49 @@ func newRestoreStatusFn(
 		}
 		errCount = 0
 
-		progress := measureRestore(expected, health)
-		if progress.indicesRestored == len(expected) {
+		progress := measureRestore(expected, datastreamPrefix, health)
+		if progress.complete() {
+			if progress.lifecycleMissing > 0 {
+				indexWord := "indices"
+				if progress.lifecycleMissing == 1 {
+					indexWord = "index"
+				}
+				log.Infof(
+					"Restore complete; %d oldest data-stream backing %s no longer present, consistent with lifecycle retention",
+					progress.lifecycleMissing, indexWord,
+				)
+			}
 			return es.StatusSuccess, true, nil
 		}
 
-		if progress.primariesActive != lastPrimariesActive {
+		lifecycleRemoved := lastLifecyclePresent >= 0 && progress.lifecyclePresent < lastLifecyclePresent
+		lastLifecyclePresent = progress.lifecyclePresent
+
+		if lifecycleRemoved && progress.primariesActive < lastPrimariesActive {
+			// An ILM deletion makes totals before and after this poll incomparable. Rebaseline
+			// without treating the deletion as progress or failing before a later shard increase
+			// can be observed.
+			lastPrimariesActive = progress.primariesActive
+		}
+
+		if progress.primariesActive > lastPrimariesActive {
 			lastPrimariesActive = progress.primariesActive
 			lastProgressAt = time.Now()
-		} else if noProgressTimeout > 0 && time.Since(lastProgressAt) > noProgressTimeout {
+		} else if !lifecycleRemoved && noProgressTimeout > 0 && time.Since(lastProgressAt) > noProgressTimeout {
 			// Deliberately not reported as a failed restore: all this establishes is that no progress
 			// was observed from here. Restarting a restore deletes every STS index first, so a caller
 			// that reads this as "failed" and retries would destroy a restore that is merely slow.
 			return "", false, fmt.Errorf(
 				"elasticsearch restore stalled: no primary shard finished restoring in %s "+
-					"(%d of %d indices complete, %d primaries active); "+
+					"(%d of %d indices present and complete, %d lifecycle-managed indices absent, %d primaries active); "+
 					"it may still be running server-side, so check before restarting it",
-				noProgressTimeout, progress.indicesRestored, len(expected), progress.primariesActive,
+				noProgressTimeout, progress.indicesRestored, len(expected), progress.lifecycleMissing, progress.primariesActive,
 			)
 		}
 
 		log.Debugf(
-			"Restored %d of %d indices (%d primaries active)",
-			progress.indicesRestored, len(expected), progress.primariesActive,
+			"Restored %d of %d indices (%d lifecycle-managed indices absent, %d primaries active)",
+			progress.indicesRestored, len(expected), progress.lifecycleMissing, progress.primariesActive,
 		)
 
 		return es.StatusInProgress, false, nil
@@ -291,7 +404,14 @@ func checkAndFinalize(
 		maxErrors = 1
 	}
 
-	statusFn := newRestoreStatusFn(healthClient, appCtx.Logger, expected, noProgressTimeout, maxErrors)
+	statusFn := newRestoreStatusFn(
+		healthClient,
+		appCtx.Logger,
+		expected,
+		appCtx.Config.Elasticsearch.Restore.DatastreamIndexPrefix,
+		noProgressTimeout,
+		maxErrors,
+	)
 
 	// Get restore status
 	appCtx.Logger.Infof("Checking restore status for snapshot: %s (%d indices)", snapshotName, len(expected))
