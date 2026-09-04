@@ -173,13 +173,20 @@ func expectedRestoredIndices(esClient es.Interface, appCtx *app.Context, reposit
 }
 
 func restorableSnapshotIndices(snapshot *es.Snapshot, restoreConfig config.RestoreConfig) ([]string, error) {
-	expected := filterSTSIndices(
+	candidates := filterSTSIndices(
 		snapshot.Indices,
 		restoreConfig.IndexPrefix,
 		restoreConfig.DatastreamIndexPrefix,
 	)
+	expected, err := filterIndicesByPattern(candidates, restoreConfig.IndicesPattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Elasticsearch restore indicesPattern: %w", err)
+	}
 	if len(expected) == 0 {
-		return nil, fmt.Errorf("snapshot %s contains no indices matching the configured STS prefixes", snapshot.Snapshot)
+		return nil, fmt.Errorf(
+			"snapshot %s contains no indices matching the configured STS prefixes and indicesPattern",
+			snapshot.Snapshot,
+		)
 	}
 
 	hasRequiredIndex := false

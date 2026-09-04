@@ -271,6 +271,7 @@ func TestExpectedRestoredIndices_RejectsLifecycleOnlySnapshot(t *testing.T) {
 		Elasticsearch: config.ElasticsearchConfig{Restore: config.RestoreConfig{
 			IndexPrefix:           "sts",
 			DatastreamIndexPrefix: testDatastreamPrefix,
+			IndicesPattern:        "sts*,.ds-sts_k8s_logs*",
 		}},
 	}}
 
@@ -281,16 +282,17 @@ func TestExpectedRestoredIndices_RejectsLifecycleOnlySnapshot(t *testing.T) {
 	assert.ErrorContains(t, err, "cannot be determined safely")
 }
 
-func TestRestorableSnapshotIndices_ExcludesSiblingDatastream(t *testing.T) {
+func TestRestorableSnapshotIndices_AppliesPatternAndExcludesSiblingDatastream(t *testing.T) {
 	restoreConfig := config.RestoreConfig{
 		IndexPrefix:           "sts",
 		DatastreamIndexPrefix: testDatastreamPrefix,
-		IndicesPattern:        "sts*,.ds-sts_k8s_logs*",
+		IndicesPattern:        "sts_topology,.ds-sts_k8s_logs-*",
 	}
 	snapshot := &es.Snapshot{
 		Snapshot: "snapshot",
 		Indices: []string{
 			"sts_topology",
+			"sts_metrics",
 			".ds-sts_k8s_logs-2026.08.28-012011",
 			".ds-sts_k8s_logs_archive-2026.08.28-000001",
 		},

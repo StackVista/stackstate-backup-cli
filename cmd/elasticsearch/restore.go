@@ -2,6 +2,7 @@ package elasticsearch
 
 import (
 	"fmt"
+	"path"
 	"sort"
 	"strings"
 	"time"
@@ -218,6 +219,10 @@ func deleteAllSTSIndices(esClient es.Interface, appCtx *app.Context) error {
 	}
 
 	stsIndices := filterSTSIndices(allIndices, appCtx.Config.Elasticsearch.Restore.IndexPrefix, appCtx.Config.Elasticsearch.Restore.DatastreamIndexPrefix)
+	stsIndices, err = filterIndicesByPattern(stsIndices, appCtx.Config.Elasticsearch.Restore.IndicesPattern)
+	if err != nil {
+		return fmt.Errorf("invalid Elasticsearch restore indicesPattern: %w", err)
+	}
 
 	if len(stsIndices) == 0 {
 		appCtx.Logger.Infof("No STS indices found to delete")
@@ -258,6 +263,68 @@ func filterSTSIndices(allIndices []string, indexPrefix, datastreamPrefix string)
 		}
 	}
 	return stsIndices
+}
+
+func filterIndicesByPattern(indices []string, expression string) ([]string, error) {
+	type pattern struct {
+		value   string
+		exclude bool
+	}
+
+	var patterns []pattern
+	hasInclude := false
+	for _, value := range strings.Split(expression, ",") {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, fmt.Errorf("contains an empty pattern")
+		}
+
+		exclude := strings.HasPrefix(value, "-")
+		if exclude {
+			value = strings.TrimPrefix(value, "-")
+			if value == "" {
+				return nil, fmt.Errorf("contains an empty exclusion")
+			}
+		} else {
+			hasInclude = true
+		}
+
+		if value == "_all" {
+			value = "*"
+		}
+		if _, err := path.Match(value, ""); err != nil {
+			return nil, fmt.Errorf("invalid pattern %q: %w", value, err)
+		}
+		patterns = append(patterns, pattern{value: value, exclude: exclude})
+	}
+	if !hasInclude {
+		return nil, fmt.Errorf("must contain at least one inclusion pattern")
+	}
+
+	var matched []string
+	for _, index := range indices {
+		included := false
+		excluded := false
+		for _, candidate := range patterns {
+			isMatch, err := path.Match(candidate.value, index)
+			if err != nil {
+				return nil, fmt.Errorf("invalid pattern %q: %w", candidate.value, err)
+			}
+			if !isMatch {
+				continue
+			}
+			if candidate.exclude {
+				excluded = true
+			} else {
+				included = true
+			}
+		}
+		if included && !excluded {
+			matched = append(matched, index)
+		}
+	}
+
+	return matched, nil
 }
 
 // hasDatastreamIndices checks if any indices belong to a datastream
