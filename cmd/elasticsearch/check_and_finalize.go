@@ -169,18 +169,22 @@ func expectedRestoredIndices(esClient es.Interface, appCtx *app.Context, reposit
 		return nil, fmt.Errorf("failed to get snapshot details: %w", err)
 	}
 
+	return restorableSnapshotIndices(snapshot, appCtx.Config.Elasticsearch.Restore)
+}
+
+func restorableSnapshotIndices(snapshot *es.Snapshot, restoreConfig config.RestoreConfig) ([]string, error) {
 	expected := filterSTSIndices(
 		snapshot.Indices,
-		appCtx.Config.Elasticsearch.Restore.IndexPrefix,
-		appCtx.Config.Elasticsearch.Restore.DatastreamIndexPrefix,
+		restoreConfig.IndexPrefix,
+		restoreConfig.DatastreamIndexPrefix,
 	)
 	if len(expected) == 0 {
-		return nil, fmt.Errorf("snapshot %s contains no indices matching the configured STS prefixes", snapshotName)
+		return nil, fmt.Errorf("snapshot %s contains no indices matching the configured STS prefixes", snapshot.Snapshot)
 	}
 
 	hasRequiredIndex := false
 	for _, index := range expected {
-		if !isDatastreamBackingIndex(index, appCtx.Config.Elasticsearch.Restore.DatastreamIndexPrefix) {
+		if !isDatastreamBackingIndex(index, restoreConfig.DatastreamIndexPrefix) {
 			hasRequiredIndex = true
 			break
 		}
@@ -189,7 +193,7 @@ func expectedRestoredIndices(esClient es.Interface, appCtx *app.Context, reposit
 		return nil, fmt.Errorf(
 			"snapshot %s contains only lifecycle-managed data-stream backing indices; "+
 				"restore completion cannot be determined safely",
-			snapshotName,
+			snapshot.Snapshot,
 		)
 	}
 
@@ -304,6 +308,7 @@ func newRestoreStatusFn(
 	maxErrors int,
 ) func() (string, bool, error) {
 	lastPrimariesActive := -1
+	lastLifecyclePresent := -1
 	lastProgressAt := time.Now()
 	errCount := 0
 
@@ -336,10 +341,20 @@ func newRestoreStatusFn(
 			return es.StatusSuccess, true, nil
 		}
 
+		lifecycleRemoved := lastLifecyclePresent >= 0 && progress.lifecyclePresent < lastLifecyclePresent
+		lastLifecyclePresent = progress.lifecyclePresent
+
+		if lifecycleRemoved && progress.primariesActive < lastPrimariesActive {
+			// An ILM deletion makes totals before and after this poll incomparable. Rebaseline
+			// without treating the deletion as progress or failing before a later shard increase
+			// can be observed.
+			lastPrimariesActive = progress.primariesActive
+		}
+
 		if progress.primariesActive > lastPrimariesActive {
 			lastPrimariesActive = progress.primariesActive
 			lastProgressAt = time.Now()
-		} else if noProgressTimeout > 0 && time.Since(lastProgressAt) > noProgressTimeout {
+		} else if !lifecycleRemoved && noProgressTimeout > 0 && time.Since(lastProgressAt) > noProgressTimeout {
 			// Deliberately not reported as a failed restore: all this establishes is that no progress
 			// was observed from here. Restarting a restore deletes every STS index first, so a caller
 			// that reads this as "failed" and retries would destroy a restore that is merely slow.

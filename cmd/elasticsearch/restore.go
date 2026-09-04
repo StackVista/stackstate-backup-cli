@@ -96,6 +96,12 @@ func runRestore(appCtx *app.Context) error {
 		return err
 	}
 
+	// Reject snapshots that cannot be monitored safely before scaling down workloads or deleting
+	// any indices. check-and-finalize repeats this validation for independently resumed operations.
+	if _, err := restorableSnapshotIndices(snapshotDetails, appCtx.Config.Elasticsearch.Restore); err != nil {
+		return err
+	}
+
 	// Confirm with user before starting destructive operation
 	if !skipConfirmation {
 		appCtx.Logger.Println()
@@ -246,7 +252,7 @@ func deleteAllSTSIndices(esClient es.Interface, appCtx *app.Context) error {
 func filterSTSIndices(allIndices []string, indexPrefix, datastreamPrefix string) []string {
 	var stsIndices []string
 	for _, index := range allIndices {
-		if strings.HasPrefix(index, indexPrefix) || strings.HasPrefix(index, datastreamPrefix) {
+		if strings.HasPrefix(index, indexPrefix) || isDatastreamBackingIndex(index, datastreamPrefix) {
 			stsIndices = append(stsIndices, index)
 		}
 	}
@@ -256,7 +262,7 @@ func filterSTSIndices(allIndices []string, indexPrefix, datastreamPrefix string)
 // hasDatastreamIndices checks if any indices belong to a datastream
 func hasDatastreamIndices(indices []string, datastreamPrefix string) bool {
 	for _, index := range indices {
-		if strings.HasPrefix(index, datastreamPrefix+"-") {
+		if isDatastreamBackingIndex(index, datastreamPrefix) {
 			return true
 		}
 	}

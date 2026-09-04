@@ -180,6 +180,17 @@ func TestFilterSTSIndices(t *testing.T) {
 			expectedCount:    2,
 			expectedIndices:  []string{"sts_k8s_logs-000001", "sts_k8s_logs-000002"},
 		},
+		{
+			name: "sibling datastream is not included",
+			allIndices: []string{
+				".ds-sts_k8s_logs-2026.08.28-012011",
+				".ds-sts_k8s_logs_archive-2026.08.28-000001",
+			},
+			indexPrefix:      "sts",
+			datastreamPrefix: ".ds-sts_k8s_logs",
+			expectedCount:    1,
+			expectedIndices:  []string{".ds-sts_k8s_logs-2026.08.28-012011"},
+		},
 	}
 
 	for _, tt := range tests {

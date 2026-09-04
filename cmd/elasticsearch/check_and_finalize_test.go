@@ -263,7 +263,8 @@ func TestNewRestoreStatusFn_UnsafeMissingIndices(t *testing.T) {
 
 func TestExpectedRestoredIndices_RejectsLifecycleOnlySnapshot(t *testing.T) {
 	client := &snapshotOnlyClient{snapshot: &es.Snapshot{
-		Indices: []string{".ds-sts_k8s_logs-2026.08.28-012011"},
+		Snapshot: "snapshot",
+		Indices:  []string{".ds-sts_k8s_logs-2026.08.28-012011"},
 	}}
 	appCtx := &app.Context{Config: &config.Config{
 		Elasticsearch: config.ElasticsearchConfig{Restore: config.RestoreConfig{
@@ -373,6 +374,62 @@ func TestNewRestoreStatusFn_Deadline(t *testing.T) {
 			assert.False(t, isComplete)
 		}
 	})
+}
+
+func TestNewRestoreStatusFn_ILMDeletionRebasesHighWaterMark(t *testing.T) {
+	expected := []string{"sts_topology", ".ds-sts_k8s_logs-2026.08.28-012011"}
+
+	t.Run("later shard progress can exceed the rebased total", func(t *testing.T) {
+		client := &fakeHealthClient{results: []healthResult{
+			restoreHealth(3, true),
+			restoreHealth(5, false),
+			restoreHealth(6, false),
+			restoreHealth(6, false),
+		}}
+		statusFn := newRestoreStatusFn(client, logger.New(true, false), expected, testDatastreamPrefix, time.Nanosecond, 5)
+
+		for range 3 {
+			status, isComplete, err := statusFn()
+			require.NoError(t, err)
+			assert.Equal(t, es.StatusInProgress, status)
+			assert.False(t, isComplete)
+		}
+
+		_, isComplete, err := statusFn()
+		require.Error(t, err)
+		assert.False(t, isComplete)
+		assert.ErrorContains(t, err, "stalled")
+	})
+
+	t.Run("the deletion itself does not reset the deadline", func(t *testing.T) {
+		client := &fakeHealthClient{results: []healthResult{
+			restoreHealth(3, true),
+			restoreHealth(5, false),
+			restoreHealth(5, false),
+		}}
+		statusFn := newRestoreStatusFn(client, logger.New(true, false), expected, testDatastreamPrefix, time.Nanosecond, 5)
+
+		for range 2 {
+			_, _, err := statusFn()
+			require.NoError(t, err)
+		}
+
+		_, isComplete, err := statusFn()
+		require.Error(t, err)
+		assert.False(t, isComplete)
+		assert.ErrorContains(t, err, "stalled")
+	})
+}
+
+func restoreHealth(topologyPrimaries int, includeBackingIndex bool) healthResult {
+	health := map[string]es.IndexHealth{
+		"sts_topology": {NumberOfShards: 10, ActivePrimaryShards: topologyPrimaries},
+	}
+	if includeBackingIndex {
+		health[".ds-sts_k8s_logs-2026.08.28-012011"] = restored(8)
+	}
+
+	return ok(health)
 }
 
 func TestNewRestoreStatusFn_TransientErrors(t *testing.T) {
