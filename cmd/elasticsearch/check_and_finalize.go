@@ -178,6 +178,21 @@ func expectedRestoredIndices(esClient es.Interface, appCtx *app.Context, reposit
 		return nil, fmt.Errorf("snapshot %s contains no indices matching the configured STS prefixes", snapshotName)
 	}
 
+	hasRequiredIndex := false
+	for _, index := range expected {
+		if !isDatastreamBackingIndex(index, appCtx.Config.Elasticsearch.Restore.DatastreamIndexPrefix) {
+			hasRequiredIndex = true
+			break
+		}
+	}
+	if !hasRequiredIndex {
+		return nil, fmt.Errorf(
+			"snapshot %s contains only lifecycle-managed data-stream backing indices; "+
+				"restore completion cannot be determined safely",
+			snapshotName,
+		)
+	}
+
 	return expected, nil
 }
 
@@ -203,10 +218,10 @@ type restoreProgress struct {
 
 func measureRestore(expected []string, datastreamPrefix string, health map[string]es.IndexHealth) restoreProgress {
 	var progress restoreProgress
-	lifecycleIndices := make([]string, 0)
+	var lifecycleIndices []string
 
 	for _, index := range expected {
-		if strings.HasPrefix(index, datastreamPrefix+"-") {
+		if isDatastreamBackingIndex(index, datastreamPrefix) {
 			lifecycleIndices = append(lifecycleIndices, index)
 			continue
 		}
@@ -249,19 +264,27 @@ func measureRestore(expected []string, datastreamPrefix string, health map[strin
 	return progress
 }
 
+func isDatastreamBackingIndex(index, datastreamPrefix string) bool {
+	return strings.HasPrefix(index, datastreamPrefix+"-")
+}
+
 func (p restoreProgress) complete() bool {
+	if p.requiredExpected == 0 {
+		return false
+	}
+
 	if p.requiredRestored != p.requiredExpected {
 		return false
 	}
 
-	if p.lifecycleExpected == 0 {
-		return p.requiredExpected > 0
+	// Required indices prove the restore's cluster-state update has applied; target index metadata
+	// is created together before shard recovery starts.
+	if p.lifecycleExpected == 0 || p.lifecyclePresent == 0 {
+		return true
 	}
 
-	// The newest snapshot backing index must exist. Combined with no gap, this only permits missing
-	// indices at the oldest edge, matching the order in which ILM removes data-stream generations.
-	return p.lifecyclePresent > 0 &&
-		!p.lifecycleGap &&
+	// With any backing indices left, only an oldest prefix may be absent.
+	return !p.lifecycleGap &&
 		p.indicesRestored == p.requiredRestored+p.lifecyclePresent
 }
 
@@ -301,15 +324,19 @@ func newRestoreStatusFn(
 		progress := measureRestore(expected, datastreamPrefix, health)
 		if progress.complete() {
 			if progress.lifecycleMissing > 0 {
+				indexWord := "indices"
+				if progress.lifecycleMissing == 1 {
+					indexWord = "index"
+				}
 				log.Infof(
-					"Restore complete; %d oldest data-stream backing indices are no longer present, consistent with lifecycle retention",
-					progress.lifecycleMissing,
+					"Restore complete; %d oldest data-stream backing %s no longer present, consistent with lifecycle retention",
+					progress.lifecycleMissing, indexWord,
 				)
 			}
 			return es.StatusSuccess, true, nil
 		}
 
-		if progress.primariesActive != lastPrimariesActive {
+		if progress.primariesActive > lastPrimariesActive {
 			lastPrimariesActive = progress.primariesActive
 			lastProgressAt = time.Now()
 		} else if noProgressTimeout > 0 && time.Since(lastProgressAt) > noProgressTimeout {

@@ -8,7 +8,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/stackvista/stackstate-backup-cli/internal/app"
 	es "github.com/stackvista/stackstate-backup-cli/internal/clients/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
 )
 
@@ -21,6 +23,15 @@ type healthResult struct {
 type fakeHealthClient struct {
 	results []healthResult
 	calls   int
+}
+
+type snapshotOnlyClient struct {
+	es.Interface
+	snapshot *es.Snapshot
+}
+
+func (c *snapshotOnlyClient) GetSnapshot(_, _ string) (*es.Snapshot, error) {
+	return c.snapshot, nil
 }
 
 func (f *fakeHealthClient) GetIndicesHealth() (map[string]es.IndexHealth, error) {
@@ -168,15 +179,26 @@ func TestNewRestoreStatusFn_Progress(t *testing.T) {
 func TestNewRestoreStatusFn_ILMRemovedOldestBackingIndices(t *testing.T) {
 	expected := []string{
 		"sts_topology",
-		".ds-sts_k8s_logs-000003",
-		".ds-sts_k8s_logs-000001",
-		".ds-sts_k8s_logs-000002",
+		".ds-sts_k8s_logs-2026.08.28-012011",
+		".ds-sts_k8s_logs-2026.08.26-011965",
+		".ds-sts_k8s_logs-2026.08.27-011999",
 	}
 	health := map[string]es.IndexHealth{
-		"sts_topology":            restored(1),
-		".ds-sts_k8s_logs-000002": restored(1),
-		".ds-sts_k8s_logs-000003": restored(1),
+		"sts_topology":                       restored(1),
+		".ds-sts_k8s_logs-2026.08.27-011999": restored(1),
+		".ds-sts_k8s_logs-2026.08.28-012011": restored(1),
 	}
+
+	status, isComplete, err := restoreStatus(expected, health)
+
+	require.NoError(t, err)
+	assert.Equal(t, es.StatusSuccess, status)
+	assert.True(t, isComplete)
+}
+
+func TestNewRestoreStatusFn_ILMRemovedAllBackingIndices(t *testing.T) {
+	expected := []string{"sts_topology", ".ds-sts_k8s_logs-2026.08.26-011965"}
+	health := map[string]es.IndexHealth{"sts_topology": restored(1)}
 
 	status, isComplete, err := restoreStatus(expected, health)
 
@@ -222,9 +244,9 @@ func TestNewRestoreStatusFn_UnsafeMissingIndices(t *testing.T) {
 			},
 		},
 		{
-			name:     "all backing indices",
-			expected: []string{"sts_topology", ".ds-sts_k8s_logs-000001"},
-			health:   map[string]es.IndexHealth{"sts_topology": restored(1)},
+			name:     "snapshot has no required anchor",
+			expected: []string{".ds-sts_k8s_logs-000001"},
+			health:   map[string]es.IndexHealth{".ds-sts_k8s_logs-000001": restored(1)},
 		},
 	}
 
@@ -237,6 +259,24 @@ func TestNewRestoreStatusFn_UnsafeMissingIndices(t *testing.T) {
 			assert.False(t, isComplete)
 		})
 	}
+}
+
+func TestExpectedRestoredIndices_RejectsLifecycleOnlySnapshot(t *testing.T) {
+	client := &snapshotOnlyClient{snapshot: &es.Snapshot{
+		Indices: []string{".ds-sts_k8s_logs-2026.08.28-012011"},
+	}}
+	appCtx := &app.Context{Config: &config.Config{
+		Elasticsearch: config.ElasticsearchConfig{Restore: config.RestoreConfig{
+			IndexPrefix:           "sts",
+			DatastreamIndexPrefix: testDatastreamPrefix,
+		}},
+	}}
+
+	_, err := expectedRestoredIndices(client, appCtx, "repository", "snapshot")
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "only lifecycle-managed data-stream backing indices")
+	assert.ErrorContains(t, err, "cannot be determined safely")
 }
 
 func restoreStatus(expected []string, health map[string]es.IndexHealth) (string, bool, error) {
@@ -302,6 +342,22 @@ func TestNewRestoreStatusFn_Deadline(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, es.StatusInProgress, status)
 		assert.False(t, isComplete)
+	})
+
+	t.Run("decreasing primaries do not reset the deadline", func(t *testing.T) {
+		client := &fakeHealthClient{results: []healthResult{
+			ok(map[string]es.IndexHealth{"sts_topology": {NumberOfShards: 4, ActivePrimaryShards: 3}}),
+			ok(map[string]es.IndexHealth{"sts_topology": {NumberOfShards: 4, ActivePrimaryShards: 2}}),
+		}}
+		statusFn := newRestoreStatusFn(client, log, expected, testDatastreamPrefix, time.Nanosecond, 5)
+
+		_, _, err := statusFn()
+		require.NoError(t, err)
+
+		_, isComplete, err := statusFn()
+		require.Error(t, err)
+		assert.False(t, isComplete)
+		assert.ErrorContains(t, err, "stalled")
 	})
 
 	t.Run("zero waits indefinitely", func(t *testing.T) {
