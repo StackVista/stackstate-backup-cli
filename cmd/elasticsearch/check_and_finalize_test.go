@@ -38,6 +38,8 @@ func restored(shards int) es.IndexHealth {
 	return es.IndexHealth{Status: "green", NumberOfShards: shards, ActivePrimaryShards: shards}
 }
 
+const testDatastreamPrefix = ".ds-sts_k8s_logs"
+
 func TestMeasureRestore(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -95,6 +97,22 @@ func TestMeasureRestore(t *testing.T) {
 			wantPrimaries: 5,
 		},
 		{
+			name: "oldest lifecycle-managed indices can be absent",
+			expected: []string{
+				".ds-sts_k8s_logs-000001",
+				".ds-sts_k8s_logs-000002",
+				".ds-sts_k8s_logs-000003",
+				"sts_topology",
+			},
+			health: map[string]es.IndexHealth{
+				".ds-sts_k8s_logs-000002": restored(2),
+				".ds-sts_k8s_logs-000003": restored(2),
+				"sts_topology":            restored(1),
+			},
+			wantIndices:   3,
+			wantPrimaries: 5,
+		},
+		{
 			name:          "index reporting zero shards is not counted",
 			expected:      []string{"sts_topology"},
 			health:        map[string]es.IndexHealth{"sts_topology": {Status: "green"}},
@@ -105,7 +123,7 @@ func TestMeasureRestore(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			progress := measureRestore(tt.expected, tt.health)
+			progress := measureRestore(tt.expected, testDatastreamPrefix, tt.health)
 			assert.Equal(t, tt.wantIndices, progress.indicesRestored, "indicesRestored")
 			assert.Equal(t, tt.wantPrimaries, progress.primariesActive, "primariesActive")
 		})
@@ -121,7 +139,7 @@ func TestNewRestoreStatusFn_Progress(t *testing.T) {
 	t.Run("accepted but not yet applied reports in progress", func(t *testing.T) {
 		client := &fakeHealthClient{results: []healthResult{ok(map[string]es.IndexHealth{})}}
 
-		status, isComplete, err := newRestoreStatusFn(client, log, expected, time.Minute, 5)()
+		status, isComplete, err := newRestoreStatusFn(client, log, expected, testDatastreamPrefix, time.Minute, 5)()
 
 		require.NoError(t, err)
 		assert.Equal(t, es.StatusInProgress, status)
@@ -133,7 +151,7 @@ func TestNewRestoreStatusFn_Progress(t *testing.T) {
 			ok(map[string]es.IndexHealth{"sts_topology": restored(1)}),
 			ok(map[string]es.IndexHealth{"sts_topology": restored(1), "sts_events": restored(1)}),
 		}}
-		statusFn := newRestoreStatusFn(client, log, expected, time.Minute, 5)
+		statusFn := newRestoreStatusFn(client, log, expected, testDatastreamPrefix, time.Minute, 5)
 
 		status, isComplete, err := statusFn()
 		require.NoError(t, err)
@@ -147,6 +165,87 @@ func TestNewRestoreStatusFn_Progress(t *testing.T) {
 	})
 }
 
+func TestNewRestoreStatusFn_ILMRemovedOldestBackingIndices(t *testing.T) {
+	expected := []string{
+		"sts_topology",
+		".ds-sts_k8s_logs-000003",
+		".ds-sts_k8s_logs-000001",
+		".ds-sts_k8s_logs-000002",
+	}
+	health := map[string]es.IndexHealth{
+		"sts_topology":            restored(1),
+		".ds-sts_k8s_logs-000002": restored(1),
+		".ds-sts_k8s_logs-000003": restored(1),
+	}
+
+	status, isComplete, err := restoreStatus(expected, health)
+
+	require.NoError(t, err)
+	assert.Equal(t, es.StatusSuccess, status)
+	assert.True(t, isComplete)
+}
+
+func TestNewRestoreStatusFn_UnsafeMissingIndices(t *testing.T) {
+	tests := []struct {
+		name     string
+		expected []string
+		health   map[string]es.IndexHealth
+	}{
+		{
+			name:     "ordinary index",
+			expected: []string{"sts_topology", "sts_events", ".ds-sts_k8s_logs-000001"},
+			health: map[string]es.IndexHealth{
+				"sts_topology":            restored(1),
+				".ds-sts_k8s_logs-000001": restored(1),
+			},
+		},
+		{
+			name: "backing index after a present generation",
+			expected: []string{
+				"sts_topology",
+				".ds-sts_k8s_logs-000001",
+				".ds-sts_k8s_logs-000002",
+				".ds-sts_k8s_logs-000003",
+			},
+			health: map[string]es.IndexHealth{
+				"sts_topology":            restored(1),
+				".ds-sts_k8s_logs-000001": restored(1),
+				".ds-sts_k8s_logs-000003": restored(1),
+			},
+		},
+		{
+			name:     "newest backing index",
+			expected: []string{"sts_topology", ".ds-sts_k8s_logs-000001", ".ds-sts_k8s_logs-000002"},
+			health: map[string]es.IndexHealth{
+				"sts_topology":            restored(1),
+				".ds-sts_k8s_logs-000001": restored(1),
+			},
+		},
+		{
+			name:     "all backing indices",
+			expected: []string{"sts_topology", ".ds-sts_k8s_logs-000001"},
+			health:   map[string]es.IndexHealth{"sts_topology": restored(1)},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			status, isComplete, err := restoreStatus(tt.expected, tt.health)
+
+			require.NoError(t, err)
+			assert.Equal(t, es.StatusInProgress, status)
+			assert.False(t, isComplete)
+		})
+	}
+}
+
+func restoreStatus(expected []string, health map[string]es.IndexHealth) (string, bool, error) {
+	client := &fakeHealthClient{results: []healthResult{ok(health)}}
+	log := logger.New(true, false)
+
+	return newRestoreStatusFn(client, log, expected, testDatastreamPrefix, time.Minute, 5)()
+}
+
 func TestNewRestoreStatusFn_Deadline(t *testing.T) {
 	expected := statusFnExpected
 	log := logger.New(true, false)
@@ -155,7 +254,7 @@ func TestNewRestoreStatusFn_Deadline(t *testing.T) {
 		client := &fakeHealthClient{results: []healthResult{
 			ok(map[string]es.IndexHealth{"sts_topology": restored(1)}),
 		}}
-		statusFn := newRestoreStatusFn(client, log, expected, time.Nanosecond, 5)
+		statusFn := newRestoreStatusFn(client, log, expected, testDatastreamPrefix, time.Nanosecond, 5)
 
 		// First call records the progress it observed; the second sees no change past the deadline.
 		_, isComplete, err := statusFn()
@@ -179,7 +278,7 @@ func TestNewRestoreStatusFn_Deadline(t *testing.T) {
 			ok(map[string]es.IndexHealth{"sts_topology": {NumberOfShards: 5, ActivePrimaryShards: 2}}),
 			ok(map[string]es.IndexHealth{"sts_topology": {NumberOfShards: 5, ActivePrimaryShards: 3}}),
 		}}
-		statusFn := newRestoreStatusFn(client, log, expected, time.Nanosecond, 5)
+		statusFn := newRestoreStatusFn(client, log, expected, testDatastreamPrefix, time.Nanosecond, 5)
 
 		for range 3 {
 			status, isComplete, err := statusFn()
@@ -194,7 +293,7 @@ func TestNewRestoreStatusFn_Deadline(t *testing.T) {
 			ok(map[string]es.IndexHealth{}),
 			ok(map[string]es.IndexHealth{"sts_topology": restored(1)}),
 		}}
-		statusFn := newRestoreStatusFn(client, log, expected, time.Nanosecond, 5)
+		statusFn := newRestoreStatusFn(client, log, expected, testDatastreamPrefix, time.Nanosecond, 5)
 
 		_, _, err := statusFn()
 		require.NoError(t, err)
@@ -209,7 +308,7 @@ func TestNewRestoreStatusFn_Deadline(t *testing.T) {
 		client := &fakeHealthClient{results: []healthResult{
 			ok(map[string]es.IndexHealth{"sts_topology": restored(1)}),
 		}}
-		statusFn := newRestoreStatusFn(client, log, expected, 0, 5)
+		statusFn := newRestoreStatusFn(client, log, expected, testDatastreamPrefix, 0, 5)
 
 		for range 3 {
 			status, isComplete, err := statusFn()
@@ -230,7 +329,7 @@ func TestNewRestoreStatusFn_TransientErrors(t *testing.T) {
 			{err: errors.New("connection refused")},
 			ok(map[string]es.IndexHealth{"sts_topology": restored(1), "sts_events": restored(1)}),
 		}}
-		statusFn := newRestoreStatusFn(client, log, expected, time.Minute, 5)
+		statusFn := newRestoreStatusFn(client, log, expected, testDatastreamPrefix, time.Minute, 5)
 
 		for range 2 {
 			status, isComplete, err := statusFn()
@@ -247,7 +346,7 @@ func TestNewRestoreStatusFn_TransientErrors(t *testing.T) {
 
 	t.Run("errors surface once they stop being transient", func(t *testing.T) {
 		client := &fakeHealthClient{results: []healthResult{{err: errors.New("connection refused")}}}
-		statusFn := newRestoreStatusFn(client, log, expected, time.Minute, 3)
+		statusFn := newRestoreStatusFn(client, log, expected, testDatastreamPrefix, time.Minute, 3)
 
 		for range 2 {
 			_, _, err := statusFn()
@@ -266,7 +365,7 @@ func TestNewRestoreStatusFn_TransientErrors(t *testing.T) {
 			{err: errors.New("blip")},
 			{err: errors.New("blip")},
 		}}
-		statusFn := newRestoreStatusFn(client, log, expected, time.Minute, 3)
+		statusFn := newRestoreStatusFn(client, log, expected, testDatastreamPrefix, time.Minute, 3)
 
 		for range 4 {
 			_, _, err := statusFn()
