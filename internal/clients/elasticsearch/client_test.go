@@ -234,6 +234,7 @@ func TestClient_ListIndices(t *testing.T) {
 				assert.Equal(t, "/_cat/indices/"+tt.pattern, r.URL.Path)
 				assert.Equal(t, "json", r.URL.Query().Get("format"))
 				assert.Equal(t, "index", r.URL.Query().Get("h"))
+				assert.Equal(t, "all", r.URL.Query().Get("expand_wildcards"))
 
 				w.WriteHeader(tt.responseStatus)
 				_, _ = w.Write([]byte(tt.responseBody))

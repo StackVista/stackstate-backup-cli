@@ -148,6 +148,7 @@ func (c *Client) ListIndices(pattern string) ([]string, error) {
 	res, err := c.es.Cat.Indices(
 		c.es.Cat.Indices.WithContext(context.Background()),
 		c.es.Cat.Indices.WithIndex(pattern),
+		c.es.Cat.Indices.WithExpandWildcards("all"),
 		c.es.Cat.Indices.WithH("index"),
 		c.es.Cat.Indices.WithFormat("json"),
 	)
