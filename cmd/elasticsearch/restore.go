@@ -98,7 +98,8 @@ func runRestore(appCtx *app.Context) error {
 
 	// Reject snapshots that cannot be monitored safely before scaling down workloads or deleting
 	// any indices. check-and-finalize repeats this validation for independently resumed operations.
-	if _, err := restorableSnapshotIndices(snapshotDetails, appCtx.Config.Elasticsearch.Restore); err != nil {
+	restoreIndices, err := restorableSnapshotIndices(snapshotDetails, appCtx.Config.Elasticsearch.Restore)
+	if err != nil {
 		return err
 	}
 
@@ -143,7 +144,7 @@ func runRestore(appCtx *app.Context) error {
 	appCtx.Logger.Println()
 	isPartial := snapshotDetails.State == "PARTIAL"
 	appCtx.Logger.Infof("Triggering restore for snapshot: %s", selectedSnapshot)
-	if err := esClient.RestoreSnapshot(repository, selectedSnapshot, appCtx.Config.Elasticsearch.Restore.IndicesPattern, isPartial); err != nil {
+	if err := esClient.RestoreSnapshot(repository, selectedSnapshot, strings.Join(restoreIndices, ","), isPartial); err != nil {
 		return fmt.Errorf("failed to trigger restore: %w", err)
 	}
 	appCtx.Logger.Successf("Restore triggered successfully")
