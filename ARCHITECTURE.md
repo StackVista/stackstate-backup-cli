@@ -72,6 +72,7 @@ stackstate-backup-cli/
 - `cmd/victoriametrics/`: VictoriaMetrics backup/restore commands (list, restore, check-and-finalize)
 - `cmd/settings/`: Settings backup/restore commands (list, restore, check-and-finalize)
 - `cmd/version/`: Version information
+- `cmd/replication/`: Read-only HA replication observations and bounded waiting
 
 **Dependency Rules**:
 - ✅ Can import: `internal/app/*` (preferred), all other `internal/` packages
@@ -126,6 +127,7 @@ appCtx.NewCHClient(backupAPIPort, dbPort) // ClickHouse client factory
 
 **Key Packages**:
 - `portforward/`: Manages Kubernetes port-forwarding lifecycle
+- `replication/`: Discovers release workloads and evaluates fixed database queries, without backup configuration or restore operations
 - `scale/`: Deployment and StatefulSet scaling workflows with detailed logging
 - `restore/`: Restore job orchestration (confirmation, job lifecycle, finalization, resource management)
 - `restorelock/`: Prevents parallel restore operations using Kubernetes annotations

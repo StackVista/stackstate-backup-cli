@@ -12,6 +12,7 @@ This CLI tool replaces the legacy Bash-based backup/restore scripts with a singl
 - Stackgraph backups and restores
 - VictoriaMetrics backups and restores
 - Settings backups and restores
+- Read-only HA database replication checks
 
 ## Installation
 
@@ -43,6 +44,19 @@ sts-backup [command] [subcommand] [flags]
 - `--debug` - Enable debug output
 
 ## Commands
+
+### replication check
+
+Inspect HDFS, Elasticsearch, Kafka and ClickHouse replication for a Helm release:
+
+```bash
+sts-backup replication check --namespace observability --release suse-observability
+sts-backup replication check --namespace observability --release suse-observability --wait --output json
+```
+
+This command has its own flags and does not require backup configuration.
+See [Replication checks](docs/replication.md) for status and exit-code semantics,
+authentication, a Kubernetes Job example, and the maintenance checks outside its scope.
 
 ### version
 
