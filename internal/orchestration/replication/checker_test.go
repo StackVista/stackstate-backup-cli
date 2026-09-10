@@ -32,28 +32,34 @@ func (f *fakeKubernetes) Exec(ctx context.Context, namespace, pod, container str
 }
 
 func testOptions() Options {
-	return Options{Namespace: "test", Release: "observability", Components: []string{"kafka"}, RequestTimeout: time.Second, ElasticsearchScheme: "http"}
+	return Options{Namespace: "test", Components: []string{"kafka"}, RequestTimeout: time.Second, ElasticsearchScheme: "http"}
 }
 
 func kafkaObjects() []runtime.Object {
-	labels := map[string]string{"app.kubernetes.io/instance": "observability"}
+	return databaseObjects("kafka", "kafka", "kafka", 2)
+}
+
+func databaseObjects(application, component, container string, replicas int32) []runtime.Object {
+	labels := map[string]string{
+		"app.kubernetes.io/name": application, "app.kubernetes.io/component": component, "app.kubernetes.io/instance": "arbitrary-release",
+	}
 	workload := &appsv1.StatefulSet{
-		ObjectMeta: metav1.ObjectMeta{Name: "kafka", Namespace: "test", UID: "sts-kafka", Generation: 1, ResourceVersion: "1", Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: component, Namespace: "test", UID: types.UID("sts-" + component), Generation: 1, ResourceVersion: "1", Labels: labels},
 		Spec: appsv1.StatefulSetSpec{
-			Replicas: ptr.To(int32(2)),
-			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "kafka"}}}},
+			Replicas: ptr.To(replicas),
+			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: container}}}},
 		},
-		Status: appsv1.StatefulSetStatus{ReadyReplicas: 2, ObservedGeneration: 1, CurrentRevision: "one", UpdateRevision: "one"},
+		Status: appsv1.StatefulSetStatus{ReadyReplicas: replicas, ObservedGeneration: 1, CurrentRevision: "one", UpdateRevision: "one"},
 	}
 	objects := []runtime.Object{workload}
-	for n := 0; n < 2; n++ {
-		name := fmt.Sprintf("kafka-%d", n)
+	for n := int32(0); n < replicas; n++ {
+		name := fmt.Sprintf("%s-%d", component, n)
 		pod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: name, Namespace: "test", UID: types.UID(name), ResourceVersion: "1", Labels: labels,
-				OwnerReferences: []metav1.OwnerReference{{Kind: "StatefulSet", Name: "kafka", UID: workload.UID, Controller: ptr.To(true)}},
+				OwnerReferences: []metav1.OwnerReference{{Kind: "StatefulSet", Name: component, UID: workload.UID, Controller: ptr.To(true)}},
 			},
-			Spec: corev1.PodSpec{NodeName: fmt.Sprintf("node-%d", n), Containers: []corev1.Container{{Name: "kafka"}}},
+			Spec: corev1.PodSpec{NodeName: fmt.Sprintf("node-%d", n), Containers: []corev1.Container{{Name: container}}},
 			Status: corev1.PodStatus{Phase: corev1.PodRunning, Conditions: []corev1.PodCondition{
 				{Type: corev1.PodReady, Status: corev1.ConditionTrue},
 			}},
@@ -69,7 +75,7 @@ func TestCheckerQueriesReadyPodsAndDoesNotMutateKubernetes(t *testing.T) {
 		assert.Equal(t, "test", namespace)
 		assert.Equal(t, "kafka-0", pod)
 		assert.Equal(t, "kafka", container)
-		assert.Equal(t, []string{"kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--describe"}, command)
+		assert.Equal(t, []string{"bash", "-ec", kafkaQuery, "replication-check", "--bootstrap-server", "localhost:9092", "--describe"}, command)
 		_, deadline := ctx.Deadline()
 		assert.True(t, deadline)
 		return []byte(kafkaFixture()), nil
@@ -102,8 +108,18 @@ func TestCheckerRejectsIncompleteTopology(t *testing.T) {
 			objects[1].(*corev1.Pod).OwnerReferences[0].UID = "other"
 			return objects
 		}},
-		{"wrong release", func(objects []runtime.Object) []runtime.Object {
-			objects[0].(*appsv1.StatefulSet).Labels = map[string]string{"app.kubernetes.io/instance": "other"}
+		{"wrong database label", func(objects []runtime.Object) []runtime.Object {
+			objects[0].(*appsv1.StatefulSet).Labels = map[string]string{"app.kubernetes.io/name": "other", "app.kubernetes.io/component": "kafka"}
+			return objects
+		}},
+		{"wrong component label", func(objects []runtime.Object) []runtime.Object {
+			objects[0].(*appsv1.StatefulSet).Labels["app.kubernetes.io/component"] = "unrelated"
+			return objects
+		}},
+		{"different namespace", func(objects []runtime.Object) []runtime.Object {
+			for _, object := range objects {
+				object.(metav1.Object).SetNamespace("other")
+			}
 			return objects
 		}},
 		{"rolling update", func(objects []runtime.Object) []runtime.Object {
@@ -120,6 +136,38 @@ func TestCheckerRejectsIncompleteTopology(t *testing.T) {
 			assert.Zero(t, kube.calls)
 		})
 	}
+}
+
+func TestHDFSDiscoveryDistinguishesSecondaryNameNode(t *testing.T) {
+	objects := databaseObjects("hbase", "hdfs-nn", "namenode", 1)
+	objects = append(objects, databaseObjects("hbase", "hdfs-snn", "namenode", 1)...)
+	objects = append(objects, databaseObjects("hbase", "hdfs-dn", "datanode", 3)...)
+	kube := &fakeKubernetes{client: fake.NewSimpleClientset(objects...), exec: func(_ context.Context, namespace, pod, container string, _ []string) ([]byte, error) {
+		assert.Equal(t, "test", namespace)
+		assert.Equal(t, "hdfs-nn-0", pod)
+		assert.Equal(t, "namenode", container)
+		return hdfsFixture(t, func(map[string]any) {}), nil
+	}}
+	options := testOptions()
+	options.Components = []string{"hdfs"}
+	probe, err := New(kube, options)
+	require.NoError(t, err)
+	report := probe.Check(context.Background())
+	assert.Equal(t, Healthy, report.Status, report)
+	assert.Equal(t, 1, kube.calls)
+}
+
+func TestDiscoveryDoesNotRequireHelmReleaseLabel(t *testing.T) {
+	objects := kafkaObjects()
+	for _, object := range objects {
+		delete(object.(metav1.Object).GetLabels(), "app.kubernetes.io/instance")
+	}
+	kube := &fakeKubernetes{client: fake.NewSimpleClientset(objects...), exec: func(context.Context, string, string, string, []string) ([]byte, error) {
+		return []byte(kafkaFixture()), nil
+	}}
+	probe, err := New(kube, testOptions())
+	require.NoError(t, err)
+	assert.Equal(t, Healthy, probe.Check(context.Background()).Status)
 }
 
 func TestCheckerRejectsMembershipChangeDuringQueries(t *testing.T) {

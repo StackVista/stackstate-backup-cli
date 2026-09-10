@@ -127,7 +127,7 @@ appCtx.NewCHClient(backupAPIPort, dbPort) // ClickHouse client factory
 
 **Key Packages**:
 - `portforward/`: Manages Kubernetes port-forwarding lifecycle
-- `replication/`: Discovers release workloads and evaluates fixed database queries, without backup configuration or restore operations
+- `replication/`: Discovers namespace workloads and evaluates fixed database queries, without backup configuration or restore operations
 - `scale/`: Deployment and StatefulSet scaling workflows with detailed logging
 - `restore/`: Restore job orchestration (confirmation, job lifecycle, finalization, resource management)
 - `restorelock/`: Prevents parallel restore operations using Kubernetes annotations

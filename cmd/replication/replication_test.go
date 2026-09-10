@@ -30,7 +30,7 @@ func TestJSONOutputIsSeparateFromProgress(t *testing.T) {
 
 func TestCheckValidatesBeforeConnecting(t *testing.T) {
 	command := Cmd()
-	command.SetArgs([]string{"check", "--namespace=test", "--release=test", "--components=kafka", "--output=invalid"})
+	command.SetArgs([]string{"check", "--namespace=test", "--components=kafka", "--output=invalid"})
 	command.SetOut(&bytes.Buffer{})
 	command.SetErr(&bytes.Buffer{})
 	err := command.Execute()
@@ -43,7 +43,7 @@ func TestHelpDoesNotRequireBackupConfiguration(t *testing.T) {
 	var output bytes.Buffer
 	command.SetOut(&output)
 	require.NoError(t, command.Execute())
-	assert.Contains(t, output.String(), "--release")
+	assert.NotContains(t, output.String(), "--release")
 	assert.NotContains(t, output.String(), "--secret")
 	assert.NotContains(t, output.String(), "--configmap")
 }

@@ -47,11 +47,11 @@ sts-backup [command] [subcommand] [flags]
 
 ### replication check
 
-Inspect HDFS, Elasticsearch, Kafka and ClickHouse replication for a Helm release:
+Inspect HDFS, Elasticsearch, Kafka and ClickHouse replication in one namespace:
 
 ```bash
-sts-backup replication check --namespace observability --release suse-observability
-sts-backup replication check --namespace observability --release suse-observability --wait --output json
+sts-backup replication check --namespace observability
+sts-backup replication check --namespace observability --wait --output json
 ```
 
 This command has its own flags and does not require backup configuration.

@@ -15,7 +15,7 @@ FROM system.replicas
 LEFT JOIN (
  SELECT database, table, countIf(type != 'MERGE_PARTS') AS pending_data_tasks
  FROM system.replication_queue GROUP BY database, table
-) USING (database, table)
+) AS queues USING (database, table)
 WHERE database NOT IN ('system', 'INFORMATION_SCHEMA', 'information_schema')
 FORMAT JSON`
 
@@ -24,15 +24,16 @@ exec clickhouse-client --host 127.0.0.1 --port "${CLICKHOUSE_TCP_PORT:-9000}" \
  --user "${CLICKHOUSE_ADMIN_USER:?missing ClickHouse user}" --readonly 1 --query "$1"`
 
 type replicaObservation struct {
-	path     string
-	name     string
-	pod      string
-	total    int64
-	problems []string
+	path               string
+	name               string
+	pod                string
+	total              int64
+	historicalQueueErr bool
+	problems           []string
 }
 
 func (c *Checker) checkClickHouse(ctx context.Context, inventory inventory) Result {
-	members, err := inventory.members("clickhouse")
+	members, err := inventory.members("clickhouse", "clickhouse", "clickhouse")
 	if err != nil {
 		return result("clickhouse", Unknown, err.Error())
 	}
@@ -91,6 +92,8 @@ func parseReplica(row map[string]json.RawMessage, pod string, expected int) (rep
 		return replicaObservation{}, fmt.Errorf("missing replicated-table identity")
 	}
 	observation := replicaObservation{path: fields["zookeeper_path"], name: fields["replica_name"], pod: pod, total: counts["total_replicas"]}
+	// ClickHouse retains this exception even after subsequent queue updates succeed.
+	observation.historicalQueueErr = fields["last_queue_update_exception"] != ""
 	if observation.total < minReplicas || observation.total != int64(expected) || counts["active_replicas"] != observation.total {
 		observation.problems = append(observation.problems, fmt.Sprintf("%d/%d replicas active; %d expected", counts["active_replicas"], observation.total, expected))
 	}
@@ -100,8 +103,8 @@ func parseReplica(row map[string]json.RawMessage, pod string, expected int) (rep
 	if counts["log_pointer"] <= counts["log_max_index"] || counts["pending_data_tasks"] != 0 {
 		observation.problems = append(observation.problems, fmt.Sprintf("replication backlog: %d data tasks; reported delay %ds", counts["pending_data_tasks"], counts["absolute_delay"]))
 	}
-	if fields["last_queue_update_exception"] != "" || fields["zookeeper_exception"] != "" {
-		observation.problems = append(observation.problems, "replication queue or coordination query reported an exception")
+	if fields["zookeeper_exception"] != "" {
+		observation.problems = append(observation.problems, "coordination query reported an exception")
 	}
 	return observation, nil
 }
@@ -109,7 +112,11 @@ func parseReplica(row map[string]json.RawMessage, pod string, expected int) (rep
 func evaluateClickHouse(observations []replicaObservation) Result {
 	groups := make(map[string][]replicaObservation)
 	var problems []string
+	historicalErrors := 0
 	for _, observation := range observations {
+		if observation.historicalQueueErr {
+			historicalErrors++
+		}
 		groups[observation.path] = append(groups[observation.path], observation)
 		for _, problem := range observation.problems {
 			problems = append(problems, fmt.Sprintf("%s %s: %s", observation.pod, observation.path, problem))
@@ -135,5 +142,9 @@ func evaluateClickHouse(observations []replicaObservation) Result {
 		sort.Strings(problems)
 		return Result{Component: "clickhouse", Status: Degraded, Messages: problems}
 	}
-	return result("clickhouse", Healthy, fmt.Sprintf("%d replicated table groups checked on every member; no pending data replication tasks", len(groups)))
+	report := result("clickhouse", Healthy, fmt.Sprintf("%d replicated table groups checked on every member; no pending data replication tasks", len(groups)))
+	if historicalErrors > 0 {
+		report.Messages = append(report.Messages, fmt.Sprintf("%d table replicas retain a previous queue-update exception; current replication checks pass", historicalErrors))
+	}
+	return report
 }

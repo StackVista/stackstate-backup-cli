@@ -148,6 +148,11 @@ func TestClickHouseReplicaEvidence(t *testing.T) {
 		{"inactive replica", func(m map[string]any) { m["active_replicas"] = "1" }, Degraded},
 		{"wrong replication", func(m map[string]any) { m["total_replicas"] = "1" }, Degraded},
 		{"coordination exception", func(m map[string]any) { m["zookeeper_exception"] = "connection failed" }, Degraded},
+		{"historical queue exception after recovery", func(m map[string]any) { m["last_queue_update_exception"] = "previous Keeper error" }, Healthy},
+		{"queue exception with backlog", func(m map[string]any) {
+			m["last_queue_update_exception"] = "Keeper error"
+			m["log_pointer"] = "100"
+		}, Degraded},
 		{"missing backlog evidence", func(m map[string]any) { delete(m, "pending_data_tasks") }, Unknown},
 	}
 	for _, test := range tests {
@@ -162,7 +167,11 @@ func TestClickHouseReplicaEvidence(t *testing.T) {
 			require.NoError(t, err)
 			peer := observations[0]
 			peer.pod, peer.name, peer.problems = "pod1", "replica1", nil
-			assert.Equal(t, test.status, evaluateClickHouse(append(observations, peer)).Status)
+			report := evaluateClickHouse(append(observations, peer))
+			assert.Equal(t, test.status, report.Status)
+			if test.name == "historical queue exception after recovery" {
+				assert.Contains(t, strings.Join(report.Messages, " "), "previous queue-update exception")
+			}
 		})
 	}
 }

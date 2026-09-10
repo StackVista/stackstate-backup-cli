@@ -20,7 +20,7 @@ fi
 exec curl "$@" --resolve "${host}:9200:127.0.0.1" "${scheme}://${host}:9200/_cluster/health?level=indices"`
 
 func (c *Checker) checkElasticsearch(ctx context.Context, inventory inventory) Result {
-	members, err := inventory.members("elasticsearch")
+	members, err := inventory.members("elasticsearch", "", "elasticsearch")
 	if err != nil {
 		return result("elasticsearch", Unknown, err.Error())
 	}

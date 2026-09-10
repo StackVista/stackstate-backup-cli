@@ -12,7 +12,7 @@ type Checker struct {
 	options Options
 }
 
-// New creates a checker with an explicit release scope.
+// New creates a checker for the installation in one namespace.
 func New(kube Kubernetes, options Options) (*Checker, error) {
 	if err := options.Validate(); err != nil {
 		return nil, err
@@ -29,7 +29,7 @@ func New(kube Kubernetes, options Options) (*Checker, error) {
 // Check queries every selected component and rechecks Kubernetes membership afterward.
 func (c *Checker) Check(ctx context.Context) Report {
 	report := Report{
-		CheckedAt: time.Now().UTC(), Namespace: c.options.Namespace, Release: c.options.Release,
+		CheckedAt: time.Now().UTC(), Namespace: c.options.Namespace,
 		Checks: make([]Result, 0, len(c.options.Components)),
 	}
 	before, err := c.discover(ctx)

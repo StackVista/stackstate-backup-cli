@@ -9,7 +9,6 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -32,14 +31,14 @@ type member struct {
 func (c *Checker) discover(ctx context.Context) (inventory, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.options.RequestTimeout)
 	defer cancel()
-	options := metav1.ListOptions{LabelSelector: labels.Set{"app.kubernetes.io/instance": c.options.Release}.String()}
+	options := metav1.ListOptions{LabelSelector: "app.kubernetes.io/name in (hbase,elasticsearch,kafka,clickhouse)"}
 	sets, err := c.kube.Clientset().AppsV1().StatefulSets(c.options.Namespace).List(ctx, options)
 	if err != nil {
-		return inventory{}, fmt.Errorf("list release StatefulSets: %w", err)
+		return inventory{}, fmt.Errorf("list database StatefulSets: %w", err)
 	}
 	pods, err := c.kube.Clientset().CoreV1().Pods(c.options.Namespace).List(ctx, options)
 	if err != nil {
-		return inventory{}, fmt.Errorf("list release pods: %w", err)
+		return inventory{}, fmt.Errorf("list database pods: %w", err)
 	}
 	return inventory{workloads: sets.Items, pods: pods.Items}, nil
 }
@@ -48,10 +47,14 @@ func hasContainer(containers []corev1.Container, name string) bool {
 	return slices.ContainsFunc(containers, func(container corev1.Container) bool { return container.Name == name })
 }
 
-func (i inventory) members(container string) ([]member, error) {
+func (i inventory) members(name, component, container string) ([]member, error) {
 	var members []member
 	found := false
 	for _, workload := range i.workloads {
+		if workload.Labels["app.kubernetes.io/name"] != name ||
+			(component != "" && workload.Labels["app.kubernetes.io/component"] != component) {
+			continue
+		}
 		if !hasContainer(workload.Spec.Template.Spec.Containers, container) {
 			continue
 		}
@@ -65,7 +68,7 @@ func (i inventory) members(container string) ([]member, error) {
 		}
 	}
 	if !found {
-		return nil, fmt.Errorf("no chart-managed StatefulSet with container %q; check release, selected components and chart layout", container)
+		return nil, fmt.Errorf("no chart-managed StatefulSet for name=%q component=%q with container %q; check namespace, selected components and chart layout", name, component, container)
 	}
 	slices.SortFunc(members, func(a, b member) int {
 		if a.pod.Name < b.pod.Name {

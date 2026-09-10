@@ -60,7 +60,6 @@ spec:
             - replication
             - check
             - --namespace=observability
-            - --release=suse-observability
             - --wait
             - --timeout=15m
             - --stable-for=30s

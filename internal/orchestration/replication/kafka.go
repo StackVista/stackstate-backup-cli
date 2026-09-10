@@ -8,6 +8,10 @@ import (
 	"strings"
 )
 
+// The CLI must not bind the broker's inherited JMX port.
+const kafkaQuery = `unset JMX_PORT KAFKA_JMX_OPTS
+exec kafka-topics.sh "$@"`
+
 var (
 	kafkaTopicPattern     = regexp.MustCompile(`\bTopic:\s*(\S+)`)
 	kafkaPartitionPattern = regexp.MustCompile(`\bPartition:\s*(\d+)\b`)
@@ -16,14 +20,14 @@ var (
 )
 
 func (c *Checker) checkKafka(ctx context.Context, inventory inventory) Result {
-	members, err := inventory.members("kafka")
+	members, err := inventory.members("kafka", "kafka", "kafka")
 	if err != nil {
 		return result("kafka", Unknown, err.Error())
 	}
 	if err := expectedMembers(members); err != nil {
 		return result("kafka", Degraded, err.Error())
 	}
-	command := []string{"kafka-topics.sh", "--bootstrap-server", c.options.KafkaBootstrapServer, "--describe"}
+	command := []string{"bash", "-ec", kafkaQuery, "replication-check", "--bootstrap-server", c.options.KafkaBootstrapServer, "--describe"}
 	if c.options.KafkaClientProperties != "" {
 		command = append(command, "--command-config", c.options.KafkaClientProperties)
 	}

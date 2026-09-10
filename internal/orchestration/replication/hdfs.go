@@ -14,14 +14,14 @@ curl --fail --silent --show-error --max-time 20 'http://127.0.0.1:50070/jmx'
 printf '}'`
 
 func (c *Checker) checkHDFS(ctx context.Context, inventory inventory) Result {
-	namenodes, err := inventory.members("namenode")
+	namenodes, err := inventory.members("hbase", "hdfs-nn", "namenode")
 	if err != nil {
 		return result("hdfs", Unknown, err.Error())
 	}
 	if len(namenodes) != 1 {
 		return result("hdfs", Unknown, "expected the chart's single NameNode; external or HA NameNode layouts are not supported")
 	}
-	datanodes, err := inventory.members("datanode")
+	datanodes, err := inventory.members("hbase", "hdfs-dn", "datanode")
 	if err != nil {
 		return result("hdfs", Unknown, err.Error())
 	}

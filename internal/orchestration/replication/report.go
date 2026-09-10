@@ -21,7 +21,6 @@ var supportedComponents = []string{"hdfs", "elasticsearch", "kafka", "clickhouse
 // Options identifies the installation and bounds each database query.
 type Options struct {
 	Namespace             string
-	Release               string
 	Components            []string
 	RequestTimeout        time.Duration
 	KafkaClientProperties string
@@ -33,8 +32,8 @@ type Options struct {
 
 // Validate rejects ambiguous scope and unsupported probe settings.
 func (o Options) Validate() error {
-	if o.Namespace == "" || o.Release == "" {
-		return fmt.Errorf("namespace and release are required")
+	if o.Namespace == "" {
+		return fmt.Errorf("namespace is required")
 	}
 	if o.RequestTimeout <= 0 {
 		return fmt.Errorf("request-timeout must be positive")
@@ -66,7 +65,6 @@ type Result struct {
 type Report struct {
 	CheckedAt time.Time `json:"checkedAt"`
 	Namespace string    `json:"namespace"`
-	Release   string    `json:"release"`
 	Status    string    `json:"status"`
 	Error     string    `json:"error,omitempty"`
 	Checks    []Result  `json:"checks"`

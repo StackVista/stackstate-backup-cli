@@ -50,7 +50,6 @@ func Cmd() *cobra.Command {
 		RunE: func(command *cobra.Command, _ []string) error { return run(command, f) },
 	}
 	check.Flags().StringVarP(&f.options.Namespace, "namespace", "n", "", "Kubernetes namespace (required)")
-	check.Flags().StringVar(&f.options.Release, "release", "", "Helm release name (required)")
 	check.Flags().StringVar(&f.kubeconfig, "kubeconfig", "", "Kubeconfig path; uses normal kubeconfig or in-cluster credentials")
 	check.Flags().StringSliceVar(&f.options.Components, "components", []string{"hdfs", "elasticsearch", "kafka", "clickhouse"}, "Components to check")
 	check.Flags().StringVarP(&f.output, "output", "o", "table", "Output format: table or json")
@@ -65,7 +64,6 @@ func Cmd() *cobra.Command {
 	check.Flags().StringVar(&f.options.ElasticsearchCA, "elasticsearch-ca", "", "CA file already mounted in Elasticsearch pods")
 	check.Flags().StringVar(&f.options.ElasticsearchHost, "elasticsearch-server-name", "127.0.0.1", "Elasticsearch TLS server name, resolved to loopback inside the pod")
 	_ = check.MarkFlagRequired("namespace")
-	_ = check.MarkFlagRequired("release")
 	command.AddCommand(check)
 	return command
 }

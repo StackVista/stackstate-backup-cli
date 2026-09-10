@@ -1,11 +1,12 @@
 # Check database replication
 
-`sts-backup replication check` inspects the chart-managed HA databases in one
-SUSE Observability Helm release. It works from a workstation or a Kubernetes
-Job and does not require the backup ConfigMap, backup Secret, or enabled backups.
+`sts-backup replication check` inspects the chart-managed HA databases in a
+namespace containing one SUSE Observability installation. It works from a
+workstation or a Kubernetes Job and does not require the backup ConfigMap,
+backup Secret, or enabled backups.
 
 ```bash
-sts-backup replication check --namespace observability --release suse-observability
+sts-backup replication check --namespace observability
 ```
 
 The command returns exit code **0** only when every selected component reports
@@ -18,11 +19,11 @@ Use JSON for automation:
 
 ```bash
 sts-backup replication check \
-  --namespace observability --release suse-observability \
+  --namespace observability \
   --output json
 ```
 
-The report identifies the namespace, release, observation time, selected
+The report identifies the namespace, observation time, selected
 components, status (`healthy`, `degraded` or `unknown`) and diagnostic messages.
 The status describes only the selected checks.
 
@@ -30,7 +31,7 @@ The status describes only the selected checks.
 
 ```bash
 sts-backup replication check \
-  --namespace observability --release suse-observability \
+  --namespace observability \
   --wait --timeout 15m --interval 10s --stable-for 30s \
   --output json > replication.json
 ```
@@ -45,7 +46,7 @@ Select an explicit subset if a database is intentionally disabled:
 
 ```bash
 sts-backup replication check \
-  --namespace observability --release suse-observability \
+  --namespace observability \
   --components hdfs,elasticsearch,kafka
 ```
 
@@ -53,10 +54,14 @@ This selection does not validate the omitted database.
 
 ## What is checked
 
-The checker discovers StatefulSets by the Helm release's
-`app.kubernetes.io/instance` label and identifies the database containers used
-by the product chart. It verifies the desired pods exist, belong to those
-StatefulSets, are Ready, and are not terminating or undergoing a rollout.
+The checker discovers StatefulSets using `app.kubernetes.io/name`
+(`hbase`, `elasticsearch`, `kafka`, `clickhouse`) and
+`app.kubernetes.io/component` within the namespace. The HDFS components
+`hdfs-nn` and `hdfs-dn` distinguish the NameNode and DataNodes from the
+SecondaryNameNode. It assumes one SUSE Observability installation per
+namespace; no Helm release name is required. It verifies the desired pods
+exist, belong to those StatefulSets, are Ready, and are not terminating or
+undergoing a rollout.
 It queries database state and invalidates the observation if Kubernetes
 resource versions change during those queries.
 
@@ -65,12 +70,16 @@ resource versions change during those queries.
 | HDFS | Configured default block replication is at least two; all expected DataNodes are live; the NameNode is out of safe mode; no missing, corrupt, under-replicated or pending-replication blocks are reported by JMX. |
 | Elasticsearch | Expected members are present; health is green; every returned index has at least one replica shard; no shards are unassigned, initializing or relocating. |
 | Kafka | Every described partition has at least two distinct assigned replicas, complete ISR membership and an in-sync leader. Summaries and partition descriptions must agree. Both `__consumer_offsets` and `__transaction_state` must exist. |
-| ClickHouse | Every discovered member is queried. Replicated table groups have their expected active replicas, live coordination sessions and no read-only members. Replication logs are caught up, and no replication queue tasks other than background `MERGE_PARTS` remain. Missing or duplicate table replicas and query exceptions fail the check. |
+| ClickHouse | Every discovered member is queried. Replicated table groups have their expected active replicas, live coordination sessions and no read-only members. Replication logs are caught up, and no replication queue tasks other than background `MERGE_PARTS` remain. Missing or duplicate table replicas and current query exceptions fail the check. |
 
 The Kafka check does not create missing internal topics: initialize the
 corresponding workloads and repeat the check. The ClickHouse check requires
 replicated-table evidence and does not classify an empty result as healthy.
 Unreplicated ClickHouse tables are outside its scope.
+
+ClickHouse can retain `last_queue_update_exception` after recovery. The checker
+reports that history without failing otherwise healthy replication. Current
+coordination-query errors, expired sessions and replication backlog still fail.
 
 ## Access and supported layouts
 
@@ -87,16 +96,17 @@ operations. No backup credentials are loaded.
 Queries use the database tools already present in the product containers:
 `hdfs` and `curl` in the NameNode, `curl` in Elasticsearch,
 `kafka-topics.sh` in Kafka, and `clickhouse-client` in ClickHouse.
-Custom images, container names, external databases and alternative NameNode
-topologies are not supported by these initial adapters. Failed discovery or
-unsupported response formats produce `unknown`, not success.
+Custom images, container names, external databases, alternative NameNode
+topologies and overridden database name/component labels are not supported by
+these initial adapters. Failed discovery or unsupported response formats
+produce `unknown`, not success.
 
 The initial HTTP adapters use the chart's NameNode and Elasticsearch ports.
 For authenticated Kafka, supply a client properties file already mounted in
 the broker and an appropriate bootstrap address:
 
 ```bash
-sts-backup replication check -n observability --release suse-observability \
+sts-backup replication check -n observability \
   --components kafka \
   --kafka-bootstrap-server suse-observability-kafka:9092 \
   --kafka-client-properties /mounted/client.properties
@@ -120,7 +130,7 @@ treated as unverified.
 
 [examples/replication/job.yaml](../examples/replication/job.yaml) contains a
 dedicated ServiceAccount, namespace-scoped RBAC and a Job using in-cluster
-credentials. Adapt its namespace, release and image reference before use.
+credentials. Adapt its namespace and image reference before use.
 The Job has no retries: a failure requires investigation and an explicit rerun.
 
 No new container image is published by this change. To package the CLI, build
