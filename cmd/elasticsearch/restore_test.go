@@ -90,6 +90,10 @@ func (m *mockESClientForRestore) ConfigureSnapshotRepository(_, _, _, _, _, _ st
 	return fmt.Errorf("not implemented")
 }
 
+func (m *mockESClientForRestore) DeleteSnapshotRepository(_ string) error {
+	return fmt.Errorf("not implemented")
+}
+
 func (m *mockESClientForRestore) ConfigureSLMPolicy(_, _, _, _, _, _ string, _, _ int) error {
 	return fmt.Errorf("not implemented")
 }
@@ -180,6 +184,17 @@ func TestFilterSTSIndices(t *testing.T) {
 			expectedCount:    2,
 			expectedIndices:  []string{"sts_k8s_logs-000001", "sts_k8s_logs-000002"},
 		},
+		{
+			name: "sibling datastream is not included",
+			allIndices: []string{
+				".ds-sts_k8s_logs-2026.08.28-012011",
+				".ds-sts_k8s_logs_archive-2026.08.28-000001",
+			},
+			indexPrefix:      "sts",
+			datastreamPrefix: ".ds-sts_k8s_logs",
+			expectedCount:    1,
+			expectedIndices:  []string{".ds-sts_k8s_logs-2026.08.28-012011"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -194,6 +209,90 @@ func TestFilterSTSIndices(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFilterIndicesByPattern(t *testing.T) {
+	indices := []string{
+		"sts_topology",
+		"sts_metrics",
+		".ds-sts_k8s_logs-2026.08.28-012011",
+	}
+
+	tests := []struct {
+		name       string
+		expression string
+		expected   []string
+		expectErr  string
+	}{
+		{
+			name:       "narrowed restore",
+			expression: "sts_topology,.ds-sts_k8s_logs-*",
+			expected: []string{
+				"sts_topology",
+				".ds-sts_k8s_logs-2026.08.28-012011",
+			},
+		},
+		{
+			name:       "exclusion",
+			expression: "sts*,-sts_metrics",
+			expected:   []string{"sts_topology"},
+		},
+		{
+			name:       "all",
+			expression: "_all",
+			expected:   indices,
+		},
+		{
+			name:       "invalid pattern",
+			expression: "sts[",
+			expectErr:  "invalid pattern",
+		},
+		{
+			name:       "exclusion only",
+			expression: "-sts_metrics",
+			expectErr:  "at least one inclusion",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := filterIndicesByPattern(indices, tt.expression)
+
+			if tt.expectErr != "" {
+				require.ErrorContains(t, err, tt.expectErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestDeleteAllSTSIndicesHonorsIndicesPattern(t *testing.T) {
+	client := &mockESClientForRestore{
+		indices: []string{"sts_topology", "sts_metrics", "other"},
+		indexExistsMap: map[string]bool{
+			"sts_topology": true,
+			"sts_metrics":  true,
+		},
+	}
+	appCtx := &app.Context{
+		Config: &config.Config{
+			Elasticsearch: config.ElasticsearchConfig{
+				Restore: config.RestoreConfig{
+					IndexPrefix:           "sts",
+					DatastreamIndexPrefix: ".ds-sts_k8s_logs",
+					IndicesPattern:        "sts_topology",
+				},
+			},
+		},
+		Logger: logger.New(true, false),
+	}
+
+	err := deleteAllSTSIndices(client, appCtx)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"sts_topology"}, client.deletedIndices)
 }
 
 // TestHasDatastreamIndices tests datastream detection

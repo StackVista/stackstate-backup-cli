@@ -20,8 +20,11 @@ Download pre-built binaries from the [releases page](https://github.com/stackvis
 ### Building from Source
 
 ```bash
-go build -o sts-backup -ldflags '-s -w -X github.com/stackvista/stackstate-backup-cli/cmd/version.Version=0.0.1 -X github.com/stackvista/stackstate-backup-cli/cmd/version.Commit=abce -X github.com/stackvista/stackstate-backup-cli/cmd/version.Date=2025-10-15'
+go build -o sts-backup -ldflags '-w -X github.com/stackvista/stackstate-backup-cli/cmd/version.Version=0.0.1 -X github.com/stackvista/stackstate-backup-cli/cmd/version.Commit=abce -X github.com/stackvista/stackstate-backup-cli/cmd/version.Date=2025-10-15'
 ```
+
+Release builds deliberately pass `-w` without `-s`: `govulncheck -mode=binary` can only tell which packages a
+binary actually links while its Go symbol table is present, and CI rejects a stripped artifact.
 
 ## Usage
 
