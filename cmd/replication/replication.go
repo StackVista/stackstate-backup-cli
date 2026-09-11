@@ -43,7 +43,7 @@ func Cmd() *cobra.Command {
 	f := &flags{}
 	check := &cobra.Command{
 		Use: "check", Short: "Check observed replication; return nonzero unless all selected checks pass",
-		Long: "Check chart-managed HDFS, Elasticsearch, Kafka and ClickHouse replication. " +
+		Long: "Check chart-managed HDFS, Elasticsearch, Kafka, ClickHouse and ZooKeeper replication. " +
 			"This is a point-in-time observation, not permission to remove a node. " +
 			"Requires pods/exec access; only fixed read-only database queries are executed.",
 		Args: cobra.NoArgs, SilenceUsage: true,
@@ -51,7 +51,7 @@ func Cmd() *cobra.Command {
 	}
 	check.Flags().StringVarP(&f.options.Namespace, "namespace", "n", "", "Kubernetes namespace (required)")
 	check.Flags().StringVar(&f.kubeconfig, "kubeconfig", "", "Kubeconfig path; uses normal kubeconfig or in-cluster credentials")
-	check.Flags().StringSliceVar(&f.options.Components, "components", []string{"hdfs", "elasticsearch", "kafka", "clickhouse"}, "Components to check")
+	check.Flags().StringSliceVar(&f.options.Components, "components", []string{"hdfs", "elasticsearch", "kafka", "clickhouse", "zookeeper"}, "Components to check")
 	check.Flags().StringVarP(&f.output, "output", "o", "table", "Output format: table or json")
 	check.Flags().BoolVar(&f.wait, "wait", false, "Wait for sustained healthy replication")
 	check.Flags().DurationVar(&f.timeout, "timeout", defaultTimeout, "Overall deadline, including queries")

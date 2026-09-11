@@ -47,7 +47,7 @@ sts-backup [command] [subcommand] [flags]
 
 ### replication check
 
-Inspect HDFS, Elasticsearch, Kafka and ClickHouse replication in one namespace:
+Inspect HDFS, Elasticsearch, Kafka, ClickHouse and ZooKeeper replication in one namespace:
 
 ```bash
 sts-backup replication check --namespace observability

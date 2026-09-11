@@ -31,7 +31,7 @@ type member struct {
 func (c *Checker) discover(ctx context.Context) (inventory, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.options.RequestTimeout)
 	defer cancel()
-	options := metav1.ListOptions{LabelSelector: "app.kubernetes.io/name in (hbase,elasticsearch,kafka,clickhouse)"}
+	options := metav1.ListOptions{LabelSelector: "app.kubernetes.io/name in (hbase,elasticsearch,kafka,clickhouse,zookeeper)"}
 	sets, err := c.kube.Clientset().AppsV1().StatefulSets(c.options.Namespace).List(ctx, options)
 	if err != nil {
 		return inventory{}, fmt.Errorf("list database StatefulSets: %w", err)

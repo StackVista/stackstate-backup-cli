@@ -55,7 +55,7 @@ This selection does not validate the omitted database.
 ## What is checked
 
 The checker discovers StatefulSets using `app.kubernetes.io/name`
-(`hbase`, `elasticsearch`, `kafka`, `clickhouse`) and
+(`hbase`, `elasticsearch`, `kafka`, `clickhouse`, `zookeeper`) and
 `app.kubernetes.io/component` within the namespace. The HDFS components
 `hdfs-nn` and `hdfs-dn` distinguish the NameNode and DataNodes from the
 SecondaryNameNode. It assumes one SUSE Observability installation per
@@ -71,6 +71,7 @@ resource versions change during those queries.
 | Elasticsearch | Expected members are present; health is green; every returned index has at least one replica shard; no shards are unassigned, initializing or relocating. |
 | Kafka | Every described partition has at least two distinct assigned replicas, complete ISR membership and an in-sync leader. Summaries and partition descriptions must agree. Both `__consumer_offsets` and `__transaction_state` must exist. |
 | ClickHouse | Every discovered member is queried. Replicated table groups have their expected active replicas, live coordination sessions and no read-only members. Replication logs are caught up, and no replication queue tasks other than background `MERGE_PARTS` remain. Missing or duplicate table replicas and current query exceptions fail the check. |
+| ZooKeeper | At least three voting members are available. Every member reports the expected voting membership; exactly one is leader and the rest are followers. The leader reports all expected followers synchronized and is checked again after sampling the ensemble. |
 
 The Kafka check does not create missing internal topics: initialize the
 corresponding workloads and repeat the check. The ClickHouse check requires
@@ -80,6 +81,17 @@ Unreplicated ClickHouse tables are outside its scope.
 ClickHouse can retain `last_queue_update_exception` after recovery. The checker
 reports that history without failing otherwise healthy replication. Current
 coordination-query errors, expired sessions and replication backlog still fail.
+
+ZooKeeper is checked by default. To inspect it alone:
+
+```bash
+sts-backup replication check -n observability --components zookeeper --wait
+```
+
+ZooKeeper's `ruok` response does not prove that the ensemble has recovered.
+The checker reads `mntr` from every member instead, and requires full voting
+membership to recover rather than accepting a surviving majority. Wait mode
+applies the same healthy observation period as for the other databases.
 
 ## Access and supported layouts
 
@@ -95,13 +107,21 @@ operations. No backup credentials are loaded.
 
 Queries use the database tools already present in the product containers:
 `hdfs` and `curl` in the NameNode, `curl` in Elasticsearch,
-`kafka-topics.sh` in Kafka, and `clickhouse-client` in ClickHouse.
+`kafka-topics.sh` in Kafka, `clickhouse-client` in ClickHouse, and Bash TCP
+access to ZooKeeper.
 Custom images, container names, external databases, alternative NameNode
 topologies and overridden database name/component labels are not supported by
 these initial adapters. Failed discovery or unsupported response formats
 produce `unknown`, not success.
 
 The initial HTTP adapters use the chart's NameNode and Elasticsearch ports.
+The ZooKeeper adapter requires the chart's plaintext loopback client port
+and `mntr` in its four-letter-command whitelist. It supports the chart's
+single ensemble of voting participants; external ensembles, observer layouts,
+weighted quorums and TLS-only client listeners are outside its scope. Missing
+membership or synchronization metrics produce `unknown`. No configuration
+changes, HTTP AdminServer or database writes are needed.
+
 For authenticated Kafka, supply a client properties file already mounted in
 the broker and an appropriate bootstrap address:
 
@@ -155,9 +175,9 @@ starting maintenance, provide an atomic database snapshot, or prove continued
 health between observations.
 
 This first version does not validate Longhorn volume health or placement,
-spare capacity, HBase region assignment and WAL recovery, ZooKeeper quorum,
-VictoriaMetrics redundancy, backup freshness, or the consequences of removing
-a particular node. HDFS's default replication setting does not prove that
+spare capacity, HBase region assignment and WAL recovery, quorum survival
+after a specific node is removed, VictoriaMetrics redundancy, backup freshness,
+or the consequences of removing a particular node. HDFS's default replication setting does not prove that
 every file has the same replication policy. It is not a complete implementation
 of the product's node-maintenance checklist.
 

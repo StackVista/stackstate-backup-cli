@@ -73,6 +73,8 @@ func (c *Checker) checkComponent(ctx context.Context, inventory inventory, compo
 		return c.checkKafka(ctx, inventory)
 	case "clickhouse":
 		return c.checkClickHouse(ctx, inventory)
+	case "zookeeper":
+		return c.checkZooKeeper(ctx, inventory)
 	default:
 		return result(component, Unknown, "unsupported component")
 	}

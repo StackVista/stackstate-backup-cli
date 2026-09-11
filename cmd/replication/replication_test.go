@@ -46,6 +46,7 @@ func TestHelpDoesNotRequireBackupConfiguration(t *testing.T) {
 	assert.NotContains(t, output.String(), "--release")
 	assert.NotContains(t, output.String(), "--secret")
 	assert.NotContains(t, output.String(), "--configmap")
+	assert.Contains(t, output.String(), "hdfs,elasticsearch,kafka,clickhouse,zookeeper")
 }
 
 func TestReportAndExitAgree(t *testing.T) {
