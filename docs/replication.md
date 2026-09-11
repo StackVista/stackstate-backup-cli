@@ -37,10 +37,29 @@ sts-backup replication check \
 ```
 
 Wait mode requires consecutive healthy observations spanning `--stable-for`.
-An unsuccessful observation resets that period. Progress goes to stderr;
-stdout contains one final report. The overall deadline includes database
-queries. A timeout or cancellation returns nonzero, even if an earlier
-observation was healthy. `--request-timeout` bounds each API request or query.
+The default is 30 seconds, starting when the first fully healthy observation
+completes. Earlier rounds with any `unknown` or `degraded` component do not
+count. An unsuccessful observation resets the period.
+
+Progress includes UTC timestamps and shows the elapsed and remaining healthy
+period, resets, and successful completion. Seeing every component healthy
+does not mean the stability period has already elapsed. Database queries take
+time; the checker needs another completed healthy observation to confirm the
+period, rather than exiting on a timer alone.
+
+To finish on the first fully healthy observation, explicitly use
+`--wait --stable-for 0s`.
+
+Progress goes to stderr; stdout contains one final report. Table output includes
+the report time and the start time of the last completed observation. JSON
+retains its `checkedAt` timestamp. The overall deadline includes database
+queries. `--request-timeout` bounds each API request or query.
+
+Ctrl+C stops further queries. Cancellation or timeout returns nonzero and sets
+the overall result to `unknown`, retaining the last completed observation
+instead of replacing it with errors from interrupted queries. If no observation
+completed, the report says so. Healthy component results in a cancelled report
+describe that previous observation; the wait did not finish successfully.
 
 Select an explicit subset if a database is intentionally disabled:
 

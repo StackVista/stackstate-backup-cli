@@ -118,15 +118,34 @@ func observe(ctx context.Context, check func(context.Context) checker.Report, f 
 	if !f.wait {
 		report := check(ctx)
 		if ctx.Err() != nil {
-			return report, fmt.Errorf("replication check ended: %w", ctx.Err())
+			return checker.Report{Namespace: report.Namespace}, fmt.Errorf("replication check ended: %w", ctx.Err())
 		}
 		return report, nil
 	}
-	return checker.Wait(ctx, check, f.interval, f.stableFor, func(report checker.Report) {
+	_, _ = fmt.Fprintf(progress, "[%s] Waiting for all checks to remain healthy for %s (timeout %s).\n",
+		time.Now().UTC().Format(time.RFC3339), f.stableFor, f.timeout)
+	return checker.Wait(ctx, check, f.interval, f.stableFor, func(report checker.Report, state checker.WaitProgress) {
+		timestamp := state.ObservedAt.Format(time.RFC3339)
 		for _, check := range report.Checks {
-			_, _ = fmt.Fprintf(progress, "%s %s: %s\n", check.Component, check.Status, strings.Join(check.Messages, "; "))
+			_, _ = fmt.Fprintf(progress, "[%s] %s %s: %s\n", timestamp, check.Component, check.Status, strings.Join(check.Messages, "; "))
 		}
+		_, _ = fmt.Fprintf(progress, "[%s] %s\n", timestamp, stabilityMessage(report, state))
 	})
+}
+
+func stabilityMessage(report checker.Report, state checker.WaitProgress) string {
+	switch {
+	case state.Complete:
+		return fmt.Sprintf("All checks healthy; stability period satisfied (%s/%s).",
+			state.HealthyFor.Round(time.Millisecond), state.Required)
+	case report.Status == checker.Healthy:
+		return fmt.Sprintf("All checks healthy; verifying stability: %s/%s (%s remaining).",
+			state.HealthyFor.Round(time.Millisecond), state.Required, (state.Required - state.HealthyFor).Round(time.Millisecond))
+	case state.Reset:
+		return "Stability period reset; waiting for all selected checks to become healthy."
+	default:
+		return "Waiting for all selected checks to become healthy; stability period has not started."
+	}
 }
 
 func writeReport(writer io.Writer, format string, report checker.Report) error {
@@ -135,6 +154,21 @@ func writeReport(writer io.Writer, format string, report checker.Report) error {
 			return fmt.Errorf("write JSON report: %w", err)
 		}
 		return nil
+	}
+	if _, err := fmt.Fprintf(writer, "[%s] Replication result: %s\n", time.Now().UTC().Format(time.RFC3339), report.Status); err != nil {
+		return fmt.Errorf("write report status: %w", err)
+	}
+	if report.Error != "" {
+		if _, err := fmt.Fprintln(writer, report.Error); err != nil {
+			return fmt.Errorf("write report error: %w", err)
+		}
+	}
+	if len(report.Checks) == 0 {
+		_, err := fmt.Fprintln(writer, "No completed observation.")
+		return err
+	}
+	if _, err := fmt.Fprintf(writer, "Last completed observation started: %s\n", report.CheckedAt.Format(time.RFC3339)); err != nil {
+		return fmt.Errorf("write observation timestamp: %w", err)
 	}
 	table := tabwriter.NewWriter(writer, 0, 0, tablePadding, ' ', 0)
 	if _, err := fmt.Fprintln(table, "COMPONENT\tSTATUS\tDETAILS"); err != nil {

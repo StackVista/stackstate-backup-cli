@@ -34,11 +34,19 @@ func (c *Checker) Check(ctx context.Context) Report {
 	}
 	before, err := c.discover(ctx)
 	for _, component := range c.options.Components {
+		if ctx.Err() != nil {
+			report.Status = Unknown
+			return report
+		}
 		if err != nil {
 			report.Checks = append(report.Checks, result(component, Unknown, err.Error()))
 			continue
 		}
 		report.Checks = append(report.Checks, c.checkComponent(ctx, before, component))
+	}
+	if ctx.Err() != nil {
+		report.Status = Unknown
+		return report
 	}
 	if err == nil {
 		after, afterErr := c.discover(ctx)
@@ -58,9 +66,16 @@ func (c *Checker) Check(ctx context.Context) Report {
 }
 
 func (c *Checker) query(ctx context.Context, pod, container string, command []string) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	ctx, cancel := context.WithTimeout(ctx, c.options.RequestTimeout)
 	defer cancel()
-	return c.kube.Exec(ctx, c.options.Namespace, pod, container, command)
+	data, err := c.kube.Exec(ctx, c.options.Namespace, pod, container, command)
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	return data, err
 }
 
 func (c *Checker) checkComponent(ctx context.Context, inventory inventory, component string) Result {

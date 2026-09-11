@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -77,4 +79,49 @@ func TestReportAndExitAgree(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWaitOutputShowsTimestampsAndStabilityProgress(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var stderr bytes.Buffer
+		report, err := observe(context.Background(), func(context.Context) checker.Report {
+			return checker.Report{CheckedAt: time.Now().UTC(), Status: checker.Healthy,
+				Checks: []checker.Result{{Component: "kafka", Status: checker.Healthy, Messages: []string{"all replicas in sync"}}}}
+		}, &flags{wait: true, interval: 10 * time.Second, stableFor: 30 * time.Second, timeout: time.Minute}, &stderr)
+		require.NoError(t, err)
+		assert.Equal(t, checker.Healthy, report.Status)
+		for _, line := range strings.Split(strings.TrimSpace(stderr.String()), "\n") {
+			assert.Regexp(t, `^\[\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\] `, line)
+		}
+		assert.Contains(t, stderr.String(), "verifying stability: 0s/30s (30s remaining)")
+		assert.Contains(t, stderr.String(), "verifying stability: 10s/30s (20s remaining)")
+		assert.Contains(t, stderr.String(), "stability period satisfied (30s/30s)")
+	})
+}
+
+func TestCancelledTableLabelsLastCompletedObservation(t *testing.T) {
+	var stdout bytes.Buffer
+	report := checker.Report{CheckedAt: time.Date(2026, time.September, 11, 12, 0, 0, 0, time.UTC), Status: checker.Healthy,
+		Checks: []checker.Result{{Component: "kafka", Status: checker.Healthy, Messages: []string{"all replicas in sync"}}}}
+	err := finishReport(&stdout, "table", report, context.Canceled)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Contains(t, stdout.String(), "Replication result: unknown")
+	assert.Contains(t, stdout.String(), "context canceled")
+	assert.Contains(t, stdout.String(), "Last completed observation started: 2026-09-11T12:00:00Z")
+	assert.Contains(t, stdout.String(), "all replicas in sync")
+}
+
+func TestCancellationBeforeFirstObservation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var stdout, stderr bytes.Buffer
+	report, err := observe(ctx, func(context.Context) checker.Report {
+		cancel()
+		return checker.Report{Namespace: "test", Checks: []checker.Result{{Messages: []string{"aborted request URL"}}}}
+	}, &flags{wait: true, interval: time.Second}, &stderr)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, "test", report.Namespace)
+	assert.Empty(t, report.Checks)
+	assert.NotContains(t, stderr.String(), "aborted")
+	require.ErrorIs(t, finishReport(&stdout, "table", report, err), context.Canceled)
+	assert.Contains(t, stdout.String(), "No completed observation.")
 }

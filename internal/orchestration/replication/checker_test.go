@@ -204,3 +204,23 @@ func TestInvalidScopeRejected(t *testing.T) {
 		require.Error(t, err)
 	}
 }
+
+func TestCancellationStopsRemainingQueriesAndDiscovery(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	client := fake.NewSimpleClientset(kafkaObjects()...)
+	kube := &fakeKubernetes{client: client, exec: func(context.Context, string, string, string, []string) ([]byte, error) {
+		cancel()
+		return nil, fmt.Errorf("aborted request with query URL")
+	}}
+	options := testOptions()
+	options.Components = []string{"kafka", "zookeeper", "clickhouse"}
+	probe, err := New(kube, options)
+	require.NoError(t, err)
+	report := probe.Check(ctx)
+	assert.Equal(t, Unknown, report.Status)
+	require.Len(t, report.Checks, 1)
+	assert.Equal(t, []string{"context canceled"}, report.Checks[0].Messages)
+	assert.Equal(t, 1, kube.calls)
+	assert.Len(t, client.Actions(), 2, "no second discovery after cancellation")
+}
