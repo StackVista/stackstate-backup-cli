@@ -57,6 +57,7 @@ func TestReportAndExitAgree(t *testing.T) {
 		checkErr               error
 	}{
 		{"healthy", checker.Healthy, checker.Healthy, nil},
+		{"not applicable", checker.NotApplicable, checker.NotApplicable, nil},
 		{"degraded", checker.Degraded, checker.Degraded, nil},
 		{"unknown", checker.Unknown, checker.Unknown, nil},
 		{"timeout after healthy sample", checker.Healthy, checker.Unknown, context.DeadlineExceeded},
@@ -68,7 +69,7 @@ func TestReportAndExitAgree(t *testing.T) {
 			var report checker.Report
 			require.NoError(t, json.Unmarshal(output.Bytes(), &report))
 			assert.Equal(t, test.expected, report.Status)
-			if test.expected == checker.Healthy {
+			if test.expected == checker.Healthy || test.expected == checker.NotApplicable {
 				require.NoError(t, err)
 			} else {
 				require.Error(t, err)

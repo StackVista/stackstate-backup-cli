@@ -42,7 +42,11 @@ func (c *Checker) Check(ctx context.Context) Report {
 			report.Checks = append(report.Checks, result(component, Unknown, err.Error()))
 			continue
 		}
-		report.Checks = append(report.Checks, c.checkComponent(ctx, before, component))
+		if applicability := before.applicability(component); applicability != nil {
+			report.Checks = append(report.Checks, *applicability)
+		} else {
+			report.Checks = append(report.Checks, c.checkComponent(ctx, before, component))
+		}
 	}
 	if ctx.Err() != nil {
 		report.Status = Unknown

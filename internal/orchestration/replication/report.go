@@ -9,9 +9,10 @@ import (
 )
 
 const (
-	Healthy  = "healthy"
-	Degraded = "degraded"
-	Unknown  = "unknown"
+	Healthy       = "healthy"
+	Degraded      = "degraded"
+	Unknown       = "unknown"
+	NotApplicable = "not_applicable"
 
 	minReplicas = 2
 )
@@ -75,13 +76,21 @@ func result(component, status, message string) Result {
 }
 
 func reportStatus(checks []Result) string {
-	status := Healthy
+	status := NotApplicable
+	if len(checks) == 0 {
+		return Unknown
+	}
 	for _, check := range checks {
 		if check.Status == Unknown {
 			return Unknown
 		}
+		if check.Status == NotApplicable {
+			continue
+		}
 		if check.Status != Healthy {
 			status = Degraded
+		} else if status == NotApplicable {
+			status = Healthy
 		}
 	}
 	return status

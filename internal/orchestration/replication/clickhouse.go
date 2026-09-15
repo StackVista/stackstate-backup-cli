@@ -21,15 +21,18 @@ FORMAT JSON`
 
 const clickhouseQuery = `export CLICKHOUSE_PASSWORD="${CLICKHOUSE_ADMIN_PASSWORD:?missing ClickHouse credentials}"
 exec clickhouse-client --host 127.0.0.1 --port "${CLICKHOUSE_TCP_PORT:-9000}" \
- --user "${CLICKHOUSE_ADMIN_USER:?missing ClickHouse user}" --readonly 1 --query "$1"`
+ --user "${CLICKHOUSE_ADMIN_USER:?missing ClickHouse user}" --readonly 1 --query "$1" "${@:2}"`
+
+const clickhouseEmptyLogSQL = `SELECT count() AS entries FROM system.zookeeper WHERE path = {log_path:String} FORMAT JSON`
 
 type replicaObservation struct {
-	path               string
-	name               string
-	pod                string
-	total              int64
-	historicalQueueErr bool
-	problems           []string
+	path                 string
+	name                 string
+	pod                  string
+	total                int64
+	historicalQueueErr   bool
+	needsLogVerification bool
+	problems             []string
 }
 
 func (c *Checker) checkClickHouse(ctx context.Context, inventory inventory) Result {
@@ -51,9 +54,40 @@ func (c *Checker) checkClickHouse(ctx context.Context, inventory inventory) Resu
 		if err != nil {
 			return result("clickhouse", Unknown, fmt.Sprintf("%s: %v", member.pod.Name, err))
 		}
+		if err := c.verifyEmptyLogs(ctx, member.pod.Name, rows); err != nil {
+			return result("clickhouse", Unknown, err.Error())
+		}
 		observations = append(observations, rows...)
 	}
 	return evaluateClickHouse(observations)
+}
+
+func (c *Checker) verifyEmptyLogs(ctx context.Context, pod string, rows []replicaObservation) error {
+	for n := range rows {
+		if !rows[n].needsLogVerification {
+			continue
+		}
+		command := []string{"bash", "-ec", clickhouseQuery, "replication-check", clickhouseEmptyLogSQL, "--param_log_path=" + rows[n].path + "/log"}
+		data, err := c.query(ctx, pod, "clickhouse", command)
+		if err != nil {
+			return fmt.Errorf("%s: could not verify empty replication log: %w", pod, err)
+		}
+		var response struct {
+			Data []map[string]json.RawMessage `json:"data"`
+		}
+		if err := json.Unmarshal(data, &response); err != nil || len(response.Data) != 1 {
+			return fmt.Errorf("%s: invalid empty replication log evidence", pod)
+		}
+		entries, err := number(response.Data[0], "entries")
+		if err != nil {
+			return fmt.Errorf("%s: invalid empty replication log evidence", pod)
+		}
+		rows[n].needsLogVerification = false
+		if entries > 0 {
+			rows[n].problems = append(rows[n].problems, "replication log contains entries not yet pulled into the local queue")
+		}
+	}
+	return nil
 }
 
 func parseClickHouse(data []byte, pod string, expected int) ([]replicaObservation, error) {
@@ -100,7 +134,8 @@ func parseReplica(row map[string]json.RawMessage, pod string, expected int) (rep
 	if counts["is_readonly"] != 0 || counts["is_session_expired"] != 0 {
 		observation.problems = append(observation.problems, "replica is read-only or coordination session expired")
 	}
-	if counts["log_pointer"] <= counts["log_max_index"] || counts["pending_data_tasks"] != 0 {
+	observation.needsLogVerification = counts["log_pointer"] == 0 && counts["log_max_index"] == 0
+	if counts["log_max_index"] > 0 && counts["log_pointer"] <= counts["log_max_index"] || counts["pending_data_tasks"] != 0 {
 		observation.problems = append(observation.problems, fmt.Sprintf("replication backlog: %d data tasks; reported delay %ds", counts["pending_data_tasks"], counts["absolute_delay"]))
 	}
 	if fields["zookeeper_exception"] != "" {
@@ -114,6 +149,9 @@ func evaluateClickHouse(observations []replicaObservation) Result {
 	var problems []string
 	historicalErrors := 0
 	for _, observation := range observations {
+		if observation.needsLogVerification {
+			return result("clickhouse", Unknown, "zero log pointers require verification that the replication log is empty")
+		}
 		if observation.historicalQueueErr {
 			historicalErrors++
 		}

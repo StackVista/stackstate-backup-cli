@@ -12,7 +12,7 @@ This CLI tool replaces the legacy Bash-based backup/restore scripts with a singl
 - Stackgraph backups and restores
 - VictoriaMetrics backups and restores
 - Settings backups and restores
-- Read-only HA database replication checks
+- Read-only database replication checks selected from the deployed topology
 
 ## Installation
 

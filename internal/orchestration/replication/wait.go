@@ -37,15 +37,18 @@ func Wait(ctx context.Context, check func(context.Context) Report, interval, sta
 		report = next
 		now := time.Now()
 		progress := WaitProgress{ObservedAt: now.UTC(), Required: stableFor}
-		if report.Status != Healthy {
-			progress.Reset = !healthySince.IsZero()
-			healthySince = time.Time{}
-		} else {
+		switch report.Status {
+		case NotApplicable:
+			progress.Complete = true
+		case Healthy:
 			if healthySince.IsZero() {
 				healthySince = now
 			}
 			progress.HealthyFor = now.Sub(healthySince)
 			progress.Complete = progress.HealthyFor >= stableFor
+		default:
+			progress.Reset = !healthySince.IsZero()
+			healthySince = time.Time{}
 		}
 		if observe != nil {
 			observe(report, progress)

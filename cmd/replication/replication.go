@@ -39,12 +39,13 @@ type flags struct {
 
 // Cmd creates the replication command independently of backup configuration.
 func Cmd() *cobra.Command {
-	command := &cobra.Command{Use: "replication", Short: "Inspect HA database replication without changing cluster state"}
+	command := &cobra.Command{Use: "replication", Short: "Inspect database replication without changing cluster state"}
 	f := &flags{}
 	check := &cobra.Command{
 		Use: "check", Short: "Check observed replication; return nonzero unless all selected checks pass",
 		Long: "Check chart-managed HDFS, Elasticsearch, Kafka, ClickHouse and ZooKeeper replication. " +
 			"This is a point-in-time observation, not permission to remove a node. " +
+			"Uses StatefulSet configuration to select applicable checks. " +
 			"Requires pods/exec access; only fixed read-only database queries are executed.",
 		Args: cobra.NoArgs, SilenceUsage: true,
 		RunE: func(command *cobra.Command, _ []string) error { return run(command, f) },
@@ -108,7 +109,7 @@ func finishReport(writer io.Writer, format string, report checker.Report, checkE
 	if checkErr != nil {
 		return checkErr
 	}
-	if report.Status != checker.Healthy {
+	if report.Status != checker.Healthy && report.Status != checker.NotApplicable {
 		return fmt.Errorf("replication is %s; see the report", report.Status)
 	}
 	return nil
@@ -122,7 +123,7 @@ func observe(ctx context.Context, check func(context.Context) checker.Report, f 
 		}
 		return report, nil
 	}
-	_, _ = fmt.Fprintf(progress, "[%s] Waiting for all checks to remain healthy for %s (timeout %s).\n",
+	_, _ = fmt.Fprintf(progress, "[%s] Waiting for all applicable checks to remain healthy for %s (timeout %s).\n",
 		time.Now().UTC().Format(time.RFC3339), f.stableFor, f.timeout)
 	return checker.Wait(ctx, check, f.interval, f.stableFor, func(report checker.Report, state checker.WaitProgress) {
 		timestamp := state.ObservedAt.Format(time.RFC3339)
@@ -135,11 +136,13 @@ func observe(ctx context.Context, check func(context.Context) checker.Report, f 
 
 func stabilityMessage(report checker.Report, state checker.WaitProgress) string {
 	switch {
+	case report.Status == checker.NotApplicable:
+		return "No applicable replication checks; configured component availability checks passed."
 	case state.Complete:
-		return fmt.Sprintf("All checks healthy; stability period satisfied (%s/%s).",
+		return fmt.Sprintf("All applicable checks healthy; stability period satisfied (%s/%s).",
 			state.HealthyFor.Round(time.Millisecond), state.Required)
 	case report.Status == checker.Healthy:
-		return fmt.Sprintf("All checks healthy; verifying stability: %s/%s (%s remaining).",
+		return fmt.Sprintf("All applicable checks healthy; verifying stability: %s/%s (%s remaining).",
 			state.HealthyFor.Round(time.Millisecond), state.Required, (state.Required - state.HealthyFor).Round(time.Millisecond))
 	case state.Reset:
 		return "Stability period reset; waiting for all selected checks to become healthy."

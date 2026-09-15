@@ -12,6 +12,17 @@ import (
 const kafkaQuery = `unset JMX_PORT KAFKA_JMX_OPTS
 exec kafka-topics.sh "$@"`
 
+const transactionTopicQuery = `unset JMX_PORT KAFKA_JMX_OPTS
+if output="$(kafka-configs.sh "$@" --describe --entity-type topics --entity-name __transaction_state 2>&1)"; then
+  printf 'present\n'
+elif [[ "$output" == *AuthorizationException* ]]; then
+  printf 'unverified\n'
+elif [[ "$output" == *UnknownTopicOrPartitionException* ]]; then
+  printf 'absent\n'
+else
+  printf 'unverified\n'
+fi`
+
 var (
 	kafkaTopicPattern     = regexp.MustCompile(`\bTopic:\s*(\S+)`)
 	kafkaPartitionPattern = regexp.MustCompile(`\bPartition:\s*(\d+)\b`)
@@ -35,7 +46,28 @@ func (c *Checker) checkKafka(ctx context.Context, inventory inventory) Result {
 	if err != nil {
 		return result("kafka", Unknown, err.Error())
 	}
-	return evaluateKafka(string(data))
+	report := evaluateKafka(string(data))
+	if report.Status == Unknown || hasTransactionTopic(string(data)) {
+		return report
+	}
+	probe := []string{"bash", "-ec", transactionTopicQuery, "replication-check", "--bootstrap-server", c.options.KafkaBootstrapServer}
+	if c.options.KafkaClientProperties != "" {
+		probe = append(probe, "--command-config", c.options.KafkaClientProperties)
+	}
+	presence, err := c.query(ctx, members[0].pod.Name, "kafka", probe)
+	if err != nil || strings.TrimSpace(string(presence)) != "absent" {
+		return result("kafka", Unknown, "__transaction_state was not listed and its absence could not be verified; check topic permissions or retry")
+	}
+	return report
+}
+
+func hasTransactionTopic(output string) bool {
+	for _, match := range kafkaTopicPattern.FindAllStringSubmatch(output, -1) {
+		if match[1] == "__transaction_state" {
+			return true
+		}
+	}
+	return false
 }
 
 func brokerIDs(value string) (map[int]bool, error) {
@@ -112,14 +144,18 @@ func evaluateKafka(output string) Result {
 	if err := completeKafkaEvidence(counts, partitions); err != nil {
 		return result("kafka", Unknown, err.Error())
 	}
+	report := result("kafka", Healthy, fmt.Sprintf("all partitions of %d topics have at least two replicas, complete ISR and an in-sync leader", len(counts)))
 	if len(problems) > 0 {
-		return Result{Component: "kafka", Status: Degraded, Messages: problems}
+		report = Result{Component: "kafka", Status: Degraded, Messages: problems}
 	}
-	return result("kafka", Healthy, fmt.Sprintf("all partitions of %d topics have at least two replicas, complete ISR and an in-sync leader", len(counts)))
+	if counts["__transaction_state"] == 0 {
+		report.Messages = append(report.Messages, "__transaction_state is absent; transaction-topic replication is not applicable to this observation")
+	}
+	return report
 }
 
 func completeKafkaEvidence(counts map[string]int, partitions map[string]map[int]bool) error {
-	for _, topic := range []string{"__consumer_offsets", "__transaction_state"} {
+	for _, topic := range []string{"__consumer_offsets"} {
 		if counts[topic] == 0 {
 			return fmt.Errorf("required internal topic %s is absent; initialize its workload and repeat the check", topic)
 		}

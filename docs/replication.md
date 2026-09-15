@@ -1,6 +1,6 @@
 # Check database replication
 
-`sts-backup replication check` inspects the chart-managed HA databases in a
+`sts-backup replication check` inspects the chart-managed databases in a
 namespace containing one SUSE Observability installation. It works from a
 workstation or a Kubernetes Job and does not require the backup ConfigMap,
 backup Secret, or enabled backups.
@@ -9,11 +9,18 @@ backup Secret, or enabled backups.
 sts-backup replication check --namespace observability
 ```
 
-The command returns exit code **0** only when every selected component reports
-healthy replication. Any degraded, missing, inaccessible, unsupported or
+The command returns exit code **0** when every selected component is `healthy`
+or `not_applicable`. Any degraded, missing, inaccessible, unsupported or
 incompletely described component returns exit code **1**. A missing component
-is never silently skipped. Non-HA installations do not meet the checker's
-minimum application replication requirement.
+is never silently skipped.
+
+Checks follow the deployed topology: StatefulSet desired replica counts already
+reflect the sizing profile and its overrides. A component configured with one
+replica per database group is `not_applicable` after its Kubernetes availability
+checks pass. HBase mono is also `not_applicable` for distributed HDFS checks.
+This works with Helm or GitOps deployments without reading Helm release records,
+Secrets or a profile name. It does not infer configuration from the number of
+surviving pods.
 
 Use JSON for automation:
 
@@ -24,8 +31,10 @@ sts-backup replication check \
 ```
 
 The report identifies the namespace, observation time, selected
-components, status (`healthy`, `degraded` or `unknown`) and diagnostic messages.
-The status describes only the selected checks.
+components, status (`healthy`, `degraded`, `unknown` or `not_applicable`) and
+diagnostic messages. The status describes only the selected checks. If all
+selected components are `not_applicable`, the overall status is also
+`not_applicable`; exit code zero does not establish application redundancy.
 
 ## Wait for recovery
 
@@ -36,7 +45,11 @@ sts-backup replication check \
   --output json > replication.json
 ```
 
-Wait mode requires consecutive healthy observations spanning `--stable-for`.
+Wait mode requires consecutive successful observations spanning `--stable-for`,
+with all applicable replication checks healthy and all selected workloads
+available. Components marked `not_applicable` do not prevent success.
+If every selected component is `not_applicable`, wait mode completes after the
+first successful availability observation.
 The default is 30 seconds, starting when the first fully healthy observation
 completes. Earlier rounds with any `unknown` or `degraded` component do not
 count. An unsuccessful observation resets the period.
@@ -88,14 +101,23 @@ resource versions change during those queries.
 |---|---|
 | HDFS | Configured default block replication is at least two; all expected DataNodes are live; the NameNode is out of safe mode; no missing, corrupt, under-replicated or pending-replication blocks are reported by JMX. |
 | Elasticsearch | Expected members are present; health is green; every returned index has at least one replica shard; no shards are unassigned, initializing or relocating. |
-| Kafka | Every described partition has at least two distinct assigned replicas, complete ISR membership and an in-sync leader. Summaries and partition descriptions must agree. Both `__consumer_offsets` and `__transaction_state` must exist. |
+| Kafka | Every described partition has at least two distinct assigned replicas, complete ISR membership and an in-sync leader. Summaries and partition descriptions must agree. `__consumer_offsets` must exist. `__transaction_state` is validated when present; verified absence is reported without failing the check. |
 | ClickHouse | Every discovered member is queried. Replicated table groups have their expected active replicas, live coordination sessions and no read-only members. Replication logs are caught up, and no replication queue tasks other than background `MERGE_PARTS` remain. Missing or duplicate table replicas and current query exceptions fail the check. |
 | ZooKeeper | At least three voting members are available. Every member reports the expected voting membership; exactly one is leader and the rest are followers. The leader reports all expected followers synchronized and is checked again after sampling the ensemble. |
 
-The Kafka check does not create missing internal topics: initialize the
-corresponding workloads and repeat the check. The ClickHouse check requires
-replicated-table evidence and does not classify an empty result as healthy.
-Unreplicated ClickHouse tables are outside its scope.
+Kafka creates `__transaction_state` lazily when transactions are used. If it
+is not listed, a separate read-only topic configuration query must confirm
+absence; permission failures or ambiguous results produce `unknown`. The checker
+never creates topics. It does not validate the broker defaults that would govern
+a future transaction topic. A present transaction topic still needs at least two
+replicas and complete ISR.
+
+For replicated ClickHouse deployments, the check requires replicated-table
+evidence and does not classify an empty result as healthy. Unreplicated tables
+are outside its scope. When both log pointers are zero, the checker queries
+`system.zookeeper` to distinguish a genuinely empty replication log from an
+unprocessed first log entry. Query failures remain `unknown`; pending queue
+tasks, inactive replicas and coordination errors still fail.
 
 ClickHouse can retain `last_queue_update_exception` after recovery. The checker
 reports that history without failing otherwise healthy replication. Current
@@ -126,7 +148,7 @@ operations. No backup credentials are loaded.
 
 Queries use the database tools already present in the product containers:
 `hdfs` and `curl` in the NameNode, `curl` in Elasticsearch,
-`kafka-topics.sh` in Kafka, `clickhouse-client` in ClickHouse, and Bash TCP
+`kafka-topics.sh` and `kafka-configs.sh` in Kafka, `clickhouse-client` in ClickHouse, and Bash TCP
 access to ZooKeeper.
 Custom images, container names, external databases, alternative NameNode
 topologies and overridden database name/component labels are not supported by
@@ -151,7 +173,8 @@ sts-backup replication check -n observability \
   --kafka-client-properties /mounted/client.properties
 ```
 
-The credentials must be able to describe all topics in the installation.
+The credentials must be able to describe all topics in the installation and
+describe topic configurations for `__transaction_state` when verifying absence.
 Elasticsearch uses the pod's `ELASTIC_PASSWORD` when present. For HTTPS,
 use `--elasticsearch-scheme https`, `--elasticsearch-ca` with a CA path inside
 the pod, and `--elasticsearch-server-name` matching the server certificate.
@@ -192,6 +215,17 @@ This is a sampled replication report, **not a “safe to remove this node”
 certificate or a maintenance lock**. It does not prevent another process from
 starting maintenance, provide an atomic database snapshot, or prove continued
 health between observations.
+
+The current StatefulSet specification is the configuration baseline. The checker
+cannot distinguish an intentional replica-count override from an accidental or
+temporary scale-down in that specification, recover an original sizing profile,
+or detect an entirely deleted shard from surviving workloads alone. Keep the
+desired topology intact during node maintenance. A missing pod or a workload
+still configured for several replicas cannot become `not_applicable` just
+because fewer replicas are Ready.
+
+`not_applicable` verifies Kubernetes availability only. It does not establish
+database health or storage-level redundancy for a single-replica component.
 
 This first version does not validate Longhorn volume health or placement,
 spare capacity, HBase region assignment and WAL recovery, quorum survival

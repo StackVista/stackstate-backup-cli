@@ -110,7 +110,8 @@ func TestKafkaEvidence(t *testing.T) {
 		{"missing leader", "Leader: 0", "Leader: -1", Degraded},
 		{"duplicate replica", "Replicas: 0,1", "Replicas: 0,0", Degraded},
 		{"empty ISR", "Isr: 1,0", "Isr:", Degraded},
-		{"missing internal topic", "__transaction_state", "another-topic", Unknown},
+		{"unused transactions", "__transaction_state", "another-topic", Healthy},
+		{"missing consumer offsets", "__consumer_offsets", "another-topic", Unknown},
 		{"incomplete partitions", "PartitionCount: 1", "PartitionCount: 2", Unknown},
 		{"wrong partition ID", "Partition: 0", "Partition: 5", Unknown},
 	}

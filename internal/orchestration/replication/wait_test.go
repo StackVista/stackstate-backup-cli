@@ -59,6 +59,17 @@ func TestWaitCancellation(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 }
 
+func TestNoApplicableReplicationChecksDoesNotWaitForever(t *testing.T) {
+	calls := 0
+	report, err := Wait(context.Background(), func(context.Context) Report {
+		calls++
+		return Report{Status: NotApplicable}
+	}, time.Second, time.Minute, nil)
+	require.NoError(t, err)
+	assert.Equal(t, NotApplicable, report.Status)
+	assert.Equal(t, 1, calls)
+}
+
 func TestWaitExitsAfterDefaultStabilityPeriodWithSlowChecks(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		start := time.Now()
