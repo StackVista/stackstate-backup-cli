@@ -53,6 +53,9 @@ first successful availability observation.
 The default is 30 seconds, starting when the first fully healthy observation
 completes. Earlier rounds with any `unknown` or `degraded` component do not
 count. An unsuccessful observation resets the period.
+Changes to relevant database topology, readiness or container identity also
+reset the period between observations, even if each observation is healthy.
+Progress explains when such a change restarts the timer.
 
 Progress includes UTC timestamps and shows the elapsed and remaining healthy
 period, resets, and successful completion. Seeing every component healthy
@@ -94,8 +97,17 @@ SecondaryNameNode. It assumes one SUSE Observability installation per
 namespace; no Helm release name is required. It verifies the desired pods
 exist, belong to those StatefulSets, are Ready, and are not terminating or
 undergoing a rollout.
-It queries database state and invalidates the observation if Kubernetes
-resource versions change during those queries.
+It queries database state and compares relevant Kubernetes state before and
+afterward. Changes to selected StatefulSet membership, desired replicas,
+generation, rollout revisions or convergence invalidate the observation.
+So do changes to their Pods' identity, ownership, node assignment, readiness
+transitions or termination, and database container identity, start time or
+restart count.
+
+Resource versions, unrelated annotations and readiness heartbeat timestamps do
+not invalidate observations. Workloads outside the selected checks are excluded.
+These comparisons detect changes visible in the sampled state; they are not a
+continuous Kubernetes event watch.
 
 | Component | Replication evidence |
 |---|---|

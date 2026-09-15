@@ -69,6 +69,7 @@ type Report struct {
 	Status    string    `json:"status"`
 	Error     string    `json:"error,omitempty"`
 	Checks    []Result  `json:"checks"`
+	topology  string
 }
 
 func result(component, status, message string) Result {

@@ -138,6 +138,8 @@ func stabilityMessage(report checker.Report, state checker.WaitProgress) string 
 	switch {
 	case report.Status == checker.NotApplicable:
 		return "No applicable replication checks; configured component availability checks passed."
+	case state.Reset && report.Status == checker.Healthy:
+		return fmt.Sprintf("Database topology, readiness or runtime changed; stability period restarted (0s/%s).", state.Required)
 	case state.Complete:
 		return fmt.Sprintf("All applicable checks healthy; stability period satisfied (%s/%s).",
 			state.HealthyFor.Round(time.Millisecond), state.Required)

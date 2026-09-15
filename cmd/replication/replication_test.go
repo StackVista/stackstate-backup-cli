@@ -126,3 +126,9 @@ func TestCancellationBeforeFirstObservation(t *testing.T) {
 	require.ErrorIs(t, finishReport(&stdout, "table", report, err), context.Canceled)
 	assert.Contains(t, stdout.String(), "No completed observation.")
 }
+
+func TestHealthyTopologyChangeExplainsStabilityReset(t *testing.T) {
+	message := stabilityMessage(checker.Report{Status: checker.Healthy}, checker.WaitProgress{Reset: true, Required: 30 * time.Second})
+	assert.Contains(t, message, "topology, readiness or runtime changed")
+	assert.Contains(t, message, "stability period restarted (0s/30s)")
+}

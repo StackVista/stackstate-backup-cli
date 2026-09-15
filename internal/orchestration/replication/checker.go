@@ -33,6 +33,9 @@ func (c *Checker) Check(ctx context.Context) Report {
 		Checks: make([]Result, 0, len(c.options.Components)),
 	}
 	before, err := c.discover(ctx)
+	if err == nil {
+		report.topology = before.fingerprint(c.options.Components)
+	}
 	for _, component := range c.options.Components {
 		if ctx.Err() != nil {
 			report.Status = Unknown
@@ -54,8 +57,8 @@ func (c *Checker) Check(ctx context.Context) Report {
 	}
 	if err == nil {
 		after, afterErr := c.discover(ctx)
-		if afterErr != nil || before.fingerprint() != after.fingerprint() {
-			message := "Kubernetes membership or status changed during the checks; repeat the observation"
+		if afterErr != nil || report.topology != after.fingerprint(c.options.Components) {
+			message := "database topology, readiness or runtime changed during the checks; repeat the observation"
 			if afterErr != nil {
 				message = afterErr.Error()
 			}

@@ -34,6 +34,7 @@ func Wait(ctx context.Context, check func(context.Context) Report, interval, sta
 			}
 			return report, fmt.Errorf("replication wait ended: %w", err)
 		}
+		previousTopology := report.topology
 		report = next
 		now := time.Now()
 		progress := WaitProgress{ObservedAt: now.UTC(), Required: stableFor}
@@ -41,6 +42,10 @@ func Wait(ctx context.Context, check func(context.Context) Report, interval, sta
 		case NotApplicable:
 			progress.Complete = true
 		case Healthy:
+			if !healthySince.IsZero() && previousTopology != report.topology {
+				progress.Reset = true
+				healthySince = now
+			}
 			if healthySince.IsZero() {
 				healthySince = now
 			}

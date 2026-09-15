@@ -175,7 +175,7 @@ func TestCheckerRejectsMembershipChangeDuringQueries(t *testing.T) {
 	kube := &fakeKubernetes{client: client, exec: func(ctx context.Context, namespace, pod, _ string, _ []string) ([]byte, error) {
 		current, err := client.CoreV1().Pods(namespace).Get(ctx, pod, metav1.GetOptions{})
 		require.NoError(t, err)
-		current.ResourceVersion = "2"
+		current.UID = "replacement-pod"
 		_, err = client.CoreV1().Pods(namespace).Update(ctx, current, metav1.UpdateOptions{})
 		require.NoError(t, err)
 		return []byte(kafkaFixture()), nil
@@ -184,7 +184,7 @@ func TestCheckerRejectsMembershipChangeDuringQueries(t *testing.T) {
 	require.NoError(t, err)
 	report := probe.Check(context.Background())
 	assert.Equal(t, Unknown, report.Status)
-	assert.Contains(t, report.Checks[0].Messages, "Kubernetes membership or status changed during the checks; repeat the observation")
+	assert.Contains(t, report.Checks[0].Messages, "database topology, readiness or runtime changed during the checks; repeat the observation")
 }
 
 func TestQueryFailureCannotPass(t *testing.T) {

@@ -33,6 +33,20 @@ func workloadComponent(workload appsv1.StatefulSet) string {
 	}
 }
 
+func databaseContainer(workload appsv1.StatefulSet) string {
+	if workloadComponent(workload) == hdfsComponent {
+		switch workload.Labels["app.kubernetes.io/component"] {
+		case nameNodeComponent:
+			return "namenode"
+		case dataNodeComponent:
+			return "datanode"
+		case monoComponent:
+			return monoComponent
+		}
+	}
+	return workloadComponent(workload)
+}
+
 // Use desired replicas, never the number of surviving or Ready pods.
 func (i inventory) applicability(component string) *Result {
 	expected := make(map[string]appsv1.StatefulSet)
@@ -48,17 +62,7 @@ func (i inventory) applicability(component string) *Result {
 		return resultPointer(component, Unknown, "no supported database StatefulSet found; select components explicitly if this database is intentionally disabled")
 	}
 	for _, workload := range expected {
-		container := component
-		if component == hdfsComponent {
-			switch workload.Labels["app.kubernetes.io/component"] {
-			case nameNodeComponent:
-				container = "namenode"
-			case dataNodeComponent:
-				container = "datanode"
-			case monoComponent:
-				container = monoComponent
-			}
-		}
+		container := databaseContainer(workload)
 		if !hasContainer(workload.Spec.Template.Spec.Containers, container) {
 			return resultPointer(component, Unknown, fmt.Sprintf("%s has an unsupported container layout", workload.Name))
 		}

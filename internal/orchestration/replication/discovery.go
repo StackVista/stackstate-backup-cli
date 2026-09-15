@@ -2,7 +2,6 @@ package replication
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -112,17 +111,4 @@ func podReady(pod corev1.Pod) bool {
 	return pod.Status.Phase == corev1.PodRunning && slices.ContainsFunc(pod.Status.Conditions, func(condition corev1.PodCondition) bool {
 		return condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue
 	})
-}
-
-func (i inventory) fingerprint() string {
-	var entries []string
-	for _, workload := range i.workloads {
-		entries = append(entries, fmt.Sprintf("sts:%s:%s", workload.UID, workload.ResourceVersion))
-	}
-	for _, pod := range i.pods {
-		entries = append(entries, fmt.Sprintf("pod:%s:%s", pod.UID, pod.ResourceVersion))
-	}
-	slices.Sort(entries)
-	data, _ := json.Marshal(entries)
-	return string(data)
 }
