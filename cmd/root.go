@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stackvista/stackstate-backup-cli/cmd/clickhouse"
 	"github.com/stackvista/stackstate-backup-cli/cmd/elasticsearch"
+	"github.com/stackvista/stackstate-backup-cli/cmd/replication"
 	"github.com/stackvista/stackstate-backup-cli/cmd/settings"
 	"github.com/stackvista/stackstate-backup-cli/cmd/stackgraph"
 	"github.com/stackvista/stackstate-backup-cli/cmd/stackgraphv2"
@@ -61,12 +62,13 @@ func init() {
 
 	// Add commands that don't need backup config flags
 	rootCmd.AddCommand(version.Cmd())
+	rootCmd.AddCommand(replication.Cmd())
 }
 
 var rootCmd = &cobra.Command{
 	Use:   "sts-backup",
-	Short: "Backup and restore tool for SUSE Observability platform",
-	Long:  `A CLI tool for managing backups and restores for SUSE Observability platform running on Kubernetes.`,
+	Short: "Backup, restore and replication checks for SUSE Observability",
+	Long:  `A CLI tool for managing backups, restores and database replication checks for SUSE Observability running on Kubernetes.`,
 }
 
 func Execute() {

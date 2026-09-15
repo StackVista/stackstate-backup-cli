@@ -12,6 +12,7 @@ This CLI tool replaces the legacy Bash-based backup/restore scripts with a singl
 - Stackgraph backups and restores
 - VictoriaMetrics backups and restores
 - Settings backups and restores
+- Read-only database replication checks selected from the deployed topology
 
 ## Installation
 
@@ -43,6 +44,19 @@ sts-backup [command] [subcommand] [flags]
 - `--debug` - Enable debug output
 
 ## Commands
+
+### replication check
+
+Inspect HDFS, Elasticsearch, Kafka, ClickHouse and ZooKeeper replication in one namespace:
+
+```bash
+sts-backup replication check --namespace observability
+sts-backup replication check --namespace observability --wait --output json
+```
+
+This command has its own flags and does not require backup configuration.
+See [Replication checks](docs/replication.md) for status and exit-code semantics,
+authentication and the maintenance checks outside its scope.
 
 ### version
 
