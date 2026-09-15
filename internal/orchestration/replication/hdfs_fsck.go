@@ -31,6 +31,7 @@ type fsckFile struct {
 type fsckParser struct {
 	pending                          []byte
 	err                              error
+	lines                            int64
 	started, statusSeen, ended, done bool
 	status                           string
 	section                          string
@@ -50,24 +51,39 @@ func (p *fsckParser) Write(data []byte) (int, error) {
 			end = len(data)
 		}
 		if len(p.pending)+end > maxFsckLine {
-			p.err = fmt.Errorf("fsck line exceeds the supported size")
+			if len(p.pending) < maxDiagnosticPath {
+				p.pending = append(p.pending, data[:min(end, maxDiagnosticPath-len(p.pending)+1)]...)
+			}
+			p.lines++
+			p.err = p.lineError(fmt.Errorf("fsck line exceeds the supported size"))
 			break
 		}
 		p.pending = append(p.pending, data[:end]...)
 		if end == len(data) {
 			break
 		}
-		p.err = p.line(strings.TrimSpace(string(p.pending)))
-		p.pending = p.pending[:0]
+		p.consumeLine()
 		data = data[end+1:]
 	}
 	// Keep draining after a parse error; only the bounded diagnostic is retained.
 	return size, nil
 }
 
+func (p *fsckParser) consumeLine() {
+	p.lines++
+	if err := p.line(strings.TrimSpace(string(p.pending))); err != nil {
+		p.err = p.lineError(err)
+	}
+	p.pending = p.pending[:0]
+}
+
+func (p *fsckParser) lineError(err error) error {
+	return fmt.Errorf("fsck line %d: %w; record %q", p.lines, err, diagnosticPath(string(p.pending)))
+}
+
 func (p *fsckParser) result() Result {
 	if p.err == nil && len(p.pending) != 0 {
-		p.err = p.line(strings.TrimSpace(string(p.pending)))
+		p.consumeLine()
 		p.pending = nil
 	}
 	if p.err != nil {

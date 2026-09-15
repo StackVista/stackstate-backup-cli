@@ -12,8 +12,9 @@ import (
 const kafkaQuery = `unset JMX_PORT KAFKA_JMX_OPTS
 exec kafka-topics.sh "$@"`
 
+// --all bypasses Kafka's ACL-filtered topic-list precheck and queries DescribeConfigs directly.
 const transactionTopicQuery = `unset JMX_PORT KAFKA_JMX_OPTS
-if output="$(kafka-configs.sh "$@" --describe --entity-type topics --entity-name __transaction_state 2>&1)"; then
+if output="$(kafka-configs.sh "$@" --describe --all --entity-type topics --entity-name __transaction_state 2>&1)"; then
   printf 'present\n'
 elif [[ "$output" == *AuthorizationException* ]]; then
   printf 'unverified\n'
@@ -56,8 +57,11 @@ func (c *Checker) checkKafka(ctx context.Context, inventory inventory) Result {
 	}
 	presence, err := c.query(ctx, members[0].pod.Name, "kafka", probe)
 	if err != nil || strings.TrimSpace(string(presence)) != "absent" {
-		return result("kafka", Unknown, "__transaction_state was not listed and its absence could not be verified; check topic permissions or retry")
+		report.Status = Unknown
+		report.Messages = append(report.Messages, "__transaction_state was not listed and its absence could not be verified; check topic permissions or retry")
+		return report
 	}
+	report.Messages = append(report.Messages, "__transaction_state is absent; transaction-topic replication is not applicable to this observation")
 	return report
 }
 
@@ -147,9 +151,6 @@ func evaluateKafka(output string) Result {
 	report := result("kafka", Healthy, fmt.Sprintf("all partitions of %d topics have at least two replicas, complete ISR and an in-sync leader", len(counts)))
 	if len(problems) > 0 {
 		report = Result{Component: "kafka", Status: Degraded, Messages: problems}
-	}
-	if counts["__transaction_state"] == 0 {
-		report.Messages = append(report.Messages, "__transaction_state is absent; transaction-topic replication is not applicable to this observation")
 	}
 	return report
 }

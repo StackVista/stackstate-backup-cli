@@ -147,3 +147,43 @@ func TestFsckRejectsOversizedLine(t *testing.T) {
 	assert.Equal(t, Unknown, parser.result().Status)
 	assert.LessOrEqual(t, len(parser.pending), maxFsckLine)
 }
+
+func TestFsckRejectedRecordDiagnostics(t *testing.T) {
+	tests := []struct {
+		name, record, expected string
+	}{
+		{"unsupported", "unexpected format", `"unexpected format"`},
+		{"terminal controls", "invalid\t\x1b[31m\"record\"\r", `"invalid\t\x1b[31m\"record\"\r"`},
+		{"bounded excerpt", strings.Repeat("x", maxDiagnosticPath+100), `"` + strings.Repeat("x", maxDiagnosticPath) + `..."`},
+		{"oversized", strings.Repeat("x", maxFsckLine+1), `"` + strings.Repeat("x", maxDiagnosticPath) + `..."`},
+	}
+	for _, test := range tests {
+		for _, newline := range []string{"", "\n"} {
+			t.Run(fmt.Sprintf("%s/newline=%t", test.name, newline != ""), func(t *testing.T) {
+				for _, chunkSize := range []int{1, 17, maxFsckLine + 1000} {
+					parser := &fsckParser{}
+					data := fsckStart + "\n" + test.record + newline
+					for len(data) > 0 {
+						n := min(chunkSize, len(data))
+						written, err := io.WriteString(parser, data[:n])
+						require.NoError(t, err)
+						require.Equal(t, n, written)
+						data = data[n:]
+					}
+					report := parser.result()
+					require.Equal(t, Unknown, report.Status)
+					require.Len(t, report.Messages, 1)
+					message := report.Messages[0]
+					assert.Contains(t, message, "fsck line 4:")
+					assert.Contains(t, message, "record "+test.expected)
+					assert.NotContains(t, message, "\x1b")
+					assert.NotContains(t, message, "\r")
+					assert.Less(t, len(message), 1000)
+					_, err := io.WriteString(parser, "\nlater error\n")
+					require.NoError(t, err)
+					assert.Equal(t, report, parser.result(), "retain the first rejected record while draining")
+				}
+			})
+		}
+	}
+}

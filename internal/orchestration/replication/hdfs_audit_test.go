@@ -19,7 +19,7 @@ func TestHDFSAuditVerification(t *testing.T) {
 	tests := []struct {
 		name, status string
 	}{
-		{"healthy", Healthy}, {"truncated", Unknown}, {"query failure", Unknown},
+		{"healthy", Healthy}, {"truncated", Unknown}, {"query failure", Unknown}, {"rejected record and query failure", Unknown},
 		{"replication one", Degraded}, {"deadline", Unknown}, {"topology changed", Unknown}, {"health changed", Degraded},
 	}
 	for _, test := range tests {
@@ -53,6 +53,10 @@ func TestHDFSAuditVerification(t *testing.T) {
 						data = strings.Replace(data, "replication=2", "replication=1", 1)
 					case "query failure":
 						return fmt.Errorf("query failed")
+					case "rejected record and query failure":
+						_, err := io.WriteString(out, fsckStart+"unexpected format\n")
+						require.NoError(t, err)
+						return fmt.Errorf("query failed")
 					case "topology changed":
 						p, err := client.CoreV1().Pods(namespace).Get(ctx, pod, metav1.GetOptions{})
 						require.NoError(t, err)
@@ -77,6 +81,11 @@ func TestHDFSAuditVerification(t *testing.T) {
 			assert.Equal(t, test.status, after.Status, after)
 			assert.Equal(t, 1, audits)
 			assert.Equal(t, Healthy, before.Checks[0].Status, "verification must not mutate the prior observation")
+			if test.name == "rejected record and query failure" {
+				messages := strings.Join(after.Checks[0].Messages, "; ")
+				assert.Contains(t, messages, "query failed")
+				assert.Contains(t, messages, `fsck line 3: unsupported fsck file or block record; record "unexpected format"`)
+			}
 			if test.status == Healthy {
 				assert.Contains(t, strings.Join(after.Checks[0].Messages, "; "), "completed block entries")
 				assert.Equal(t, 2, kube.calls, "lightweight health is rechecked after the audit")

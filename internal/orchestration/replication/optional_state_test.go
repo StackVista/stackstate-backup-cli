@@ -41,6 +41,38 @@ func TestTransactionTopicAbsenceRequiresSuccessfulVerification(t *testing.T) {
 			assert.Equal(t, 2, kube.calls)
 			if test.status == Healthy {
 				assert.Contains(t, strings.Join(report.Checks[0].Messages, " "), "not applicable")
+			} else {
+				assert.NotContains(t, strings.Join(report.Checks[0].Messages, " "), "is absent")
+			}
+		})
+	}
+}
+
+func TestUnverifiedTransactionTopicPreservesPartitionProblems(t *testing.T) {
+	for _, presence := range []string{"absent\n", "present\n", "unverified\n", ""} {
+		t.Run(presence, func(t *testing.T) {
+			kube := &fakeKubernetes{client: fake.NewSimpleClientset(kafkaObjects()...), exec: func(_ context.Context, _, _, _ string, command []string) ([]byte, error) {
+				if command[2] == kafkaQuery {
+					data := strings.ReplaceAll(kafkaFixture(), "__transaction_state", "nontransactional-topic")
+					return []byte(strings.Replace(data, "Isr: 1,0", "Isr: 0", 1)), nil
+				}
+				if presence == "" {
+					return nil, fmt.Errorf("query failed")
+				}
+				return []byte(presence), nil
+			}}
+			probe, err := New(kube, testOptions())
+			require.NoError(t, err)
+			report := probe.Check(context.Background())
+			messages := strings.Join(report.Checks[0].Messages, "; ")
+			assert.Contains(t, messages, "events partition 0: assigned replicas are not all in sync")
+			if presence == "absent\n" {
+				assert.Equal(t, Degraded, report.Status)
+				assert.Contains(t, messages, "is absent")
+			} else {
+				assert.Equal(t, Unknown, report.Status)
+				assert.Contains(t, messages, "absence could not be verified")
+				assert.NotContains(t, messages, "is absent")
 			}
 		})
 	}

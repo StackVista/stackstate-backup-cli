@@ -6,6 +6,7 @@ import (
 	"slices"
 )
 
+// Summary counters include departing replicas and incomplete WAL blocks; audit per-block live replicas instead.
 const hdfsAuditQuery = `unset HADOOP_OPTS
 exec hdfs fsck / -files -blocks -openforwrite -includeSnapshots`
 
@@ -56,7 +57,11 @@ func (c *Checker) auditHDFS(ctx context.Context, pod string) Result {
 	}
 	audit := parser.result()
 	if err != nil && audit.Status != Degraded {
-		return result(hdfsComponent, Unknown, fmt.Sprintf("HDFS block audit execution failed: %v", err))
+		failure := result(hdfsComponent, Unknown, fmt.Sprintf("HDFS block audit execution failed: %v", err))
+		if audit.Status == Unknown {
+			failure.Messages = append(failure.Messages, audit.Messages...)
+		}
+		return failure
 	}
 	return audit
 }
