@@ -39,10 +39,7 @@ func (c *Checker) checkKafka(ctx context.Context, inventory inventory) Result {
 	if err := expectedMembers(members); err != nil {
 		return result("kafka", Degraded, err.Error())
 	}
-	command := []string{"bash", "-ec", kafkaQuery, "replication-check", "--bootstrap-server", c.options.KafkaBootstrapServer, "--describe"}
-	if c.options.KafkaClientProperties != "" {
-		command = append(command, "--command-config", c.options.KafkaClientProperties)
-	}
+	command := []string{"bash", "-ec", kafkaQuery, "replication-check", "--bootstrap-server", "localhost:9092", "--describe"}
 	data, err := c.query(ctx, members[0].pod.Name, "kafka", command)
 	if err != nil {
 		return result("kafka", Unknown, err.Error())
@@ -51,10 +48,7 @@ func (c *Checker) checkKafka(ctx context.Context, inventory inventory) Result {
 	if report.Status == Unknown || hasTransactionTopic(string(data)) {
 		return report
 	}
-	probe := []string{"bash", "-ec", transactionTopicQuery, "replication-check", "--bootstrap-server", c.options.KafkaBootstrapServer}
-	if c.options.KafkaClientProperties != "" {
-		probe = append(probe, "--command-config", c.options.KafkaClientProperties)
-	}
+	probe := []string{"bash", "-ec", transactionTopicQuery, "replication-check", "--bootstrap-server", "localhost:9092"}
 	presence, err := c.query(ctx, members[0].pod.Name, "kafka", probe)
 	if err != nil || strings.TrimSpace(string(presence)) != "absent" {
 		report.Status = Unknown

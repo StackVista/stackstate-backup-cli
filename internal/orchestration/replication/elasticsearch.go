@@ -7,17 +7,11 @@ import (
 	"sort"
 )
 
-const elasticsearchQuery = `scheme="$1"
-ca="$2"
-host="$3"
-set -- --fail --silent --show-error --max-time 20
+const elasticsearchQuery = `set -- --fail --silent --show-error --max-time 20
 if [ -n "${ELASTIC_PASSWORD:-}" ]; then
   set -- "$@" --user "elastic:${ELASTIC_PASSWORD}"
 fi
-if [ -n "$ca" ]; then
-  set -- "$@" --cacert "$ca"
-fi
-exec curl "$@" --resolve "${host}:9200:127.0.0.1" "${scheme}://${host}:9200/_cluster/health?level=indices"`
+exec curl "$@" 'http://127.0.0.1:9200/_cluster/health?level=indices'`
 
 func (c *Checker) checkElasticsearch(ctx context.Context, inventory inventory) Result {
 	members, err := inventory.members("elasticsearch", "", "elasticsearch")
@@ -27,7 +21,7 @@ func (c *Checker) checkElasticsearch(ctx context.Context, inventory inventory) R
 	if err := expectedMembers(members); err != nil {
 		return result("elasticsearch", Degraded, err.Error())
 	}
-	command := []string{"bash", "-ec", elasticsearchQuery, "replication-check", c.options.ElasticsearchScheme, c.options.ElasticsearchCA, c.options.ElasticsearchHost}
+	command := []string{"bash", "-ec", elasticsearchQuery}
 	data, err := c.query(ctx, members[0].pod.Name, "elasticsearch", command)
 	if err != nil {
 		return result("elasticsearch", Unknown, err.Error())

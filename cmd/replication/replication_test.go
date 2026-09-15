@@ -9,6 +9,7 @@ import (
 	"testing/synctest"
 	"time"
 
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -49,6 +50,29 @@ func TestHelpDoesNotRequireBackupConfiguration(t *testing.T) {
 	assert.NotContains(t, output.String(), "--secret")
 	assert.NotContains(t, output.String(), "--configmap")
 	assert.Contains(t, output.String(), "hdfs,elasticsearch,kafka,clickhouse,zookeeper")
+}
+
+func TestCheckExposesOnlyOperationalFlags(t *testing.T) {
+	check, _, err := Cmd().Find([]string{"check"})
+	require.NoError(t, err)
+	var names []string
+	check.Flags().VisitAll(func(flag *pflag.Flag) { names = append(names, flag.Name) })
+	assert.ElementsMatch(t, []string{"namespace", "kubeconfig", "components", "output", "wait", "timeout", "stable-for"}, names)
+}
+
+func TestRemovedFlagsAreRejectedBeforeConnecting(t *testing.T) {
+	for _, name := range []string{
+		"interval", "request-timeout", "hdfs-audit-timeout", "kafka-bootstrap-server", "kafka-client-properties",
+		"elasticsearch-scheme", "elasticsearch-ca", "elasticsearch-server-name",
+	} {
+		t.Run(name, func(t *testing.T) {
+			command := Cmd()
+			command.SetOut(&bytes.Buffer{})
+			command.SetErr(&bytes.Buffer{})
+			command.SetArgs([]string{"check", "--namespace=test", "--" + name + "=unused"})
+			require.ErrorContains(t, command.Execute(), "unknown flag: --"+name)
+		})
+	}
 }
 
 func TestReportAndExitAgree(t *testing.T) {

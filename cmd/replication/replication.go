@@ -20,11 +20,10 @@ import (
 )
 
 const (
-	defaultTimeout        = 10 * time.Minute
-	defaultRequestTimeout = 30 * time.Second
-	defaultInterval       = 10 * time.Second
-	defaultStableFor      = 30 * time.Second
-	tablePadding          = 2
+	defaultTimeout   = 10 * time.Minute
+	defaultInterval  = 10 * time.Second
+	defaultStableFor = 30 * time.Second
+	tablePadding     = 2
 )
 
 type flags struct {
@@ -40,7 +39,7 @@ type flags struct {
 // Cmd creates the replication command independently of backup configuration.
 func Cmd() *cobra.Command {
 	command := &cobra.Command{Use: "replication", Short: "Inspect database replication without changing cluster state"}
-	f := &flags{}
+	f := &flags{interval: defaultInterval}
 	check := &cobra.Command{
 		Use: "check", Short: "Check observed replication; return nonzero unless all selected checks pass",
 		Long: "Check chart-managed HDFS, Elasticsearch, Kafka, ClickHouse and ZooKeeper replication. " +
@@ -56,15 +55,7 @@ func Cmd() *cobra.Command {
 	check.Flags().StringVarP(&f.output, "output", "o", "table", "Output format: table or json")
 	check.Flags().BoolVar(&f.wait, "wait", false, "Wait for sustained healthy replication")
 	check.Flags().DurationVar(&f.timeout, "timeout", defaultTimeout, "Overall deadline, including queries")
-	check.Flags().DurationVar(&f.options.RequestTimeout, "request-timeout", defaultRequestTimeout, "Deadline for each ordinary Kubernetes request or database probe")
-	check.Flags().DurationVar(&f.options.HDFSAuditTimeout, "hdfs-audit-timeout", checker.DefaultAuditTimeout, "Deadline for the final HDFS metadata audit, within the overall timeout (0 uses default)")
-	check.Flags().DurationVar(&f.interval, "interval", defaultInterval, "Interval between observations in wait mode")
 	check.Flags().DurationVar(&f.stableFor, "stable-for", defaultStableFor, "Required healthy observation period in wait mode")
-	check.Flags().StringVar(&f.options.KafkaClientProperties, "kafka-client-properties", "", "Kafka client properties file already mounted in broker pods")
-	check.Flags().StringVar(&f.options.KafkaBootstrapServer, "kafka-bootstrap-server", "localhost:9092", "Kafka bootstrap address reachable from the broker pod")
-	check.Flags().StringVar(&f.options.ElasticsearchScheme, "elasticsearch-scheme", "http", "Elasticsearch loopback protocol: http or https")
-	check.Flags().StringVar(&f.options.ElasticsearchCA, "elasticsearch-ca", "", "CA file already mounted in Elasticsearch pods")
-	check.Flags().StringVar(&f.options.ElasticsearchHost, "elasticsearch-server-name", "127.0.0.1", "Elasticsearch TLS server name, resolved to loopback inside the pod")
 	_ = check.MarkFlagRequired("namespace")
 	command.AddCommand(check)
 	return command
@@ -74,8 +65,8 @@ func (f *flags) validate() error {
 	if f.output != "table" && f.output != "json" {
 		return fmt.Errorf("output must be table or json")
 	}
-	if f.timeout <= 0 || f.interval <= 0 || f.stableFor < 0 {
-		return fmt.Errorf("timeout and interval must be positive; stable-for cannot be negative")
+	if f.timeout <= 0 || f.stableFor < 0 {
+		return fmt.Errorf("timeout must be positive; stable-for cannot be negative")
 	}
 	if f.wait && f.stableFor >= f.timeout {
 		return fmt.Errorf("stable-for must be shorter than timeout")

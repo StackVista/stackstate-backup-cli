@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -46,7 +47,7 @@ func (f *fakeKubernetes) Exec(ctx context.Context, namespace, pod, container str
 }
 
 func testOptions() Options {
-	return Options{Namespace: "test", Components: []string{"kafka"}, RequestTimeout: time.Second, ElasticsearchScheme: "http"}
+	return Options{Namespace: "test", Components: []string{"kafka"}}
 }
 
 func kafkaObjects() []runtime.Object {
@@ -208,6 +209,30 @@ func TestQueryFailureCannotPass(t *testing.T) {
 	probe, err := New(kube, testOptions())
 	require.NoError(t, err)
 	assert.Equal(t, Unknown, probe.Check(context.Background()).Status)
+}
+
+func TestOrdinaryProbeRespectsInternalAndOverallDeadlines(t *testing.T) {
+	for _, overall := range []time.Duration{5 * time.Second, 2 * time.Minute} {
+		t.Run(overall.String(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), overall)
+				defer cancel()
+				kube := &fakeKubernetes{exec: func(ctx context.Context, _, _, _ string, _ []string) ([]byte, error) {
+					<-ctx.Done()
+					return nil, ctx.Err()
+				}}
+				probe, err := New(kube, testOptions())
+				require.NoError(t, err)
+				start := time.Now()
+				_, err = probe.query(ctx, "kafka-0", "kafka", nil)
+				require.ErrorIs(t, err, context.DeadlineExceeded)
+				assert.Equal(t, min(overall, 30*time.Second), time.Since(start))
+				if overall > 30*time.Second {
+					require.NoError(t, ctx.Err(), "a stalled probe must leave time for further observations")
+				}
+			})
+		})
+	}
 }
 
 func TestInvalidScopeRejected(t *testing.T) {

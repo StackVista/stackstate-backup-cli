@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -69,15 +70,18 @@ func TestHDFSAuditVerification(t *testing.T) {
 				},
 			}
 			options := testOptions()
-			options.Components, options.HDFSAuditTimeout = []string{"hdfs"}, time.Second
-			if test.name == "deadline" {
-				options.HDFSAuditTimeout = 10 * time.Millisecond
-			}
+			options.Components = []string{"hdfs"}
 			probe, err := New(kube, options)
 			require.NoError(t, err)
 			before := probe.Check(context.Background())
 			require.Equal(t, Healthy, before.Status)
-			after := probe.Verify(context.Background(), before)
+			timeout := time.Second
+			if test.name == "deadline" {
+				timeout = 10 * time.Millisecond
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			defer cancel()
+			after := probe.Verify(ctx, before)
 			assert.Equal(t, test.status, after.Status, after)
 			assert.Equal(t, 1, audits)
 			assert.Equal(t, Healthy, before.Checks[0].Status, "verification must not mutate the prior observation")
@@ -90,6 +94,43 @@ func TestHDFSAuditVerification(t *testing.T) {
 				assert.Contains(t, strings.Join(after.Checks[0].Messages, "; "), "completed block entries")
 				assert.Equal(t, 2, kube.calls, "lightweight health is rechecked after the audit")
 			}
+		})
+	}
+}
+
+func TestHDFSAuditUsesRemainingOverallDeadline(t *testing.T) {
+	for _, overall := range []time.Duration{time.Minute, 5 * time.Minute} {
+		t.Run(overall.String(), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), overall)
+				defer cancel()
+				deadline, _ := ctx.Deadline()
+				kube := &fakeKubernetes{stream: func(ctx context.Context, _, _, _ string, _ []string, out io.Writer) error {
+					actual, ok := ctx.Deadline()
+					require.True(t, ok)
+					assert.Equal(t, deadline, actual, "the audit must not have a separate timeout")
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					case <-time.After(3 * time.Minute):
+						_, err := io.WriteString(out, fsckFixture())
+						return err
+					}
+				}}
+				probe, err := New(kube, testOptions())
+				require.NoError(t, err)
+				time.Sleep(30 * time.Second)
+				start := time.Now()
+				report := probe.auditHDFS(ctx, "namenode-0")
+				if overall == time.Minute {
+					assert.Equal(t, Unknown, report.Status)
+					assert.Contains(t, report.Messages[0], "context deadline exceeded")
+					assert.Equal(t, 30*time.Second, time.Since(start))
+				} else {
+					assert.Equal(t, Healthy, report.Status, report)
+					assert.Equal(t, 3*time.Minute, time.Since(start), "audits longer than two minutes can complete")
+				}
+			})
 		})
 	}
 }

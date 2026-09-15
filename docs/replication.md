@@ -17,6 +17,18 @@ go run . replication check --namespace observability --wait
 Replace `observability` with the installation namespace. The command uses the
 current kubeconfig context; use `--kubeconfig <path>` to select another config.
 
+The command exposes these options:
+
+| Flag | Purpose |
+|---|---|
+| `--namespace`, `-n` | Installation namespace (required). |
+| `--kubeconfig` | Alternative kubeconfig path. |
+| `--components` | Comma-separated databases to check; defaults to all five. |
+| `--output`, `-o` | `table` (default) or `json`. |
+| `--wait` | Wait for sustained healthy observations. |
+| `--timeout` | Overall deadline, including the final audit; defaults to `10m`. |
+| `--stable-for` | Required healthy observation period with `--wait`; defaults to `30s`. |
+
 The command returns exit code **0** when every selected component is `healthy`
 or `not_applicable`. Any degraded, missing, inaccessible, unsupported or
 incompletely described component returns exit code **1**. A missing component
@@ -49,7 +61,7 @@ selected components are `not_applicable`, the overall status is also
 ```bash
 sts-backup replication check \
   --namespace observability \
-  --wait --timeout 15m --interval 10s --stable-for 30s \
+  --wait --timeout 15m --stable-for 30s \
   --output json > replication.json
 ```
 
@@ -60,7 +72,9 @@ If every selected component is `not_applicable`, wait mode completes after the
 first successful availability observation.
 The default is 30 seconds, starting when the first fully healthy observation
 completes. Earlier rounds with any `unknown` or `degraded` component do not
-count. An unsuccessful observation resets the period.
+count. Observations normally pause for ten seconds between rounds, shortened
+when less time remains in the healthy period. An unsuccessful observation resets
+the period.
 Changes to relevant database topology, readiness or container identity also
 reset the period between observations, even if each observation is healthy.
 Progress explains when such a change restarts the timer.
@@ -72,8 +86,7 @@ time; the checker needs another completed healthy observation to confirm the
 period, rather than exiting on a timer alone.
 Once stable, an applicable HDFS check also needs its final block audit to pass.
 Progress announces final verification before reporting completion. A failed
-audit resets stability and delays the next observation by at least 30 seconds
-(or `--interval`, if longer).
+audit resets stability and delays the next observation by 30 seconds.
 
 To finish on the first fully healthy observation, explicitly use
 `--wait --stable-for 0s`.
@@ -81,8 +94,9 @@ To finish on the first fully healthy observation, explicitly use
 Progress goes to stderr; stdout contains one final report. Table output includes
 the report time and the start time of the last completed observation. JSON
 retains its `checkedAt` timestamp. The overall deadline includes database
-queries and the final audit. `--request-timeout` bounds ordinary API requests
-and database probes; `--hdfs-audit-timeout` separately bounds the HDFS audit.
+queries, the final audit and the checks after it. Ordinary API requests and
+database probes are capped internally at 30 seconds, within the overall
+deadline. The HDFS audit uses the remaining overall time without a separate cap.
 
 Ctrl+C stops further queries. Cancellation or timeout returns nonzero and sets
 the overall result to `unknown`, retaining the last completed observation
@@ -179,12 +193,12 @@ that persistence of the latest writes is not verified. It does not stop writers,
 roll WALs or require every WAL to close. A healthy audit is not proof that every
 active pipeline has durably replicated its latest bytes.
 
-The default audit limit is two minutes, bounded by the remaining overall
-`--timeout`. Adjust it with `--hdfs-audit-timeout` for larger namespaces:
+Use a larger overall `--timeout` for namespaces whose file/block audit needs
+more time. The same deadline includes the earlier observations and the checks
+after the audit:
 
 ```bash
-sts-backup replication check -n observability --wait \
-  --timeout 15m --hdfs-audit-timeout 5m
+sts-backup replication check -n observability --wait --timeout 15m
 ```
 
 Output is parsed as a stream, with bounded line size and diagnostic storage.
@@ -226,23 +240,11 @@ weighted quorums and TLS-only client listeners are outside its scope. Missing
 membership or synchronization metrics produce `unknown`. No configuration
 changes, HTTP AdminServer or database writes are needed.
 
-For authenticated Kafka, supply a client properties file already mounted in
-the broker and an appropriate bootstrap address:
-
-```bash
-sts-backup replication check -n observability \
-  --components kafka \
-  --kafka-bootstrap-server suse-observability-kafka:9092 \
-  --kafka-client-properties /mounted/client.properties
-```
-
-The credentials must be able to describe all topics in the installation and
-describe topic configurations for `__transaction_state` when verifying absence.
-Elasticsearch uses the pod's `ELASTIC_PASSWORD` when present. For HTTPS,
-use `--elasticsearch-scheme https`, `--elasticsearch-ca` with a CA path inside
-the pod, and `--elasticsearch-server-name` matching the server certificate.
-The server name is resolved to loopback inside that pod; certificate
-verification is not disabled.
+Kafka uses the chart's plaintext listener at `localhost:9092` inside the broker
+pod. Elasticsearch uses `http://127.0.0.1:9200` inside its pod and the pod's
+`ELASTIC_PASSWORD` when present. These connections require no CLI configuration.
+Kafka SASL/TLS and Elasticsearch HTTPS customizations are unsupported.
+Failed connections or permission failures return `unknown`.
 
 ClickHouse uses the pod's `CLICKHOUSE_ADMIN_USER`,
 `CLICKHOUSE_ADMIN_PASSWORD` and `CLICKHOUSE_TCP_PORT`. Credentials stay inside

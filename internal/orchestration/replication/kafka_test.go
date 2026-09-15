@@ -33,10 +33,10 @@ printf '%s\n' "$KAFKA_OPTS" "$@"
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, bash, "-ec", kafkaQuery, "replication-check",
-		"--bootstrap-server", "localhost:9092", "--describe", "--command-config", "/mounted/client properties")
+		"--bootstrap-server", "localhost:9092", "--describe")
 	output, err := command.CombinedOutput()
 	require.NoError(t, err, string(output))
-	assert.Equal(t, "-Djava.security.auth.login.config=/mounted/jaas.conf\n--bootstrap-server\nlocalhost:9092\n--describe\n--command-config\n/mounted/client properties\n", string(output))
+	assert.Equal(t, "-Djava.security.auth.login.config=/mounted/jaas.conf\n--bootstrap-server\nlocalhost:9092\n--describe\n", string(output))
 }
 
 func TestTransactionTopicQueryUsesDirectConfigEvidence(t *testing.T) {
@@ -49,8 +49,7 @@ func TestTransactionTopicQueryUsesDirectConfigEvidence(t *testing.T) {
 	script := `#!/bin/sh
 test -z "${JMX_PORT:-}" && test -z "${KAFKA_JMX_OPTS:-}" || exit 1
 test "$1" = "--bootstrap-server" && test "$2" = "localhost:9092" || exit 1
-test "$3" = "--command-config" && test "$4" = "/mounted/client properties" || exit 1
-shift 4
+shift 2
 if [ "$KAFKA_TEST_VERSION" = "4.1" ] && [ "$KAFKA_TEST_EXIT" != "0" ]; then
   case " $* " in
     *" --all "*) ;;
@@ -84,7 +83,7 @@ exit "$KAFKA_TEST_EXIT"
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				defer cancel()
 				command := exec.CommandContext(ctx, bash, "-ec", transactionTopicQuery, "replication-check",
-					"--bootstrap-server", "localhost:9092", "--command-config", "/mounted/client properties")
+					"--bootstrap-server", "localhost:9092")
 				output, err := command.CombinedOutput()
 				require.NoError(t, err, string(output))
 				assert.Equal(t, test.expected+"\n", string(output))

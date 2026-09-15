@@ -48,8 +48,6 @@ func (c *Checker) Verify(ctx context.Context, previous Report) Report {
 }
 
 func (c *Checker) auditHDFS(ctx context.Context, pod string) Result {
-	ctx, cancel := context.WithTimeout(ctx, c.options.HDFSAuditTimeout)
-	defer cancel()
 	parser := &fsckParser{}
 	err := c.kube.ExecTo(ctx, c.options.Namespace, pod, "namenode", []string{"bash", "-ec", hdfsAuditQuery}, parser)
 	if ctx.Err() != nil {

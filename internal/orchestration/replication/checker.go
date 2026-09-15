@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+const requestTimeout = 30 * time.Second
+
 // Checker observes databases without invoking backup or restore operations.
 type Checker struct {
 	kube    Kubernetes
@@ -16,15 +18,6 @@ type Checker struct {
 func New(kube Kubernetes, options Options) (*Checker, error) {
 	if err := options.Validate(); err != nil {
 		return nil, err
-	}
-	if options.KafkaBootstrapServer == "" {
-		options.KafkaBootstrapServer = "localhost:9092"
-	}
-	if options.ElasticsearchHost == "" {
-		options.ElasticsearchHost = "127.0.0.1"
-	}
-	if options.HDFSAuditTimeout == 0 {
-		options.HDFSAuditTimeout = DefaultAuditTimeout
 	}
 	return &Checker{kube: kube, options: options}, nil
 }
@@ -79,7 +72,7 @@ func (c *Checker) query(ctx context.Context, pod, container string, command []st
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, c.options.RequestTimeout)
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	data, err := c.kube.Exec(ctx, c.options.Namespace, pod, container, command)
 	if ctx.Err() != nil {
