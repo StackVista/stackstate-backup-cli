@@ -8,6 +8,7 @@ import (
 	"github.com/stackvista/stackstate-backup-cli/cmd/elasticsearch"
 	"github.com/stackvista/stackstate-backup-cli/cmd/settings"
 	"github.com/stackvista/stackstate-backup-cli/cmd/stackgraph"
+	"github.com/stackvista/stackstate-backup-cli/cmd/stackgraphv2"
 	"github.com/stackvista/stackstate-backup-cli/cmd/version"
 	"github.com/stackvista/stackstate-backup-cli/cmd/victoriametrics"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
@@ -41,6 +42,10 @@ func init() {
 	stackgraphCmd := stackgraph.Cmd(flags)
 	addBackupConfigFlags(stackgraphCmd)
 	rootCmd.AddCommand(stackgraphCmd)
+
+	stackgraphv2Cmd := stackgraphv2.Cmd(flags)
+	addBackupConfigFlags(stackgraphv2Cmd)
+	rootCmd.AddCommand(stackgraphv2Cmd)
 
 	settingsCmd := settings.Cmd(flags)
 	addBackupConfigFlags(settingsCmd)

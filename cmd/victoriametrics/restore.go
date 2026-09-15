@@ -230,7 +230,7 @@ func createRestoreJob(k8sClient *k8s.Client, namespace, jobName, backupFile stri
 func buildRestoreEnvVars(config *config.Config) []corev1.EnvVar {
 	storageService := config.GetStorageService()
 	return []corev1.EnvVar{
-		{Name: "MINIO_ENDPOINT", Value: fmt.Sprintf("%s:%d", storageService.Name, storageService.Port)},
+		{Name: "S3_ENDPOINT", Value: fmt.Sprintf("%s:%d", storageService.Name, storageService.Port)},
 	}
 }
 

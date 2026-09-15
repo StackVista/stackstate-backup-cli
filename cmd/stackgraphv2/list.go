@@ -1,4 +1,4 @@
-package stackgraph
+package stackgraphv2
 
 import (
 	"context"
@@ -17,13 +17,13 @@ import (
 )
 
 const (
-	backupFileNameRegex = `^sts-backup-.*\.graph$`
+	backupFileNameRegex = `^sts-backup-.*\.graph.v2$`
 )
 
 func listCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "list",
-		Short: "List available Stackgraph backups from S3",
+		Short: "List available Stackgraph backups (v2) from S3",
 		Run: func(_ *cobra.Command, _ []string) {
 			cmdutils.Run(globalFlags, runList, cmdutils.StorageIsRequired)
 		},
@@ -50,13 +50,14 @@ func runList(appCtx *app.Context) error {
 
 	// List objects in bucket
 	bucket := appCtx.Config.Stackgraph.Bucket
-	prefix := appCtx.Config.Stackgraph.S3Prefix
+	prefix := appCtx.Config.Stackgraph.S3Prefix + "v2/"
 
-	appCtx.Logger.Infof("Listing Stackgraph backups in bucket '%s'...", bucket)
+	appCtx.Logger.Infof("Listing Stackgraph backups in bucket '%s' with prefix '%s'...", bucket, prefix)
 
 	input := &s3.ListObjectsV2Input{
-		Bucket: aws.String(bucket),
-		Prefix: aws.String(prefix),
+		Bucket:    aws.String(bucket),
+		Prefix:    aws.String(prefix),
+		Delimiter: aws.String("/"),
 	}
 
 	result, err := s3Client.ListObjectsV2(context.Background(), input)
@@ -64,7 +65,7 @@ func runList(appCtx *app.Context) error {
 		return fmt.Errorf("failed to list S3 objects: %w", err)
 	}
 
-	filteredObjects := s3client.FilterBackupObjects(result.Contents)
+	filteredObjects := s3client.ConvertBackupObjects(result.Contents)
 
 	// Filter to only include direct children of the prefix that match the backup filename pattern,
 	// and strip the prefix from the key
@@ -81,7 +82,7 @@ func runList(appCtx *app.Context) error {
 	}
 
 	table := output.Table{
-		Headers: []string{"NAME", "LAST MODIFIED", "SIZE"},
+		Headers: []string{"NAME", "LAST MODIFIED"},
 		Rows:    make([][]string, 0, len(filteredObjects)),
 	}
 
@@ -89,7 +90,6 @@ func runList(appCtx *app.Context) error {
 		row := []string{
 			strings.TrimPrefix(obj.Key, prefix),
 			obj.LastModified.Format("2006-01-02 15:04:05 MST"),
-			output.FormatBytes(obj.Size),
 		}
 		table.Rows = append(table.Rows, row)
 	}

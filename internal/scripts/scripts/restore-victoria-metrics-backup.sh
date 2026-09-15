@@ -14,4 +14,4 @@ AWS_ACCESS_KEY_ID="$(cat /aws-keys/accesskey)"
 export AWS_SECRET_ACCESS_KEY
 AWS_SECRET_ACCESS_KEY="$(cat /aws-keys/secretkey)"
 
-/vmrestore-prod -storageDataPath=/storage -src="s3://$S3_LOCATION" -customS3Endpoint="http://$MINIO_ENDPOINT" -httpListenAddr "$METRICS_ADDR"
+/vmrestore-prod -storageDataPath=/storage -src="s3://$S3_LOCATION" -customS3Endpoint="http://$S3_ENDPOINT" -httpListenAddr "$METRICS_ADDR"
