@@ -21,7 +21,7 @@ func TestJSONOutputIsSeparateFromProgress(t *testing.T) {
 		return checker.Report{Status: checker.Healthy, Checks: []checker.Result{
 			{Component: "kafka", Status: checker.Healthy, Messages: []string{"all assigned replicas in sync"}},
 		}}
-	}, &flags{wait: true, interval: time.Millisecond}, &stderr)
+	}, &flags{wait: true, interval: time.Millisecond}, &stderr, nil)
 	require.NoError(t, err)
 	require.NoError(t, writeReport(&stdout, "json", report))
 	var decoded checker.Report
@@ -88,7 +88,7 @@ func TestWaitOutputShowsTimestampsAndStabilityProgress(t *testing.T) {
 		report, err := observe(context.Background(), func(context.Context) checker.Report {
 			return checker.Report{CheckedAt: time.Now().UTC(), Status: checker.Healthy,
 				Checks: []checker.Result{{Component: "kafka", Status: checker.Healthy, Messages: []string{"all replicas in sync"}}}}
-		}, &flags{wait: true, interval: 10 * time.Second, stableFor: 30 * time.Second, timeout: time.Minute}, &stderr)
+		}, &flags{wait: true, interval: 10 * time.Second, stableFor: 30 * time.Second, timeout: time.Minute}, &stderr, nil)
 		require.NoError(t, err)
 		assert.Equal(t, checker.Healthy, report.Status)
 		for _, line := range strings.Split(strings.TrimSpace(stderr.String()), "\n") {
@@ -118,7 +118,7 @@ func TestCancellationBeforeFirstObservation(t *testing.T) {
 	report, err := observe(ctx, func(context.Context) checker.Report {
 		cancel()
 		return checker.Report{Namespace: "test", Checks: []checker.Result{{Messages: []string{"aborted request URL"}}}}
-	}, &flags{wait: true, interval: time.Second}, &stderr)
+	}, &flags{wait: true, interval: time.Second}, &stderr, nil)
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, "test", report.Namespace)
 	assert.Empty(t, report.Checks)
@@ -131,4 +131,29 @@ func TestHealthyTopologyChangeExplainsStabilityReset(t *testing.T) {
 	message := stabilityMessage(checker.Report{Status: checker.Healthy}, checker.WaitProgress{Reset: true, Required: 30 * time.Second})
 	assert.Contains(t, message, "topology, readiness or runtime changed")
 	assert.Contains(t, message, "stability period restarted (0s/30s)")
+}
+
+func TestSingleObservationRequiresFinalVerification(t *testing.T) {
+	var progress bytes.Buffer
+	calls := 0
+	report, err := observe(context.Background(), func(context.Context) checker.Report {
+		return checker.Report{Status: checker.Healthy}
+	}, &flags{}, &progress, func(_ context.Context, report checker.Report) checker.Report {
+		calls++
+		report.Status = checker.Unknown
+		return report
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, calls)
+	assert.Equal(t, checker.Unknown, report.Status)
+	var output bytes.Buffer
+	require.Error(t, finishReport(&output, "json", report, nil))
+	assert.Contains(t, progress.String(), "Running final replication verification")
+}
+
+func TestAuditProgressDoesNotPrematurelyClaimSuccess(t *testing.T) {
+	assert.Contains(t, stabilityMessage(checker.Report{Status: checker.Healthy},
+		checker.WaitProgress{Verifying: true}), "running final replication verification")
+	assert.Contains(t, stabilityMessage(checker.Report{Status: checker.Unknown},
+		checker.WaitProgress{RetryAfter: 30 * time.Second}), "next observation in 30s")
 }

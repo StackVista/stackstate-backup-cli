@@ -9,6 +9,8 @@ import (
 const hdfsQuery = `unset HADOOP_OPTS
 printf '{"configuredReplication":'
 hdfs getconf -confKey dfs.replication
+printf ',"minimumReplication":'
+hdfs getconf -confKey dfs.namenode.replication.min
 printf ',"jmx":'
 curl --fail --silent --show-error --max-time 20 'http://127.0.0.1:50070/jmx'
 printf '}'`
@@ -38,11 +40,12 @@ func (c *Checker) checkHDFS(ctx context.Context, inventory inventory) Result {
 func evaluateHDFS(data []byte, expected int) Result {
 	var response struct {
 		Replication *int `json:"configuredReplication"`
+		Minimum     *int `json:"minimumReplication"`
 		JMX         struct {
 			Beans []map[string]json.RawMessage `json:"beans"`
 		} `json:"jmx"`
 	}
-	if err := json.Unmarshal(data, &response); err != nil || response.Replication == nil {
+	if err := json.Unmarshal(data, &response); err != nil || response.Replication == nil || response.Minimum == nil {
 		return result("hdfs", Unknown, "invalid HDFS replication/JMX response")
 	}
 	fields := make(map[string]json.RawMessage)
@@ -66,6 +69,9 @@ func evaluateHDFS(data []byte, expected int) Result {
 	var problems []string
 	if *response.Replication < minReplicas {
 		problems = append(problems, fmt.Sprintf("configured block replication is %d; at least %d required", *response.Replication, minReplicas))
+	}
+	if *response.Minimum < minReplicas {
+		problems = append(problems, fmt.Sprintf("minimum write replication is %d; at least %d required", *response.Minimum, minReplicas))
 	}
 	if safemode != "" {
 		problems = append(problems, "NameNode is in safe mode")

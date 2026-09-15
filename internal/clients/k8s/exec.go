@@ -29,6 +29,18 @@ func (b *boundedBuffer) Write(p []byte) (int, error) {
 
 // Exec runs a command without a TTY, bounded by the caller's context and output limit.
 func (c *Client) Exec(ctx context.Context, namespace, pod, container string, command []string) ([]byte, error) {
+	var output boundedBuffer
+	if err := c.ExecTo(ctx, namespace, pod, container, command, &output); err != nil {
+		return nil, err
+	}
+	if output.err != nil {
+		return nil, output.err
+	}
+	return output.buffer.Bytes(), nil
+}
+
+// ExecTo streams stdout to a caller-supplied writer without retaining the report.
+func (c *Client) ExecTo(ctx context.Context, namespace, pod, container string, command []string, output io.Writer) error {
 	request := c.clientset.CoreV1().RESTClient().Post().
 		Namespace(namespace).Resource("pods").Name(pod).SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{
@@ -39,15 +51,11 @@ func (c *Client) Exec(ctx context.Context, namespace, pod, container string, com
 		}, scheme.ParameterCodec)
 	executor, err := remotecommand.NewSPDYExecutor(c.restConfig, http.MethodPost, request.URL())
 	if err != nil {
-		return nil, fmt.Errorf("create pod executor: %w", err)
+		return fmt.Errorf("create pod executor: %w", err)
 	}
-	var output boundedBuffer
 	// Database tools can echo authentication details in stderr.
-	if err := executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdout: &output, Stderr: io.Discard}); err != nil {
-		return nil, fmt.Errorf("query pod %s/%s: %w", namespace, pod, err)
+	if err := executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdout: output, Stderr: io.Discard}); err != nil {
+		return fmt.Errorf("query pod %s/%s: %w", namespace, pod, err)
 	}
-	if output.err != nil {
-		return nil, output.err
-	}
-	return output.buffer.Bytes(), nil
+	return nil
 }

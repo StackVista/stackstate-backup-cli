@@ -24,7 +24,7 @@ func hdfsFixture(t *testing.T, mutate func(map[string]any)) []byte {
 		"UnderReplicatedBlocks": 0, "MissingBlocks": 0, "CorruptBlocks": 0, "PendingReplicationBlocks": 0, "NumLiveDataNodes": 3, "Safemode": "",
 	}
 	mutate(fields)
-	return encode(t, map[string]any{"configuredReplication": 3, "jmx": map[string]any{"beans": []any{fields}}})
+	return encode(t, map[string]any{"configuredReplication": 3, "minimumReplication": 2, "jmx": map[string]any{"beans": []any{fields}}})
 }
 
 func TestHDFSEvidence(t *testing.T) {

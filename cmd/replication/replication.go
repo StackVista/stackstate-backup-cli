@@ -56,7 +56,8 @@ func Cmd() *cobra.Command {
 	check.Flags().StringVarP(&f.output, "output", "o", "table", "Output format: table or json")
 	check.Flags().BoolVar(&f.wait, "wait", false, "Wait for sustained healthy replication")
 	check.Flags().DurationVar(&f.timeout, "timeout", defaultTimeout, "Overall deadline, including queries")
-	check.Flags().DurationVar(&f.options.RequestTimeout, "request-timeout", defaultRequestTimeout, "Deadline for each Kubernetes request or database query")
+	check.Flags().DurationVar(&f.options.RequestTimeout, "request-timeout", defaultRequestTimeout, "Deadline for each ordinary Kubernetes request or database probe")
+	check.Flags().DurationVar(&f.options.HDFSAuditTimeout, "hdfs-audit-timeout", checker.DefaultAuditTimeout, "Deadline for the final HDFS metadata audit, within the overall timeout (0 uses default)")
 	check.Flags().DurationVar(&f.interval, "interval", defaultInterval, "Interval between observations in wait mode")
 	check.Flags().DurationVar(&f.stableFor, "stable-for", defaultStableFor, "Required healthy observation period in wait mode")
 	check.Flags().StringVar(&f.options.KafkaClientProperties, "kafka-client-properties", "", "Kafka client properties file already mounted in broker pods")
@@ -94,7 +95,7 @@ func run(command *cobra.Command, f *flags) error {
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, f.timeout)
 	defer cancel()
-	report, checkErr := observe(ctx, probe.Check, f, command.ErrOrStderr())
+	report, checkErr := observe(ctx, probe.Check, f, command.ErrOrStderr(), probe.Verify)
 	return finishReport(command.OutOrStdout(), f.output, report, checkErr)
 }
 
@@ -115,11 +116,19 @@ func finishReport(writer io.Writer, format string, report checker.Report, checkE
 	return nil
 }
 
-func observe(ctx context.Context, check func(context.Context) checker.Report, f *flags, progress io.Writer) (checker.Report, error) {
+func observe(ctx context.Context, check func(context.Context) checker.Report, f *flags, progress io.Writer, verify func(context.Context, checker.Report) checker.Report) (checker.Report, error) {
 	if !f.wait {
 		report := check(ctx)
 		if ctx.Err() != nil {
 			return checker.Report{Namespace: report.Namespace}, fmt.Errorf("replication check ended: %w", ctx.Err())
+		}
+		if verify != nil && report.Status == checker.Healthy {
+			_, _ = fmt.Fprintf(progress, "[%s] Running final replication verification.\n", time.Now().UTC().Format(time.RFC3339))
+			verified := verify(ctx, report)
+			if ctx.Err() != nil {
+				return report, fmt.Errorf("replication verification ended: %w", ctx.Err())
+			}
+			report = verified
 		}
 		return report, nil
 	}
@@ -131,11 +140,15 @@ func observe(ctx context.Context, check func(context.Context) checker.Report, f 
 			_, _ = fmt.Fprintf(progress, "[%s] %s %s: %s\n", timestamp, check.Component, check.Status, strings.Join(check.Messages, "; "))
 		}
 		_, _ = fmt.Fprintf(progress, "[%s] %s\n", timestamp, stabilityMessage(report, state))
-	})
+	}, verify)
 }
 
 func stabilityMessage(report checker.Report, state checker.WaitProgress) string {
 	switch {
+	case state.Verifying:
+		return "All applicable checks stable; running final replication verification."
+	case state.RetryAfter > 0:
+		return fmt.Sprintf("Final verification did not pass; stability period reset; next observation in %s.", state.RetryAfter)
 	case report.Status == checker.NotApplicable:
 		return "No applicable replication checks; configured component availability checks passed."
 	case state.Reset && report.Status == checker.Healthy:

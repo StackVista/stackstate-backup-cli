@@ -23,6 +23,9 @@ func New(kube Kubernetes, options Options) (*Checker, error) {
 	if options.ElasticsearchHost == "" {
 		options.ElasticsearchHost = "127.0.0.1"
 	}
+	if options.HDFSAuditTimeout == 0 {
+		options.HDFSAuditTimeout = DefaultAuditTimeout
+	}
 	return &Checker{kube: kube, options: options}, nil
 }
 

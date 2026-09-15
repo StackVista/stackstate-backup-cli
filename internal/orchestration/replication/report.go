@@ -15,6 +15,9 @@ const (
 	NotApplicable = "not_applicable"
 
 	minReplicas = 2
+
+	// DefaultAuditTimeout bounds the final HDFS metadata scan.
+	DefaultAuditTimeout = 2 * time.Minute
 )
 
 var supportedComponents = []string{"hdfs", "elasticsearch", "kafka", "clickhouse", "zookeeper"}
@@ -24,6 +27,7 @@ type Options struct {
 	Namespace             string
 	Components            []string
 	RequestTimeout        time.Duration
+	HDFSAuditTimeout      time.Duration
 	KafkaClientProperties string
 	KafkaBootstrapServer  string
 	ElasticsearchScheme   string
@@ -38,6 +42,9 @@ func (o Options) Validate() error {
 	}
 	if o.RequestTimeout <= 0 {
 		return fmt.Errorf("request-timeout must be positive")
+	}
+	if o.HDFSAuditTimeout < 0 {
+		return fmt.Errorf("hdfs-audit-timeout cannot be negative")
 	}
 	if o.ElasticsearchScheme != "http" && o.ElasticsearchScheme != "https" {
 		return fmt.Errorf("elasticsearch-scheme must be http or https")

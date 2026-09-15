@@ -62,6 +62,10 @@ period, resets, and successful completion. Seeing every component healthy
 does not mean the stability period has already elapsed. Database queries take
 time; the checker needs another completed healthy observation to confirm the
 period, rather than exiting on a timer alone.
+Once stable, an applicable HDFS check also needs its final block audit to pass.
+Progress announces final verification before reporting completion. A failed
+audit resets stability and delays the next observation by at least 30 seconds
+(or `--interval`, if longer).
 
 To finish on the first fully healthy observation, explicitly use
 `--wait --stable-for 0s`.
@@ -69,7 +73,8 @@ To finish on the first fully healthy observation, explicitly use
 Progress goes to stderr; stdout contains one final report. Table output includes
 the report time and the start time of the last completed observation. JSON
 retains its `checkedAt` timestamp. The overall deadline includes database
-queries. `--request-timeout` bounds each API request or query.
+queries and the final audit. `--request-timeout` bounds ordinary API requests
+and database probes; `--hdfs-audit-timeout` separately bounds the HDFS audit.
 
 Ctrl+C stops further queries. Cancellation or timeout returns nonzero and sets
 the overall result to `unknown`, retaining the last completed observation
@@ -111,7 +116,7 @@ continuous Kubernetes event watch.
 
 | Component | Replication evidence |
 |---|---|
-| HDFS | Configured default block replication is at least two; all expected DataNodes are live; the NameNode is out of safe mode; no missing, corrupt, under-replicated or pending-replication blocks are reported by JMX. |
+| HDFS | Configured default and minimum write replication are at least two; all expected DataNodes are live; the NameNode is out of safe mode; no missing, corrupt, under-replicated or pending-replication blocks are reported by JMX. Before overall success, a file/block audit verifies completed blocks against their replication targets. |
 | Elasticsearch | Expected members are present; health is green; every returned index has at least one replica shard; no shards are unassigned, initializing or relocating. |
 | Kafka | Every described partition has at least two distinct assigned replicas, complete ISR membership and an in-sync leader. Summaries and partition descriptions must agree. `__consumer_offsets` must exist. `__transaction_state` is validated when present; verified absence is reported without failing the check. |
 | ClickHouse | Every discovered member is queried. Replicated table groups have their expected active replicas, live coordination sessions and no read-only members. Replication logs are caught up, and no replication queue tasks other than background `MERGE_PARTS` remain. Missing or duplicate table replicas and current query exceptions fail the check. |
@@ -145,6 +150,41 @@ ZooKeeper's `ruok` response does not prove that the ensemble has recovered.
 The checker reads `mntr` from every member instead, and requires full voting
 membership to recover rather than accepting a surviving majority. Wait mode
 applies the same healthy observation period as for the other databases.
+
+## Final HDFS audit
+
+When all selected lightweight checks pass, the checker runs a read-only HDFS
+audit before returning success. With `--wait`, this happens after the stability
+period, not on every poll. HDFS marked `not_applicable` does not require an audit.
+
+The audit uses `hdfs fsck / -files -blocks -openforwrite -includeSnapshots`.
+It examines NameNode file and block metadata, not the contents of HFiles or WALs.
+Every audited file must have a replication target of at least two, and completed
+blocks must have enough live replicas to meet that file's target. Completed
+blocks in open files and snapshot references are included. Counts can include
+the same underlying block referenced by multiple snapshots.
+
+For under-construction blocks, Hadoop reports expected pipeline membership.
+The checker requires that count to meet the file's target and explicitly reports
+that persistence of the latest writes is not verified. It does not stop writers,
+roll WALs or require every WAL to close. A healthy audit is not proof that every
+active pipeline has durably replicated its latest bytes.
+
+The default audit limit is two minutes, bounded by the remaining overall
+`--timeout`. Adjust it with `--hdfs-audit-timeout` for larger namespaces:
+
+```bash
+sts-backup replication check -n observability --wait \
+  --timeout 15m --hdfs-audit-timeout 5m
+```
+
+Output is parsed as a stream, with bounded line size and diagnostic storage.
+The parser requires matching file/block counts and a complete final summary;
+`fsck`'s `HEALTHY` line alone is insufficient. Incomplete, timed-out or unsupported
+reports return `unknown`. Erasure-coded files and symlink records are unsupported.
+After a successful audit, all selected lightweight checks run again and relevant
+Kubernetes state must still match. The audit is a sampled scan, not an atomic
+filesystem snapshot; its cost depends on file/block count and NameNode load.
 
 ## Access and supported layouts
 
@@ -197,8 +237,9 @@ ClickHouse uses the pod's `CLICKHOUSE_ADMIN_USER`,
 `CLICKHOUSE_ADMIN_PASSWORD` and `CLICKHOUSE_TCP_PORT`. Credentials stay inside
 the pod. Query stderr is suppressed because database tools can echo credentials;
 when a query fails, inspect the component's configuration through your normal
-administrative procedure. Query output is size-limited and excess output is
-treated as unverified.
+administrative procedure. Ordinary query output is size-limited and excess output
+is treated as unverified; the final HDFS report uses the streaming parser described
+above.
 
 ## Kubernetes Job
 
@@ -242,8 +283,9 @@ database health or storage-level redundancy for a single-replica component.
 This first version does not validate Longhorn volume health or placement,
 spare capacity, HBase region assignment and WAL recovery, quorum survival
 after a specific node is removed, VictoriaMetrics redundancy, backup freshness,
-or the consequences of removing a particular node. HDFS's default replication setting does not prove that
-every file has the same replication policy. It is not a complete implementation
+or the consequences of removing a particular node. The HDFS audit verifies
+completed blocks but does not prove persistence of the latest active WAL writes.
+It is not a complete implementation
 of the product's node-maintenance checklist.
 
 Continue to serialize maintenance, preserve storage redundancy, follow the

@@ -173,7 +173,7 @@ func TestWaitTracksMeaningfulChangesBetweenHealthyChecks(t *testing.T) {
 				}, 10*time.Second, 30*time.Second, func(report Report, state WaitProgress) {
 					assert.Equal(t, Healthy, report.Status)
 					progress = append(progress, state)
-				})
+				}, nil)
 				require.NoError(t, err)
 				assert.Equal(t, Healthy, report.Status)
 				assert.Equal(t, expected, time.Since(start))

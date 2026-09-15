@@ -3,6 +3,7 @@ package replication
 import (
 	"context"
 	"fmt"
+	"io"
 	"testing"
 	"time"
 
@@ -21,7 +22,20 @@ import (
 type fakeKubernetes struct {
 	client kubernetes.Interface
 	exec   func(context.Context, string, string, string, []string) ([]byte, error)
+	stream func(context.Context, string, string, string, []string, io.Writer) error
 	calls  int
+}
+
+func (f *fakeKubernetes) ExecTo(ctx context.Context, namespace, pod, container string, command []string, output io.Writer) error {
+	if f.stream != nil {
+		return f.stream(ctx, namespace, pod, container, command, output)
+	}
+	data, err := f.Exec(ctx, namespace, pod, container, command)
+	if err != nil {
+		return err
+	}
+	_, err = output.Write(data)
+	return err
 }
 
 func (f *fakeKubernetes) Clientset() kubernetes.Interface { return f.client }

@@ -3,6 +3,7 @@ package replication
 import (
 	"context"
 	"fmt"
+	"io"
 	"slices"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -15,6 +16,7 @@ import (
 type Kubernetes interface {
 	Clientset() kubernetes.Interface
 	Exec(context.Context, string, string, string, []string) ([]byte, error)
+	ExecTo(context.Context, string, string, string, []string, io.Writer) error
 }
 
 type inventory struct {
