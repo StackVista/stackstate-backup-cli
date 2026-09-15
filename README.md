@@ -56,7 +56,7 @@ sts-backup replication check --namespace observability --wait --output json
 
 This command has its own flags and does not require backup configuration.
 See [Replication checks](docs/replication.md) for status and exit-code semantics,
-authentication, a Kubernetes Job example, and the maintenance checks outside its scope.
+authentication and the maintenance checks outside its scope.
 
 ### version
 

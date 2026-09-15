@@ -1,13 +1,21 @@
 # Check database replication
 
 `sts-backup replication check` inspects the chart-managed databases in a
-namespace containing one SUSE Observability installation. It works from a
-workstation or a Kubernetes Job and does not require the backup ConfigMap,
-backup Secret, or enabled backups.
+namespace containing one SUSE Observability installation. It does not require
+the backup ConfigMap, backup Secret, or enabled backups.
 
 ```bash
 sts-backup replication check --namespace observability
 ```
+
+For testing from a source checkout:
+
+```bash
+go run . replication check --namespace observability --wait
+```
+
+Replace `observability` with the installation namespace. The command uses the
+current kubeconfig context; use `--kubeconfig <path>` to select another config.
 
 The command returns exit code **0** when every selected component is `healthy`
 or `not_applicable`. Any degraded, missing, inaccessible, unsupported or
@@ -124,8 +132,9 @@ continuous Kubernetes event watch.
 
 Kafka creates `__transaction_state` lazily when transactions are used. If it
 is not listed, a separate read-only topic configuration query must confirm
-absence; permission failures or ambiguous results produce `unknown`. The checker
-never creates topics. It does not validate the broker defaults that would govern
+absence; permission failures or ambiguous results produce `unknown`, retaining
+any partition or ISR problems already found. The checker never creates topics.
+It does not validate the broker defaults that would govern
 a future transaction topic. A present transaction topic still needs at least two
 replicas and complete ISR.
 
@@ -182,6 +191,8 @@ Output is parsed as a stream, with bounded line size and diagnostic storage.
 The parser requires matching file/block counts and a complete final summary;
 `fsck`'s `HEALTHY` line alone is insufficient. Incomplete, timed-out or unsupported
 reports return `unknown`. Erasure-coded files and symlink records are unsupported.
+Parser errors include a line number and a bounded, escaped excerpt of the
+rejected record.
 After a successful audit, all selected lightweight checks run again and relevant
 Kubernetes state must still match. The audit is a sampled scan, not an atomic
 filesystem snapshot; its cost depends on file/block count and NameNode load.
@@ -240,27 +251,6 @@ when a query fails, inspect the component's configuration through your normal
 administrative procedure. Ordinary query output is size-limited and excess output
 is treated as unverified; the final HDFS report uses the streaming parser described
 above.
-
-## Kubernetes Job
-
-[examples/replication/job.yaml](../examples/replication/job.yaml) contains a
-dedicated ServiceAccount, namespace-scoped RBAC and a Job using in-cluster
-credentials. Adapt its namespace and image reference before use.
-The Job has no retries: a failure requires investigation and an explicit rerun.
-
-No new container image is published by this change. To package the CLI, build
-a static Linux binary from this repository and use the example SUSE BCI image:
-
-```bash
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o examples/replication/sts-backup .
-docker build -t registry.example.com/observability/sts-backup:replication-checker \
-  examples/replication
-```
-
-Publish the image to your registry through your normal image delivery process
-and replace the Job's example image reference. Use the architecture required
-by your nodes. The build copies the local binary; it does not download an
-unverified executable.
 
 ## Maintenance boundary
 
