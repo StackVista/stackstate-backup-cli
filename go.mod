@@ -10,6 +10,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.18.17
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.97.3
 	github.com/elastic/go-elasticsearch/v8 v8.19.0
+	github.com/go-openapi/swag/jsonutils v0.27.1
+	github.com/go-openapi/swag/yamlutils v0.27.1
 	github.com/go-playground/validator/v10 v10.28.0
 	github.com/spf13/cobra v1.10.1
 	github.com/spf13/pflag v1.0.9
@@ -52,16 +54,15 @@ require (
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
 	github.com/go-openapi/swag v0.25.4 // indirect
 	github.com/go-openapi/swag/cmdutils v0.25.4 // indirect
-	github.com/go-openapi/swag/conv v0.25.4 // indirect
+	github.com/go-openapi/swag/conv v0.27.1 // indirect
 	github.com/go-openapi/swag/fileutils v0.25.4 // indirect
 	github.com/go-openapi/swag/jsonname v0.25.4 // indirect
-	github.com/go-openapi/swag/jsonutils v0.25.4 // indirect
 	github.com/go-openapi/swag/loading v0.25.4 // indirect
 	github.com/go-openapi/swag/mangling v0.25.4 // indirect
 	github.com/go-openapi/swag/netutils v0.25.4 // indirect
+	github.com/go-openapi/swag/pools v0.27.1 // indirect
 	github.com/go-openapi/swag/stringutils v0.25.4 // indirect
-	github.com/go-openapi/swag/typeutils v0.25.4 // indirect
-	github.com/go-openapi/swag/yamlutils v0.25.4 // indirect
+	github.com/go-openapi/swag/typeutils v0.27.1 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
