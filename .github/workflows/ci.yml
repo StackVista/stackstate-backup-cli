@@ -154,7 +154,7 @@ jobs:
       - name: Import release artifacts for scanning
         run: docker import artifact-scan/rootfs.tar stackstate-backup-cli:security-scan
       - name: Scan release artifacts with Trivy, Grype, and VEX
-        uses: StackVista/image-pipeline/.github/actions/scan-image@6284a6fc006a7cc46a7f00d02c50d5f21b117b63 # main as of 2026-07-10
+        uses: StackVista/image-pipeline/.github/actions/scan-image@ec325c73909d0d00420121bbde6754b964e80ac3 # main
         with:
           image: stackstate-backup-cli:security-scan
           mode: gate
