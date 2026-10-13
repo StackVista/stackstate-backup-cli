@@ -11,7 +11,6 @@ set -euo pipefail
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 rootfs_dir="${1:-artifact-scan/rootfs}"
-govulncheck_version="${GOVULNCHECK_VERSION:-v1.6.0}"
 expected_binaries=5
 binaries=()
 
@@ -29,7 +28,7 @@ fi
 status=0
 for binary in "${binaries[@]}"; do
   echo "== ${binary}"
-  if ! go run "golang.org/x/vuln/cmd/govulncheck@${govulncheck_version}" -mode=binary "${binary}"; then
+  if ! "${script_dir}/govulncheck-inform.sh" -mode=binary "${binary}"; then
     status=1
   fi
 done

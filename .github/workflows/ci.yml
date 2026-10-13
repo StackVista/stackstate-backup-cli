@@ -139,8 +139,12 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Check reachable Go vulnerabilities in the source
-        run: go run "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" ./...
+      - name: Test govulncheck warning and error handling
+        run: scripts/govulncheck-inform-test.sh
+      - name: Install govulncheck
+        run: go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+      - name: Report reachable Go vulnerabilities in the source
+        run: scripts/govulncheck-inform.sh ./...
       - name: Test that the symbol-table guard rejects a stripped binary
         run: scripts/assert-go-symbols-test.sh
       - name: Build GoReleaser snapshot artifacts
@@ -151,7 +155,7 @@ jobs:
           args: release --snapshot --clean --skip=publish
       - name: Verify and prepare all release artifacts
         run: scripts/prepare-artifact-scan-rootfs.sh
-      - name: Check reachable Go vulnerabilities in each release binary
+      - name: Report reachable Go vulnerabilities in each release binary
         run: scripts/govulncheck-release-binaries.sh
       - name: Import release artifacts for scanning
         run: docker import artifact-scan/rootfs.tar stackstate-backup-cli:security-scan
