@@ -457,12 +457,14 @@ This project uses GitHub Actions and GoReleaser for automated releases:
 
 ### Dependency updates
 
-Renovate runs daily and groups Go compiler patches, module patches, and `golang.org/x/*` module minors in one release-artifact PR.
+Renovate runs daily and keeps compiler updates separate from library updates.
+Module patches and `golang.org/x/*` module minors share one library PR.
 Compiler updates stay within the release line declared in `renovate.json`.
 CI rejects a module update that selects a compiler from another release line.
 The shared approval action approves verified Renovate commits with native automerge enabled.
 GitHub requires the existing CI checks and an approving review before merging.
-The group includes direct and indirect modules and uses native automerge after artifact validation and App approval.
+Compiler patches and the library group use native automerge after artifact validation and App approval.
+The library group includes direct and indirect modules.
 Other module minors, module majors, and Go release-line migrations require manual review.
 Dependency updates reach published binaries through the existing tag release process.
 

@@ -25,24 +25,33 @@
       "minimumReleaseAge": null
     },
     {
-      "description": "Group compiler and module patches for the release artifacts",
+      "description": "Automerge compiler patches after required artifact validation and App approval",
       "matchManagers": ["gomod"],
-      "matchDepTypes": ["golang", "toolchain", "require", "indirect", "replace"],
+      "matchDepTypes": ["golang", "toolchain"],
       "matchUpdateTypes": ["patch"],
-      "groupName": "Go release artifact updates",
-      "groupSlug": "go-artifacts",
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": true
     },
     {
-      "description": "Include golang.org/x module minors in the release artifact group",
+      "description": "Keep module patches separate from compiler updates",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchUpdateTypes": ["patch"],
+      "groupName": "Go library updates",
+      "groupSlug": "go-libraries",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Include golang.org/x module minors in the library group",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["require", "indirect", "replace"],
       "matchPackageNames": ["golang.org/x/**"],
       "matchUpdateTypes": ["minor"],
-      "groupName": "Go release artifact updates",
-      "groupSlug": "go-artifacts",
+      "groupName": "Go library updates",
+      "groupSlug": "go-libraries",
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": true
