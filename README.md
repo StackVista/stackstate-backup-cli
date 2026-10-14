@@ -488,6 +488,12 @@ Before merging the Renovate workflows:
 go test ./...
 ```
 
+Test the Renovate rules against an installed Renovate distribution:
+
+```bash
+mise exec -- node scripts/renovate-config-test.cjs /path/to/renovate/dist
+```
+
 ### Linting
 
 ```bash

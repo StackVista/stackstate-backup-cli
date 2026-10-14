@@ -15,6 +15,13 @@
       "enabled": true
     },
     {
+      "description": "Keep automerged patches available alongside manual module minors",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchPackageNames": ["!golang.org/x/**"],
+      "separateMinorPatch": true
+    },
+    {
       "description": "Keep Go compiler updates within the approved release line",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["golang", "toolchain"],
@@ -40,6 +47,9 @@
       "matchUpdateTypes": ["patch"],
       "groupName": "Go library updates",
       "groupSlug": "go-libraries",
+      "group": {
+        "branchTopic": "go-libraries"
+      },
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": true
