@@ -1,0 +1,70 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "local>StackVista/renovate-config",
+    "local>StackVista/renovate-config:go"
+  ],
+  "prConcurrentLimit": 0,
+  "prHourlyLimit": 0,
+  "rebaseWhen": "behind-base-branch",
+  "packageRules": [
+    {
+      "description": "Track direct and indirect Go module updates",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "enabled": true
+    },
+    {
+      "description": "Keep automerged patches available alongside manual module minors",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchPackageNames": ["!golang.org/x/**"],
+      "separateMinorPatch": true
+    },
+    {
+      "description": "Keep Go compiler updates within the approved release line",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["golang", "toolchain"],
+      "rangeStrategy": "bump",
+      "allowedVersions": "/^1\\.26\\./",
+      "groupName": "Go toolchain",
+      "groupSlug": "go-toolchain",
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "Automerge compiler patches after required artifact validation and App approval",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["golang", "toolchain"],
+      "matchUpdateTypes": ["patch"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Keep module patches separate from compiler updates",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchUpdateTypes": ["patch"],
+      "groupName": "Go library updates",
+      "groupSlug": "go-libraries",
+      "group": {
+        "branchTopic": "go-libraries"
+      },
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
+      "description": "Include golang.org/x module minors in the library group",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchPackageNames": ["golang.org/x/**"],
+      "matchUpdateTypes": ["minor"],
+      "groupName": "Go library updates",
+      "groupSlug": "go-libraries",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    }
+  ]
+}

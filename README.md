@@ -455,12 +455,43 @@ This project uses GitHub Actions and GoReleaser for automated releases:
 2. GitHub Actions automatically builds binaries for multiple platforms
 3. GoReleaser creates a GitHub release and uploads artifacts to S3
 
+### Dependency updates
+
+Renovate runs daily and keeps compiler updates separate from library updates.
+Module patches and `golang.org/x/*` module minors share one library PR.
+Compiler updates stay within the release line declared in `renovate.json`.
+CI rejects a module update that selects a compiler from another release line.
+The shared approval action approves verified Renovate commits with native automerge enabled.
+GitHub requires the existing CI checks and an approving review before merging.
+Compiler patches and the library group use native automerge after artifact validation and App approval.
+The library group includes direct and indirect modules.
+Other module minors, module majors, and Go release-line migrations require manual review.
+Dependency updates reach published binaries through the existing tag release process.
+
+This public repository runs Renovate locally because GitHub restricts private reusable workflows and actions to private callers.
+The approval workflow fetches the pinned shared action with a read-only updater App token.
+The separate approval App supplies the review token.
+The updater App needs Contents, Pull requests, Issues, and Workflows write permissions, plus Checks and Commit statuses read permissions.
+
+Before merging the Renovate workflows:
+
+1. Grant `renovate-update-app` access to this repository and `renovate-config`.
+2. Install `renovatee-approver-stackvista` on this repository.
+3. Apply the `pulumi-infra/github/repoVariables` changes that supply both Apps' credentials.
+4. Check that the live branch protection requires all five CI checks listed in `pulumi-infra/github/repositories/resources.yaml`.
+
 ## Development
 
 ### Running Tests
 
 ```bash
 go test ./...
+```
+
+Test the Renovate rules against an installed Renovate distribution:
+
+```bash
+mise exec -- node scripts/renovate-config-test.cjs /path/to/renovate/dist
 ```
 
 ### Linting
