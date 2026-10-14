@@ -58,9 +58,9 @@ func buildSimpleJobEnvVars(config *config.Config) []corev1.EnvVar {
 // buildSimpleJobVolumeMounts constructs volume mounts shared by the abort and backfill job containers
 func buildSimpleJobVolumeMounts() []corev1.VolumeMount {
 	return []corev1.VolumeMount{
-		{Name: "backup-log", MountPath: "/opt/docker/etc_log"},
-		{Name: "backup-restore-scripts", MountPath: "/backup-restore-scripts"},
-		{Name: "minio-keys", MountPath: "/aws-keys"},
+		{Name: backupLogVolume, MountPath: "/opt/docker/etc_log"},
+		{Name: restoreScriptsVolume, MountPath: "/backup-restore-scripts"},
+		{Name: minioKeysVolume, MountPath: "/aws-keys"},
 	}
 }
 
@@ -86,7 +86,7 @@ func buildSimpleJobInitContainers(config *config.Config) []corev1.Container {
 func buildSimpleJobVolumes(config *config.Config, defaultMode int32) []corev1.Volume {
 	return []corev1.Volume{
 		{
-			Name: "backup-log",
+			Name: backupLogVolume,
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{
@@ -96,7 +96,7 @@ func buildSimpleJobVolumes(config *config.Config, defaultMode int32) []corev1.Vo
 			},
 		},
 		{
-			Name: "backup-restore-scripts",
+			Name: restoreScriptsVolume,
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{
@@ -107,7 +107,7 @@ func buildSimpleJobVolumes(config *config.Config, defaultMode int32) []corev1.Vo
 			},
 		},
 		{
-			Name: "minio-keys",
+			Name: minioKeysVolume,
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
 					SecretName: restore.MinioKeysSecretName,

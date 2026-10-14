@@ -309,7 +309,7 @@ func buildVolumes(config *config.Config, defaultMode int32) []corev1.Volume {
 // buildContainers constructs containers for the restore job
 func buildContainer(envVar []corev1.EnvVar, command []string, config *config.Config) corev1.Container {
 	return corev1.Container{
-		Name:            "settings",
+		Name:            settingsName,
 		Image:           config.Settings.Restore.Job.Image,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		SecurityContext: k8s.ConvertSecurityContext(config.Settings.Restore.Job.ContainerSecurityContext),

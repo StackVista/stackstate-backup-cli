@@ -5,9 +5,11 @@ import (
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
 )
 
+const settingsName = config.DatastoreSettings
+
 func Cmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "settings",
+		Use:   settingsName,
 		Short: "Settings backup and restore operations",
 	}
 

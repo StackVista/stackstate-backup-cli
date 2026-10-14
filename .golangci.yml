@@ -45,6 +45,8 @@ linters:
     funlen:
       lines: 100
       statements: 60
+    goconst:
+      ignore-tests: true
     lll:
       line-length: 250
     mnd:

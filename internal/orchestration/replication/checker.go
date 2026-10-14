@@ -6,7 +6,12 @@ import (
 	"time"
 )
 
-const requestTimeout = 30 * time.Second
+const (
+	requestTimeout       = 30 * time.Second
+	bashBinary           = "bash"
+	bashFlags            = "-ec"
+	replicationQueryName = "replication-check"
+)
 
 // Checker observes databases without invoking backup or restore operations.
 type Checker struct {
@@ -83,15 +88,15 @@ func (c *Checker) query(ctx context.Context, pod, container string, command []st
 
 func (c *Checker) checkComponent(ctx context.Context, inventory inventory, component string) Result {
 	switch component {
-	case "hdfs":
+	case hdfsComponent:
 		return c.checkHDFS(ctx, inventory)
-	case "elasticsearch":
+	case elasticsearchComponent:
 		return c.checkElasticsearch(ctx, inventory)
-	case "kafka":
+	case kafkaComponent:
 		return c.checkKafka(ctx, inventory)
-	case "clickhouse":
+	case clickhouseComponent:
 		return c.checkClickHouse(ctx, inventory)
-	case "zookeeper":
+	case zookeeperComponent:
 		return c.checkZooKeeper(ctx, inventory)
 	default:
 		return result(component, Unknown, "unsupported component")

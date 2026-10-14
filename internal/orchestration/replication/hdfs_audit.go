@@ -49,7 +49,7 @@ func (c *Checker) Verify(ctx context.Context, previous Report) Report {
 
 func (c *Checker) auditHDFS(ctx context.Context, pod string) Result {
 	parser := &fsckParser{}
-	err := c.kube.ExecTo(ctx, c.options.Namespace, pod, "namenode", []string{"bash", "-ec", hdfsAuditQuery}, parser)
+	err := c.kube.ExecTo(ctx, c.options.Namespace, pod, "namenode", []string{bashBinary, bashFlags, hdfsAuditQuery}, parser)
 	if ctx.Err() != nil {
 		return result(hdfsComponent, Unknown, fmt.Sprintf("HDFS block audit did not complete: %v", ctx.Err()))
 	}
