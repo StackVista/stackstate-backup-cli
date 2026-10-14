@@ -34,6 +34,7 @@ var (
 	useLatest        bool
 	skipConfirmation bool
 	skipStackpacks   bool
+	wipePVCs         bool
 )
 
 func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
@@ -53,6 +54,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&useLatest, "latest", false, "Restore from the most recent backup")
 	cmd.Flags().BoolVarP(&skipConfirmation, "yes", "y", false, "Skip confirmation prompt")
 	cmd.Flags().BoolVar(&skipStackpacks, "skip-stackpacks", false, "Skip restoring stackpacks backup")
+	cmd.Flags().BoolVar(&wipePVCs, "wipe-pvcs", false, "Wipe HDFS/HBase/Tephra PVCs before restoring")
 	cmd.MarkFlagsMutuallyExclusive("archive", "latest")
 	cmd.MarkFlagsOneRequired("archive", "latest")
 
@@ -124,6 +126,16 @@ func liveRestore(appCtx *app.Context) error {
 			}
 		}
 	}()
+
+	// Scale down hbase/hdfs/tephra and delete all pvcs
+	if wipePVCs {
+		err = restore.WipePVCs(appCtx.Context, appCtx.K8sClient, appCtx.Namespace, appCtx.Config.Stackgraph.Restore.ZookeeperQuorum, appCtx.Logger)
+		if err != nil {
+			// Create restore job
+			appCtx.Logger.Println()
+			appCtx.Logger.Warningf("Wiping PVCs failed: %s", err)
+		}
+	}
 
 	// Setup Kubernetes resources for restore job
 	appCtx.Logger.Println()
