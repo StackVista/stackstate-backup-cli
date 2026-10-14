@@ -9,6 +9,22 @@
   "rebaseWhen": "behind-base-branch",
   "packageRules": [
     {
+      "description": "Keep GitHub Actions updates in a separate PR",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["action"],
+      "groupName": "GitHub Actions",
+      "groupSlug": "github-actions"
+    },
+    {
+      "description": "Automerge compatible action updates after required CI and App approval",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["action"],
+      "matchUpdateTypes": ["patch", "minor", "digest", "pin", "pinDigest"],
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true
+    },
+    {
       "description": "Track direct and indirect Go module updates",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["require", "indirect", "replace"],
