@@ -12,33 +12,15 @@ concurrency:
 
 jobs:
   approve:
-    if: github.ref == 'refs/heads/main' && vars.RENOVATE_APPROVAL_GH_APP_CLIENT_ID != '' && vars.RENOVATE_GH_APP_CLIENT_ID != ''
+    if: github.ref == 'refs/heads/main' && vars.RENOVATE_APPROVAL_GH_APP_CLIENT_ID != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
     steps:
-      - name: Create read-only token for the shared approval action
-        id: policy-token
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
-        with:
-          client-id: ${{ vars.RENOVATE_GH_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RENOVATE_GH_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-          repositories: renovate-config
-          permission-contents: read
-      - name: Checkout the pinned shared approval action
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: StackVista/renovate-config
-          ref: 45d01defd5070a9c05f0b3bf9b28995487bd8262
-          token: ${{ steps.policy-token.outputs.token }}
-          path: renovate-config
-          sparse-checkout: .github/actions/auto-approve-renovate
-          persist-credentials: false
       - name: Approve verified Renovate PRs
-        uses: ./renovate-config/.github/actions/auto-approve-renovate # zizmor: ignore[self-repository]
+        uses: StackVista/renovate-config/.github/actions/auto-approve-renovate@45d01defd5070a9c05f0b3bf9b28995487bd8262
         with:
           app-client-id: ${{ vars.RENOVATE_APPROVAL_GH_APP_CLIENT_ID }}
           app-private-key: ${{ secrets.RENOVATE_APPROVAL_GH_APP_PRIVATE_KEY }}
