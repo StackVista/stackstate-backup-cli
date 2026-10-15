@@ -16,7 +16,9 @@ require(path.join(renovate, 'config/global.js')).GlobalConfig.set({ platform: 'g
 
 async function main() {
   const repo = path.resolve(__dirname, '..');
-  let config = mergeChildConfig(getConfig(), await resolveConfigPresets({ extends: ['config:recommended'] }));
+  const { config: recommended } = await resolveConfigPresets({ extends: ['config:recommended'] });
+  assert(recommended.packageRules?.length, 'config:recommended must include package rules');
+  let config = mergeChildConfig(getConfig(), recommended);
   assert(process.argv[3], 'Pass the shared renovate-config checkout as the third argument');
   for (const preset of ['default', 'go']) {
     const shared = JSON.parse(fs.readFileSync(path.join(process.argv[3], `${preset}.json`)));
