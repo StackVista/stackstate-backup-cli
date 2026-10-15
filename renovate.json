@@ -4,8 +4,7 @@
     "github>StackVista/renovate-config",
     "github>StackVista/renovate-config:go"
   ],
-  "prConcurrentLimit": 0,
-  "prHourlyLimit": 0,
+  "prConcurrentLimit": 5,
   "rebaseWhen": "behind-base-branch",
   "packageRules": [
     {
@@ -56,21 +55,23 @@
       }
     },
     {
-      "description": "Review other module minors individually without rebasing for unrelated changes",
+      "description": "Automerge individual module minors after required validation and App approval",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["require", "indirect", "replace"],
       "matchUpdateTypes": ["minor"],
       "groupName": null,
       "groupSlug": null,
-      "automerge": false,
-      "rebaseWhen": "conflicted"
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true,
+      "rebaseWhen": "behind-base-branch"
     },
     {
-      "description": "Review coupled AWS SDK updates together",
+      "description": "Group coupled AWS SDK minor updates",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["require", "indirect", "replace"],
       "matchPackageNames": ["github.com/aws/aws-sdk-go-v2{,/**}", "github.com/aws/smithy-go"],
-      "matchUpdateTypes": ["minor", "major"],
+      "matchUpdateTypes": ["minor"],
       "groupName": "AWS Go SDK",
       "groupSlug": "go-aws-sdk",
       "group": {
@@ -78,11 +79,11 @@
       }
     },
     {
-      "description": "Review coupled Kubernetes clients and schema migrations together",
+      "description": "Group coupled Kubernetes client minor updates",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["require", "indirect", "replace"],
       "matchPackageNames": ["k8s.io/**", "sigs.k8s.io/**"],
-      "matchUpdateTypes": ["minor", "major"],
+      "matchUpdateTypes": ["minor"],
       "groupName": "Kubernetes Go clients",
       "groupSlug": "go-kubernetes",
       "group": {
@@ -90,10 +91,57 @@
       }
     },
     {
-      "description": "Keep automerged patches available alongside manual module minors",
+      "description": "Group coupled ClickHouse client minor updates",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["require", "indirect", "replace"],
-      "matchPackageNames": ["!golang.org/x/**"],
+      "matchPackageNames": ["github.com/ClickHouse/**"],
+      "matchUpdateTypes": ["minor"],
+      "groupName": "ClickHouse Go clients",
+      "groupSlug": "go-clickhouse",
+      "group": {
+        "branchTopic": "go-clickhouse"
+      }
+    },
+    {
+      "description": "Group coupled Elasticsearch client minor updates",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchPackageNames": ["github.com/elastic/**"],
+      "matchUpdateTypes": ["minor"],
+      "groupName": "Elasticsearch Go clients",
+      "groupSlug": "go-elasticsearch",
+      "group": {
+        "branchTopic": "go-elasticsearch"
+      }
+    },
+    {
+      "description": "Group coupled OpenTelemetry module minor updates",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchPackageNames": ["go.opentelemetry.io/**"],
+      "matchUpdateTypes": ["minor"],
+      "groupName": "OpenTelemetry Go modules",
+      "groupSlug": "go-opentelemetry",
+      "group": {
+        "branchTopic": "go-opentelemetry"
+      }
+    },
+    {
+      "description": "Group coupled OpenAPI module minor updates",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchPackageNames": ["github.com/go-openapi/**"],
+      "matchUpdateTypes": ["minor"],
+      "groupName": "OpenAPI Go modules",
+      "groupSlug": "go-openapi",
+      "group": {
+        "branchTopic": "go-openapi"
+      }
+    },
+    {
+      "description": "Keep module patches separate from minor updates",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
       "separateMinorPatch": true
     },
     {
@@ -130,17 +178,16 @@
       "platformAutomerge": true
     },
     {
-      "description": "Include golang.org/x module minors in the library group",
+      "description": "Group golang.org/x module minor updates separately from patches",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["require", "indirect", "replace"],
       "matchPackageNames": ["golang.org/x/**"],
       "matchUpdateTypes": ["minor"],
-      "groupName": "Go library updates",
-      "groupSlug": "go-libraries",
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": true,
-      "rebaseWhen": "behind-base-branch"
+      "groupName": "Go supplementary modules",
+      "groupSlug": "go-x",
+      "group": {
+        "branchTopic": "go-x"
+      }
     }
   ]
 }

@@ -29,6 +29,8 @@ async function main() {
     extends: [],
     semanticCommits: 'disabled',
   });
+  assert.equal(config.prConcurrentLimit, 5);
+  assert(config.prHourlyLimit > 0);
   getDatasourceFor('go').getReleases = async () => ({
     releases: [
       ['v1.0.0', '1.18.0'],
@@ -64,8 +66,9 @@ async function main() {
     assert.equal(patch.branchName, 'renovate/go-libraries');
     assert.equal(patch.automerge, true);
     assert.equal(patch.rebaseWhen, 'behind-base-branch');
-    assert.equal(minor.automerge, false);
-    assert.equal(minor.rebaseWhen, 'conflicted');
+    assert.equal(minor.automerge, true);
+    assert.equal(minor.platformAutomerge, true);
+    assert.equal(minor.rebaseWhen, 'behind-base-branch');
     assert.notEqual(patch.branchName, minor.branchName);
     const libraries = await flattenUpdates(config, {
       gomod: [{
@@ -83,9 +86,9 @@ async function main() {
     });
     assert.deepEqual(
       [...new Set(libraries.filter(branch => branch.automerge).map(branch => branch.branchName))],
-      ['renovate/go-libraries'],
+      ['renovate/go-libraries', minor.branchName, 'renovate/go-x'],
     );
-    assert.equal(libraries.filter(branch => branch.automerge).length, 2);
+    assert.equal(libraries.filter(branch => branch.automerge).length, 3);
   }
   const actionBranches = await flattenUpdates(config, {
     'github-actions': [{
@@ -144,15 +147,28 @@ async function main() {
   const modules = [
     ['github.com/aws/aws-sdk-go-v2', 'minor', 'go-aws-sdk'],
     ['github.com/aws/aws-sdk-go-v2/config', 'minor', 'go-aws-sdk'],
-    ['github.com/aws/smithy-go', 'major', 'go-aws-sdk'],
+    ['github.com/aws/smithy-go', 'minor', 'go-aws-sdk'],
     ['k8s.io/api', 'minor', 'go-kubernetes'],
     ['k8s.io/apimachinery', 'minor', 'go-kubernetes'],
     ['k8s.io/client-go', 'minor', 'go-kubernetes'],
-    ['sigs.k8s.io/structured-merge-diff/v6', 'major', 'go-kubernetes'],
+    ['sigs.k8s.io/structured-merge-diff/v6', 'minor', 'go-kubernetes'],
+    ['github.com/ClickHouse/clickhouse-go/v2', 'minor', 'go-clickhouse'],
+    ['github.com/ClickHouse/ch-go', 'minor', 'go-clickhouse'],
+    ['github.com/elastic/go-elasticsearch/v8', 'minor', 'go-elasticsearch'],
+    ['github.com/elastic/elastic-transport-go/v8', 'minor', 'go-elasticsearch'],
+    ['go.opentelemetry.io/otel', 'minor', 'go-opentelemetry'],
+    ['go.opentelemetry.io/otel/trace', 'minor', 'go-opentelemetry'],
+    ['github.com/go-openapi/jsonpointer', 'minor', 'go-openapi'],
+    ['github.com/go-openapi/swag', 'minor', 'go-openapi'],
+    ['golang.org/x/net', 'minor', 'go-x'],
+    ['golang.org/x/sys', 'minor', 'go-x'],
+    ['github.com/aws/smithy-go', 'major', null],
+    ['sigs.k8s.io/structured-merge-diff/v6', 'major', null],
     ['github.com/elastic/go-elasticsearch/v8', 'major', null],
+    ['github.com/go-openapi/jsonpointer', 'major', null],
     ['github.com/stretchr/testify', 'minor', null],
   ];
-  const manual = await flattenUpdates(config, {
+  const moduleBranches = await flattenUpdates(config, {
     gomod: [{
       packageFile: 'go.mod',
       deps: modules.map(([name, type]) => ({
@@ -165,10 +181,15 @@ async function main() {
       })),
     }],
   });
-  for (const branch of manual) {
-    const group = modules.find(([name]) => name === branch.depName)[2];
-    assert.equal(branch.automerge, false);
-    assert.equal(branch.rebaseWhen, 'conflicted');
+  for (const branch of moduleBranches) {
+    const group = modules.find(([name, type]) =>
+      name === branch.depName && type === branch.updateType)[2];
+    assert.equal(branch.automerge, branch.updateType === 'minor');
+    assert.equal(branch.rebaseWhen, branch.updateType === 'minor' ? 'behind-base-branch' : 'conflicted');
+    if (branch.automerge) {
+      assert.equal(branch.automergeType, 'pr');
+      assert.equal(branch.platformAutomerge, true);
+    }
     if (group) assert.equal(branch.branchName, `renovate/${group}`);
     else assert.equal(branch.groupName, null);
   }
@@ -194,9 +215,10 @@ async function main() {
       assert.equal(policy.groupName, type === 'major' ? null : 'CI tools', name);
     }
   }
-  console.log('PASS: available module patches automerge independently of manual minors');
+  console.log('PASS: module patches and minors automerge in separate branches');
   console.log('PASS: compatible GitHub Actions updates automerge separately; major actions stay manual');
-  console.log('PASS: unsupported Go versions are filtered; manual families and CI tools stay separate');
+  console.log('PASS: module minor families are isolated; majors and CI tools stay manual');
+  console.log('PASS: unsupported Go versions are filtered and PR creation is limited');
 }
 
 main().catch(error => {

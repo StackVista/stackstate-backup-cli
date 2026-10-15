@@ -461,18 +461,21 @@ Renovate runs daily and keeps compiler updates separate from library updates.
 GitHub Actions patches, minors, and digest updates use a separate automerge PR.
 Major action upgrades require manual review.
 CI tools use a separate manual group; their major upgrades get individual PRs.
-Module patches and `golang.org/x/*` module minors share one library PR.
-Manual AWS SDK and Kubernetes client updates have separate groups.
-Other manual module updates get individual PRs.
+Module patches share one library PR, separate from minor updates.
+Module minors use separate AWS SDK, Kubernetes, ClickHouse, Elasticsearch,
+OpenTelemetry, OpenAPI, and `golang.org/x/*` groups.
+Other module minors get individual PRs.
+Module patches and minors use native automerge after artifact validation and App approval.
+Renovate limits concurrent PRs and inherits the shared hourly creation limit.
 Compiler updates stay within the release line declared in `renovate.json`.
 Module candidates that declare a newer required Go release line are filtered out.
 CI rejects a module update that selects a compiler from another release line.
 Manual groups rebase only when conflicting; automatic groups stay current with main.
 The shared approval action approves verified Renovate commits with native automerge enabled.
 GitHub requires the existing CI checks and an approving review before merging.
-Compiler patches and the library group use native automerge after artifact validation and App approval.
-The library group includes direct and indirect modules.
-Other module minors, module majors, and Go release-line migrations require manual review.
+Compiler patches use native automerge after artifact validation and App approval.
+Library updates include direct and indirect modules.
+Module majors and Go release-line migrations require individual manual review.
 Dependency updates reach published binaries through the existing tag release process.
 
 The approval workflow calls the pinned public `renovate-config` action directly.
