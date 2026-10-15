@@ -460,9 +460,14 @@ This project uses GitHub Actions and GoReleaser for automated releases:
 Renovate runs daily and keeps compiler updates separate from library updates.
 GitHub Actions patches, minors, and digest updates use a separate automerge PR.
 Major action upgrades require manual review.
+CI tools use a separate manual group; their major upgrades get individual PRs.
 Module patches and `golang.org/x/*` module minors share one library PR.
+Manual AWS SDK and Kubernetes client updates have separate groups.
+Other manual module updates get individual PRs.
 Compiler updates stay within the release line declared in `renovate.json`.
+Module candidates that declare a newer required Go release line are filtered out.
 CI rejects a module update that selects a compiler from another release line.
+Manual groups rebase only when conflicting; automatic groups stay current with main.
 The shared approval action approves verified Renovate commits with native automerge enabled.
 GitHub requires the existing CI checks and an approving review before merging.
 Compiler patches and the library group use native automerge after artifact validation and App approval.
@@ -493,7 +498,7 @@ go test ./...
 Test the Renovate rules against an installed Renovate distribution:
 
 ```bash
-mise exec -- node scripts/renovate-config-test.cjs /path/to/renovate/dist
+mise exec -- node scripts/renovate-config-test.cjs /path/to/renovate/dist /path/to/renovate-config
 ```
 
 ### Linting

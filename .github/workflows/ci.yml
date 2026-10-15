@@ -14,6 +14,10 @@ on:
 
 permissions: {}
 
+env:
+  # renovate: datasource=github-releases depName=goreleaser/goreleaser
+  GORELEASER_VERSION: v1.25.1
+
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -55,6 +59,8 @@ jobs:
     permissions:
       contents: read
     env:
+      # renovate: datasource=go depName=github.com/google/go-licenses
+      GO_LICENSES_VERSION: v1.6.0
       REPORT_FILE: gl-license-scanning-report.json
 
     steps:
@@ -67,7 +73,7 @@ jobs:
           cache: false
       - name: License scanning
         run: |
-          go install github.com/google/go-licenses@v1.6.0
+          scripts/install-go-tool.sh "github.com/google/go-licenses@${GO_LICENSES_VERSION}"
           go-licenses check . --disallowed_types=forbidden,restricted
       - name: Generate license report
         run: |
@@ -99,7 +105,7 @@ jobs:
           # either 'goreleaser' (default) or 'goreleaser-pro'
           distribution: goreleaser
           # 'latest', 'nightly', or a semver
-          version: v1.25.1
+          version: ${{ env.GORELEASER_VERSION }}
           args: check
 
   test:
@@ -120,7 +126,9 @@ jobs:
           go-version-file: go.mod
           cache: false
       - name: Run tests
-        run: go test -v ./...
+        run: |
+          scripts/install-go-tool-test.sh
+          go test -v ./...
 
   security:
     name: GoReleaser artifacts - govulncheck, Trivy secrets/vulns, Grype
@@ -129,6 +137,7 @@ jobs:
     permissions:
       contents: read
     env:
+      # renovate: datasource=go depName=golang.org/x/vuln
       GOVULNCHECK_VERSION: v1.6.0
 
     steps:
@@ -142,7 +151,7 @@ jobs:
       - name: Test govulncheck warning and error handling
         run: scripts/govulncheck-inform-test.sh
       - name: Install govulncheck
-        run: go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
+        run: scripts/install-go-tool.sh "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
       - name: Report reachable Go vulnerabilities in the source
         run: scripts/govulncheck-inform.sh ./...
       - name: Test that the symbol-table guard rejects a stripped binary
@@ -151,7 +160,7 @@ jobs:
         uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89 # v7.2.2
         with:
           distribution: goreleaser
-          version: v1.25.1
+          version: ${{ env.GORELEASER_VERSION }}
           args: release --snapshot --clean --skip=publish
       - name: Verify and prepare all release artifacts
         run: scripts/prepare-artifact-scan-rootfs.sh
@@ -211,7 +220,7 @@ jobs:
           # either 'goreleaser' (default) or 'goreleaser-pro'
           distribution: goreleaser
           # 'latest', 'nightly', or a semver
-          version: v1.25.1
+          version: ${{ env.GORELEASER_VERSION }}
           args: release
       - name: Write latest version to file
         run: mkdir -p dist && echo "${TAG}" > dist/LATEST_VERSION
