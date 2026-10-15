@@ -475,14 +475,13 @@ The library group includes direct and indirect modules.
 Other module minors, module majors, and Go release-line migrations require manual review.
 Dependency updates reach published binaries through the existing tag release process.
 
-This public repository runs Renovate locally because GitHub restricts private reusable workflows and actions to private callers.
-The approval workflow fetches the pinned shared action with a read-only updater App token.
+The approval workflow calls the pinned public `renovate-config` action directly.
 The separate approval App supplies the review token.
 The updater App needs Contents, Pull requests, Issues, and Workflows write permissions, plus Checks and Commit statuses read permissions.
 
 Before merging the Renovate workflows:
 
-1. Grant `renovate-update-app` access to this repository and `renovate-config`.
+1. Grant `renovate-update-app` access to this repository.
 2. Install `renovatee-approver-stackvista` on this repository.
 3. Apply the `pulumi-infra/github/repoVariables` changes that supply both Apps' credentials.
 4. Check that the live branch protection requires all five CI checks listed in `pulumi-infra/github/repositories/resources.yaml`.

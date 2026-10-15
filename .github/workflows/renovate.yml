@@ -29,9 +29,7 @@ jobs:
           client-id: ${{ vars.RENOVATE_GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.RENOVATE_GH_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
-          repositories: |
-            stackstate-backup-cli
-            renovate-config
+          repositories: stackstate-backup-cli
           permission-contents: write
           permission-pull-requests: write
           permission-issues: write
