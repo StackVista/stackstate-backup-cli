@@ -60,7 +60,7 @@ jobs:
       contents: read
     env:
       # renovate: datasource=go depName=github.com/google/go-licenses
-      GO_LICENSES_VERSION: v1.6.0
+      GO_LICENSES_VERSION: v2.0.1
       REPORT_FILE: gl-license-scanning-report.json
 
     steps:
