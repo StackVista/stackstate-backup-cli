@@ -21,7 +21,7 @@ func (c *Checker) checkElasticsearch(ctx context.Context, inventory inventory) R
 	if err := expectedMembers(members); err != nil {
 		return result("elasticsearch", Degraded, err.Error())
 	}
-	command := []string{"bash", "-ec", elasticsearchQuery}
+	command := []string{bashExecutable, bashExecFlag, elasticsearchQuery}
 	data, err := c.query(ctx, members[0].pod.Name, "elasticsearch", command)
 	if err != nil {
 		return result("elasticsearch", Unknown, err.Error())
@@ -66,7 +66,7 @@ func evaluateElasticsearch(data []byte, expected int) Result {
 	}
 	if len(problems) > 0 {
 		sort.Strings(problems)
-		return Result{Component: "elasticsearch", Status: Degraded, Messages: problems}
+		return Result{Component: elasticsearchComponent, Status: Degraded, Messages: problems}
 	}
 	return result("elasticsearch", Healthy, fmt.Sprintf("%d indices have replica shards; all shards allocated with no recovery or relocation", len(indices)))
 }

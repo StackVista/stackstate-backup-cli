@@ -7,11 +7,14 @@ import (
 )
 
 const (
-	hdfsComponent       = "hdfs"
-	clickhouseComponent = "clickhouse"
-	nameNodeComponent   = "hdfs-nn"
-	dataNodeComponent   = "hdfs-dn"
-	monoComponent       = "stackgraph"
+	hdfsComponent          = "hdfs"
+	clickhouseComponent    = "clickhouse"
+	elasticsearchComponent = "elasticsearch"
+	kafkaComponent         = "kafka"
+	zookeeperComponent     = "zookeeper"
+	nameNodeComponent      = "hdfs-nn"
+	dataNodeComponent      = "hdfs-dn"
+	monoComponent          = "stackgraph"
 )
 
 func workloadComponent(workload appsv1.StatefulSet) string {
@@ -26,7 +29,7 @@ func workloadComponent(workload appsv1.StatefulSet) string {
 		}
 	}
 	switch name {
-	case "elasticsearch", clickhouseComponent, "kafka", "zookeeper":
+	case elasticsearchComponent, clickhouseComponent, kafkaComponent, zookeeperComponent:
 		return name
 	default:
 		return ""
