@@ -32,10 +32,14 @@ func deleteRecursive(zkConn *zk.Conn, path string, logger *logger.Logger) {
 	}
 }
 
-func WipePVCs(ctx context.Context, k8sClient *k8s.Client, namespace, zkQuorum string, logger *logger.Logger) error {
+func scaleDownHBase(k8sClient *k8s.Client, namespace string, logger *logger.Logger) error {
 	logger.Println()
-	logger.Infof("Scaling down HBase and deleting PVCs")
+	logger.Infof("Scaling down HBase")
+	_, err := scale.ScaleDown(k8sClient, namespace, "app.kubernetes.io/name=hbase", logger)
+	return err
+}
 
+func WipePVCs(ctx context.Context, k8sClient *k8s.Client, namespace, zkQuorum string, logger *logger.Logger) error {
 	if !strings.Contains(zkQuorum, "-stackgraph") {
 		zkHost, zkPortStr, portSpecified := strings.Cut(zkQuorum, ":")
 		port := 2181
@@ -62,19 +66,29 @@ func WipePVCs(ctx context.Context, k8sClient *k8s.Client, namespace, zkQuorum st
 		}
 		defer zkConn.Close()
 
-		_, err = scale.ScaleDown(k8sClient, namespace, "app.kubernetes.io/name=hbase", logger)
-		if err != nil {
+		if err = scaleDownHBase(k8sClient, namespace, logger); err != nil {
 			return err
 		}
 
+		logger.Println()
+		logger.Infof("Removing HBase and Tephra nodes from Zookeeper")
+
 		deleteRecursive(zkConn, "/hbase", logger)
 		deleteRecursive(zkConn, "/tx.service", logger)
+
+		logger.Successf("Removed nodes from Zookeeper")
 	} else {
-		_, err := scale.ScaleDown(k8sClient, namespace, "app.kubernetes.io/name=hbase", logger)
-		if err != nil {
+		if err := scaleDownHBase(k8sClient, namespace, logger); err != nil {
 			return err
 		}
 	}
+
+	defer func() {
+		err := scale.ScaleUpFromAnnotations(k8sClient, namespace, "app.kubernetes.io/name=hbase", logger)
+		if err != nil {
+			logger.Warningf("Failed to scale up HBase: %v", err)
+		}
+	}()
 
 	// List pvcs in the hbase application
 	pvcs, err := k8sClient.Clientset().CoreV1().PersistentVolumeClaims(namespace).List(ctx, metav1.ListOptions{
@@ -83,18 +97,17 @@ func WipePVCs(ctx context.Context, k8sClient *k8s.Client, namespace, zkQuorum st
 	if err != nil {
 		return err
 	}
+
+	logger.Println()
+	logger.Infof("Deleting PVCs")
 	for _, pvc := range pvcs.Items {
 		if err := k8sClient.DeletePVC(pvc.Namespace, pvc.Name); err != nil {
-			logger.Warningf("Failed to delete PVC: %v", err)
+			return err
 		} else {
-			logger.Successf("PVC deleted: %s", pvc.Name)
+			logger.Infof("  - %s", pvc.Name)
 		}
 	}
-
-	err = scale.ScaleUpFromAnnotations(k8sClient, namespace, "app.kubernetes.io/name=hbase", logger)
-	if err != nil {
-		return err
-	}
+	logger.Successf("Deleted PVCs")
 
 	logger.Println()
 	logger.Infof("Scaled up HBase after deleting PVCs")
