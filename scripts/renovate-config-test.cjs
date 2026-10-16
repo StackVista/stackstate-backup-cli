@@ -104,6 +104,38 @@ async function main() {
     const branches = await flattenUpdates(config, {
       gomod: [{ packageFile: 'go.mod', deps: [{ ...dep, updates: val.updates }] }],
     });
+    if (depType === 'indirect') {
+      assert.equal(policy.enabled, true);
+      assert.deepEqual(branches, []);
+      const routineBranches = await flattenUpdates(config, {
+        gomod: [{
+          packageFile: 'go.mod',
+          deps: [{
+            ...dep,
+            updates: [
+              { updateType: 'major', newValue: 'v2.0.0', newVersion: 'v2.0.0', newMajor: 2 },
+              { updateType: 'digest', newValue: 'v0.0.0-20260101000000-abcdefabcdef' },
+              ...val.updates.map(update => ({ ...update, isVulnerabilityAlert: false })),
+            ],
+          }],
+        }],
+      });
+      assert.deepEqual(routineBranches, []);
+      for (const security of [{ isVulnerabilityAlert: true }, { vulnerabilityFixVersion: 'v1.0.1' }]) {
+        const securityBranches = await flattenUpdates(config, {
+          gomod: [{
+            packageFile: 'go.mod',
+            deps: [{ ...dep, updates: val.updates.map(update => ({ ...update, ...security })) }],
+          }],
+        });
+        assert.equal(securityBranches.length, 2);
+        for (const branch of securityBranches) {
+          assert.equal(branch.minimumReleaseAge, null);
+          assert.equal(branch.prPriority, 20);
+        }
+      }
+      continue;
+    }
     const patch = branches.find(branch => branch.updateType === 'patch');
     const minor = branches.find(branch => branch.updateType === 'minor');
     assert.equal(patch.branchName, 'renovate/patch-go-libraries');
@@ -240,6 +272,7 @@ async function main() {
   };
   const moduleBranches = await flattenUpdates(config, modulePackageFiles);
   for (const branch of moduleBranches) {
+    assert.deepEqual(branch.labels, [branch.updateType === 'major' ? 'dependencies/major' : 'dependencies']);
     const group = modules.find(([name, type]) =>
       name === branch.depName && type === branch.updateType)[2];
     const automerge = branch.updateType === 'patch' || (branch.updateType === 'minor' && group !== 'kubernetes-go-modules');
@@ -292,13 +325,18 @@ async function main() {
       }],
     }],
   });
-  for (const name of ['github.com/stretchr/testify', 'github.com/aws/smithy-go', 'k8s.io/api']) {
+  for (const [name, depType] of [
+    ['github.com/stretchr/testify', 'require'],
+    ['github.com/aws/smithy-go', 'require'],
+    ['k8s.io/api', 'require'],
+    ['example.com/indirect', 'indirect'],
+  ]) {
     const securityConfig = { ...config, packageRules: [...config.packageRules] };
     const packageFiles = {
       gomod: [{
         packageFile: 'go.mod',
         deps: [{
-          depName: name, packageName: name, depType: 'require', datasource: 'go', currentValue: 'v1.0.0',
+          depName: name, packageName: name, depType, datasource: 'go', currentValue: 'v1.0.0',
           updates: [
             { updateType: 'patch', newValue: 'v1.0.1', newVersion: 'v1.0.1' },
             { updateType: 'minor', newValue: 'v1.1.0', newVersion: 'v1.1.0' },
@@ -316,6 +354,8 @@ async function main() {
       assert.equal(branch.minimumReleaseAge, null, name);
       assert.equal(branch.prPriority, 20, name);
       assert.equal(branch.groupName, null, name);
+      assert.deepEqual(branch.labels, ['security'], name);
+      assert.deepEqual([...new Set(branch.addLabels ?? [])], branch.updateType === 'major' ? ['dependencies/major'] : [], name);
       assert.equal(branch.automerge, branch.updateType === 'patch'
         || (branch.updateType === 'minor' && name !== 'k8s.io/api'), name);
     }
@@ -379,13 +419,15 @@ async function main() {
   }
   console.log('PASS: module patches and minors automerge in separate branches');
   console.log('PASS: compatible GitHub Actions updates automerge separately; major actions stay manual');
-  console.log('PASS: Kubernetes minors, module majors and non-builder CI tools stay manual; other module minors and all patches automerge');
+  console.log('PASS: Kubernetes minors, module majors and non-builder CI tools stay manual; eligible library updates automerge');
   console.log('PASS: unsupported Go versions are filtered; PR creation is paced without a concurrent cap');
   console.log('PASS: security and patch updates precede minors and manual family-grouped majors');
   console.log('PASS: routine releases wait seven days; known vulnerability fixes and build-environment patches remain immediate');
   console.log('PASS: OSV rules bypass the release delay without automerging Kubernetes minors or majors');
   console.log('PASS: extracted GoReleaser patches and both Go compiler directives share one automerge branch');
   console.log('PASS: standalone kube-openapi revision updates are disabled without blocking Kubernetes updates');
+  console.log('PASS: indirect lookups remain enabled; only known vulnerability fixes produce updates');
+  console.log('PASS: majors use dependencies/major; security majors retain the security label');
 }
 
 main().catch(error => {
