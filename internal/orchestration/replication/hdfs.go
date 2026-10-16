@@ -30,7 +30,7 @@ func (c *Checker) checkHDFS(ctx context.Context, inventory inventory) Result {
 	if err := expectedMembers(datanodes); err != nil {
 		return result("hdfs", Degraded, err.Error())
 	}
-	data, err := c.query(ctx, namenodes[0].pod.Name, "namenode", []string{"bash", "-ec", hdfsQuery})
+	data, err := c.query(ctx, namenodes[0].pod.Name, "namenode", []string{bashExecutable, bashExecFlag, hdfsQuery})
 	if err != nil {
 		return result("hdfs", Unknown, err.Error())
 	}
@@ -85,7 +85,7 @@ func evaluateHDFS(data []byte, expected int) Result {
 		}
 	}
 	if len(problems) > 0 {
-		return Result{Component: "hdfs", Status: Degraded, Messages: problems}
+		return Result{Component: hdfsComponent, Status: Degraded, Messages: problems}
 	}
 	return result("hdfs", Healthy, fmt.Sprintf("%d DataNodes live; no missing, corrupt, under-replicated or pending-replication blocks", expected))
 }

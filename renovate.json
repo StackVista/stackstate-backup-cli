@@ -4,20 +4,160 @@
     "github>StackVista/renovate-config",
     "github>StackVista/renovate-config:go"
   ],
+  "osvVulnerabilityAlerts": true,
+  "minimumReleaseAge": "7 days",
   "prConcurrentLimit": 0,
-  "prHourlyLimit": 0,
-  "rebaseWhen": "behind-base-branch",
+  "rebaseWhen": "conflicted",
   "packageRules": [
     {
-      "description": "Review major upgrades separately without rebasing for unrelated changes",
+      "description": "Keep CI tools separate from action updates",
+      "matchManagers": ["github-actions", "custom.regex"],
+      "groupName": null,
+      "groupSlug": null
+    },
+    {
+      "description": "Keep Go compiler updates within the approved release line",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["golang", "toolchain"],
+      "rangeStrategy": "bump",
+      "allowedVersions": "/^1\\.26\\./",
+      "groupName": "Go toolchain",
+      "groupSlug": "go-toolchain",
+      "minimumReleaseAge": null
+    },
+    {
+      "description": "Automerge Go compiler patches after required CI and App approval",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["golang", "toolchain"],
+      "matchUpdateTypes": ["patch"],
+      "groupName": "Go build environment",
+      "groupSlug": "go-build-environment",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true,
+      "rebaseWhen": "behind-base-branch"
+    },
+    {
+      "description": "Look up Go libraries compatible with the approved compiler release line",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "enabled": true,
+      "separateMinorPatch": true,
+      "constraintsFiltering": "strict",
+      "constraints": {
+        "%goMod": "<1.27.0"
+      },
+      "constraintsVersioning": {
+        "%goMod": "npm"
+      }
+    },
+    {
+      "description": "Review major migrations after compatible updates",
       "matchUpdateTypes": ["major"],
+      "labels": ["dependencies/major"],
+      "addLabels": ["dependencies/major"],
       "groupName": null,
       "groupSlug": null,
+      "automerge": false,
+      "rebaseWhen": "conflicted",
+      "prPriority": -1
+    },
+    {
+      "description": "Automerge Go library patches and minors after required validation",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchUpdateTypes": ["patch", "minor"],
+      "groupName": "Go libraries",
+      "groupSlug": "go-libraries",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true,
+      "rebaseWhen": "behind-base-branch"
+    },
+    {
+      "description": "Review unversioned Go module revisions separately from compatible releases",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchUpdateTypes": ["digest"],
+      "groupName": "Go library revisions",
+      "groupSlug": "go-library-revisions",
       "automerge": false,
       "rebaseWhen": "conflicted"
     },
     {
-      "description": "Automerge compatible action updates after required CI and App approval",
+      "description": "Group Kubernetes modules with their coupled dependencies",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchPackageNames": ["k8s.io/**", "sigs.k8s.io/**"],
+      "matchUpdateTypes": ["patch", "minor", "major"],
+      "groupName": "Kubernetes Go modules",
+      "groupSlug": "kubernetes-go-modules"
+    },
+    {
+      "description": "Review Kubernetes module minors for API compatibility",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchPackageNames": ["k8s.io/**", "sigs.k8s.io/**"],
+      "matchUpdateTypes": ["minor"],
+      "automerge": false,
+      "rebaseWhen": "conflicted"
+    },
+    {
+      "description": "Group AWS SDK and Smithy modules",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchPackageNames": ["github.com/aws/**"],
+      "matchUpdateTypes": ["patch", "minor", "major"],
+      "groupName": "AWS Go modules",
+      "groupSlug": "aws-go-modules"
+    },
+    {
+      "description": "Group Azure module major migrations",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchPackageNames": ["github.com/Azure/**"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "Azure Go modules",
+      "groupSlug": "azure-go-modules"
+    },
+    {
+      "description": "Group OpenTelemetry module major migrations",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchPackageNames": ["go.opentelemetry.io/**"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "OpenTelemetry Go modules",
+      "groupSlug": "opentelemetry-go-modules"
+    },
+    {
+      "description": "Group golang.org/x module major migrations",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchPackageNames": ["golang.org/x/**"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "golang.org/x Go modules",
+      "groupSlug": "golang-x-go-modules"
+    },
+    {
+      "description": "Group manual Kubernetes module revisions",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchPackageNames": ["k8s.io/**", "sigs.k8s.io/**"],
+      "matchUpdateTypes": ["digest"],
+      "groupName": "Kubernetes Go module revisions",
+      "groupSlug": "kubernetes-go-module-revisions"
+    },
+    {
+      "description": "Group manual AWS module revisions",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchPackageNames": ["github.com/aws/**"],
+      "matchUpdateTypes": ["digest"],
+      "groupName": "AWS Go module revisions",
+      "groupSlug": "aws-go-module-revisions"
+    },
+    {
+      "description": "Automerge compatible GitHub Actions separately from CI tools",
       "matchManagers": ["github-actions"],
       "matchDepTypes": ["action"],
       "matchUpdateTypes": ["patch", "minor", "digest", "pin", "pinDigest"],
@@ -25,7 +165,8 @@
       "groupSlug": "github-actions",
       "automerge": true,
       "automergeType": "pr",
-      "platformAutomerge": true
+      "platformAutomerge": true,
+      "rebaseWhen": "behind-base-branch"
     },
     {
       "description": "Review CI tool updates separately from action references",
@@ -43,104 +184,42 @@
       "rebaseWhen": "conflicted"
     },
     {
-      "description": "Track Go modules compatible with the approved compiler release line",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["require", "indirect", "replace"],
-      "enabled": true,
-      "constraintsFiltering": "strict",
-      "constraints": {
-        "%goMod": ">=1.0.0 <1.27.0"
-      },
-      "constraintsVersioning": {
-        "%goMod": "semver-coerced"
-      }
-    },
-    {
-      "description": "Review other module minors individually without rebasing for unrelated changes",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["require", "indirect", "replace"],
-      "matchUpdateTypes": ["minor"],
-      "groupName": null,
-      "groupSlug": null,
-      "automerge": false,
-      "rebaseWhen": "conflicted"
-    },
-    {
-      "description": "Review coupled AWS SDK updates together",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["require", "indirect", "replace"],
-      "matchPackageNames": ["github.com/aws/aws-sdk-go-v2{,/**}", "github.com/aws/smithy-go"],
-      "matchUpdateTypes": ["minor", "major"],
-      "groupName": "AWS Go SDK",
-      "groupSlug": "go-aws-sdk",
-      "group": {
-        "branchTopic": "go-aws-sdk"
-      }
-    },
-    {
-      "description": "Review coupled Kubernetes clients and schema migrations together",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["require", "indirect", "replace"],
-      "matchPackageNames": ["k8s.io/**", "sigs.k8s.io/**"],
-      "matchUpdateTypes": ["minor", "major"],
-      "groupName": "Kubernetes Go clients",
-      "groupSlug": "go-kubernetes",
-      "group": {
-        "branchTopic": "go-kubernetes"
-      }
-    },
-    {
-      "description": "Keep automerged patches available alongside manual module minors",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["require", "indirect", "replace"],
-      "matchPackageNames": ["!golang.org/x/**"],
-      "separateMinorPatch": true
-    },
-    {
-      "description": "Keep Go compiler updates within the approved release line",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["golang", "toolchain"],
-      "rangeStrategy": "bump",
-      "allowedVersions": "/^1\\.26\\./",
-      "groupName": "Go toolchain",
-      "groupSlug": "go-toolchain",
-      "minimumReleaseAge": null
-    },
-    {
-      "description": "Automerge compiler patches after required artifact validation and App approval",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["golang", "toolchain"],
+      "description": "Automerge GoReleaser patches with Go compiler patches",
+      "matchManagers": ["github-actions", "custom.regex"],
+      "matchPackageNames": ["goreleaser/goreleaser"],
       "matchUpdateTypes": ["patch"],
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": true
-    },
-    {
-      "description": "Keep module patches separate from compiler updates",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["require", "indirect", "replace"],
-      "matchUpdateTypes": ["patch"],
-      "groupName": "Go library updates",
-      "groupSlug": "go-libraries",
-      "group": {
-        "branchTopic": "go-libraries"
-      },
-      "automerge": true,
-      "automergeType": "pr",
-      "platformAutomerge": true
-    },
-    {
-      "description": "Include golang.org/x module minors in the library group",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["require", "indirect", "replace"],
-      "matchPackageNames": ["golang.org/x/**"],
-      "matchUpdateTypes": ["minor"],
-      "groupName": "Go library updates",
-      "groupSlug": "go-libraries",
+      "groupName": "Go build environment",
+      "groupSlug": "go-build-environment",
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": true,
+      "minimumReleaseAge": null,
       "rebaseWhen": "behind-base-branch"
+    },
+    {
+      "description": "Prioritize patch updates before minors and major migrations",
+      "matchUpdateTypes": ["patch"],
+      "prPriority": 10
+    },
+    {
+      "description": "Only update indirect Go dependencies for known vulnerabilities",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["indirect"],
+      "matchUpdateTypes": ["major", "minor", "patch", "pin", "digest", "pinDigest", "lockFileMaintenance", "rollback", "replacement"],
+      "matchJsonata": ["$not(isVulnerabilityAlert = true or $exists(vulnerabilityFixVersion))"],
+      "enabled": false
+    },
+    {
+      "description": "Let Kubernetes consumer upgrades select a compatible kube-openapi revision",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["k8s.io/kube-openapi"],
+      "enabled": false
+    },
+    {
+      "description": "Apply known vulnerability fixes without a release delay",
+      "matchJsonata": ["isVulnerabilityAlert = true or $exists(vulnerabilityFixVersion)"],
+      "minimumReleaseAge": null,
+      "prPriority": 20
     }
   ]
 }

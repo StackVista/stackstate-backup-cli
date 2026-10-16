@@ -17,7 +17,7 @@ const (
 	minReplicas = 2
 )
 
-var supportedComponents = []string{"hdfs", "elasticsearch", "kafka", "clickhouse", "zookeeper"}
+var supportedComponents = []string{hdfsComponent, elasticsearchComponent, kafkaComponent, clickhouseComponent, zookeeperComponent}
 
 // Options identifies the installation and selected databases.
 type Options struct {
