@@ -10,6 +10,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.20.8
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.2
 	github.com/elastic/go-elasticsearch/v8 v8.19.7
+	github.com/elastic/go-elasticsearch/v9 v9.5.2
 	github.com/go-playground/validator/v10 v10.28.0
 	github.com/go-zookeeper/zk v1.0.4
 	github.com/spf13/cobra v1.10.2
