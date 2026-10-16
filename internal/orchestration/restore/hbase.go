@@ -2,6 +2,7 @@ package restore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -17,19 +18,24 @@ import (
 
 const zkSessionTimeout = 2 * time.Second
 
-func deleteRecursive(zkConn *zk.Conn, path string, logger *logger.Logger) {
+func deleteRecursive(zkConn *zk.Conn, path string, logger *logger.Logger) error {
 	children, _, err := zkConn.Children(path)
-	if err != nil {
+	switch {
+	case errors.Is(err, zk.ErrNoNode):
+		return nil
+	case err != nil:
 		logger.Warningf("Unable to list znode for %s: %v", path, err)
-	} else {
+	default:
 		for _, child := range children {
-			deleteRecursive(zkConn, path+"/"+child, logger)
+			if err := deleteRecursive(zkConn, path+"/"+child, logger); err != nil {
+				return err
+			}
 		}
 	}
-	err = zkConn.Delete(path, -1)
-	if err != nil {
-		logger.Warningf("Failed to delete znode %s: %v", path, err)
+	if err := zkConn.Delete(path, -1); err != nil && !errors.Is(err, zk.ErrNoNode) {
+		return err
 	}
+	return nil
 }
 
 func scaleDownHBase(k8sClient *k8s.Client, namespace string, logger *logger.Logger) error {
@@ -73,8 +79,12 @@ func WipePVCs(ctx context.Context, k8sClient *k8s.Client, namespace, zkQuorum st
 		logger.Println()
 		logger.Infof("Removing HBase and Tephra nodes from Zookeeper")
 
-		deleteRecursive(zkConn, "/hbase", logger)
-		deleteRecursive(zkConn, "/tx.service", logger)
+		if err := deleteRecursive(zkConn, "/hbase", logger); err != nil {
+			return err
+		}
+		if err := deleteRecursive(zkConn, "/tx.service", logger); err != nil {
+			return err
+		}
 
 		logger.Successf("Removed nodes from Zookeeper")
 	} else {

@@ -107,11 +107,8 @@ func runRestore(appCtx *app.Context) error {
 
 	// Scale down hbase/hdfs/tephra and delete all pvcs
 	if wipePVCs {
-		err = restore.WipePVCs(appCtx.Context, appCtx.K8sClient, appCtx.Namespace, appCtx.Config.Stackgraph.Restore.ZookeeperQuorum, appCtx.Logger)
-		if err != nil {
-			// Create restore job
-			appCtx.Logger.Println()
-			appCtx.Logger.Warningf("Wiping PVCs failed: %s", err)
+		if err := restore.WipePVCs(appCtx.Context, appCtx.K8sClient, appCtx.Namespace, appCtx.Config.Stackgraph.Restore.ZookeeperQuorum, appCtx.Logger); err != nil {
+			return err
 		}
 	}
 
