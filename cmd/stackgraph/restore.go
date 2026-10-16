@@ -35,6 +35,7 @@ var (
 	background       bool
 	skipConfirmation bool
 	skipStackpacks   bool
+	wipePVCs         bool
 )
 
 func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
@@ -54,6 +55,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&background, "background", false, "Run restore job in background without waiting for completion")
 	cmd.Flags().BoolVarP(&skipConfirmation, "yes", "y", false, "Skip confirmation prompt")
 	cmd.Flags().BoolVar(&skipStackpacks, "skip-stackpacks", false, "Skip restoring stackpacks backup")
+	cmd.Flags().BoolVar(&wipePVCs, "wipe-pvcs", false, "Wipe HDFS/HBase/Tephra PVCs before restoring")
 	cmd.MarkFlagsMutuallyExclusive("archive", "latest")
 	cmd.MarkFlagsOneRequired("archive", "latest")
 
@@ -101,6 +103,13 @@ func runRestore(appCtx *app.Context) error {
 	})
 	if err != nil {
 		return err
+	}
+
+	// Scale down hbase/hdfs/tephra and delete all pvcs
+	if wipePVCs {
+		if err := restore.WipePVCs(appCtx.Context, appCtx.K8sClient, appCtx.Namespace, appCtx.Config.Stackgraph.Restore.ZookeeperQuorum, appCtx.Logger); err != nil {
+			return err
+		}
 	}
 
 	// Ensure deployments are scaled back up and lock released on exit (even if restore fails)

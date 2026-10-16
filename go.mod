@@ -11,6 +11,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.2
 	github.com/elastic/go-elasticsearch/v8 v8.19.7
 	github.com/go-playground/validator/v10 v10.28.0
+	github.com/go-zookeeper/zk v1.0.4
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
 	github.com/stretchr/testify v1.11.1
