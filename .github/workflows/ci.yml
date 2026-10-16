@@ -59,8 +59,8 @@ jobs:
     permissions:
       contents: read
     env:
-      # renovate: datasource=go depName=github.com/google/go-licenses
-      GO_LICENSES_VERSION: v1.6.0
+      # renovate: datasource=go depName=github.com/google/go-licenses/v2
+      GO_LICENSES_VERSION: v2.0.1
       REPORT_FILE: gl-license-scanning-report.json
 
     steps:
@@ -71,13 +71,22 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Verify MIT-0 license unsupported by go-licenses
+        run: |
+          go mod download github.com/segmentio/asm
+          printf '%s  %s\n' \
+            cca993712df289a5958bdef69031a5dac0f951ac15afeb313f9eeea55ed59443 \
+            "$(go list -m -f '{{.Dir}}/LICENSE' github.com/segmentio/asm)" |
+            sha256sum --check
       - name: License scanning
         run: |
-          scripts/install-go-tool.sh "github.com/google/go-licenses@${GO_LICENSES_VERSION}"
-          go-licenses check . --disallowed_types=forbidden,restricted
+          scripts/install-go-tool.sh "github.com/google/go-licenses/v2@${GO_LICENSES_VERSION}"
+          go-licenses check . --disallowed_types=forbidden,restricted --ignore=github.com/segmentio/asm/
       - name: Generate license report
         run: |
-          go-licenses report . > licenses.csv
+          go-licenses report . --ignore=github.com/segmentio/asm/ > licenses.csv
+          printf 'github.com/segmentio/asm,https://github.com/segmentio/asm/blob/%s/LICENSE,MIT-0\n' \
+            "$(go list -m -f '{{.Version}}' github.com/segmentio/asm)" >> licenses.csv
       - name: Save license scan report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
