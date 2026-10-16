@@ -30,8 +30,8 @@
       "matchManagers": ["gomod"],
       "matchDepTypes": ["golang", "toolchain"],
       "matchUpdateTypes": ["patch"],
-      "groupName": "Go toolchain",
-      "groupSlug": "go-toolchain",
+      "groupName": "Go build environment",
+      "groupSlug": "go-build-environment",
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": true,
@@ -144,6 +144,19 @@
       "groupSlug": "ci-tools",
       "automerge": false,
       "rebaseWhen": "conflicted"
+    },
+    {
+      "description": "Automerge GoReleaser patches with Go compiler patches",
+      "matchManagers": ["github-actions", "custom.regex"],
+      "matchPackageNames": ["goreleaser/goreleaser"],
+      "matchUpdateTypes": ["patch"],
+      "groupName": "Go build environment",
+      "groupSlug": "go-build-environment",
+      "automerge": true,
+      "automergeType": "pr",
+      "platformAutomerge": true,
+      "minimumReleaseAge": null,
+      "rebaseWhen": "behind-base-branch"
     },
     {
       "description": "Review major migrations individually",

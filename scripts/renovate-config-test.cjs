@@ -43,15 +43,17 @@ async function main() {
     ['github.com/stretchr/testify', 'gomod', 'require', 'go', 'v1.0.0', 'v1.0.1'],
     ['actions/checkout', 'github-actions', 'action', 'github-tags', 'v1.0.0', 'v1.0.1'],
     ['go', 'gomod', 'golang', 'golang-version', '1.26.8', '1.26.9'],
+    ['goreleaser/goreleaser', 'custom.regex', undefined, 'github-releases', 'v1.25.1', 'v1.25.2'],
   ]) {
     const policy = await applyPackageRules({
       ...config, depName: name, packageName: name, manager, depType, datasource,
       currentVersion, currentValue: currentVersion, updateType: 'patch',
     });
+    const immediate = name === 'go' || name === 'goreleaser/goreleaser';
     const versioning = getVersioning(policy.versioning ?? getDefaultVersioning(datasource));
     for (const releaseTimestamp of [freshReleaseTimestamp, matureReleaseTimestamp, undefined]) {
       const result = await filterInternalChecks(policy, versioning, 'patch', [{ version: newVersion, releaseTimestamp }]);
-      assert.equal(result.pendingChecks, name !== 'go' && releaseTimestamp !== matureReleaseTimestamp, name);
+      assert.equal(result.pendingChecks, !immediate && releaseTimestamp !== matureReleaseTimestamp, name);
     }
     for (const security of [{ isVulnerabilityAlert: true }, { vulnerabilityFixVersion: newVersion }]) {
       const securityPolicy = await applyPackageRules({ ...policy, ...security });
@@ -62,7 +64,7 @@ async function main() {
       assert.equal(result.pendingChecks, false, name);
     }
     const routinePolicy = await applyPackageRules({ ...policy, isVulnerabilityAlert: false });
-    assert.equal(routinePolicy.minimumReleaseAge, name === 'go' ? null : '7 days', name);
+    assert.equal(routinePolicy.minimumReleaseAge, immediate ? null : '7 days', name);
   }
   getDatasourceFor('go').getReleases = async () => ({
     releases: [
@@ -286,17 +288,47 @@ async function main() {
       const policy = await applyPackageRules({
         ...config, ...dep, packageName: name, manager, updateType: type,
       });
-      assert.equal(policy.automerge, false, name);
-      assert.equal(policy.rebaseWhen, 'conflicted', name);
-      assert.equal(policy.groupName, type === 'major' ? null : 'CI tools', name);
+      const builderPatch = name === 'goreleaser/goreleaser' && type === 'patch';
+      assert.equal(policy.automerge, builderPatch, name);
+      assert.equal(policy.rebaseWhen, builderPatch ? 'behind-base-branch' : 'conflicted', name);
+      assert.equal(policy.groupName, type === 'major' ? null : builderPatch ? 'Go build environment' : 'CI tools', name);
+      assert.equal(policy.minimumReleaseAge, builderPatch ? null : '7 days', name);
     }
+  }
+  const builder = extracted.find(dep => (dep.packageName ?? dep.depName) === 'goreleaser/goreleaser');
+  const buildBranches = await flattenUpdates(config, {
+    'custom.regex': [{
+      packageFile: '.github/workflows/ci.yml',
+      deps: [{
+        ...builder,
+        packageName: builder.packageName ?? builder.depName,
+        updates: [{ updateType: 'patch', newValue: 'v1.25.2', newVersion: 'v1.25.2' }],
+      }],
+    }],
+    gomod: [{
+      packageFile: 'go.mod',
+      deps: ['golang', 'toolchain'].map(depType => ({
+        depName: 'go', packageName: 'go', depType, datasource: 'golang-version', currentValue: '1.26.8',
+        updates: [{ updateType: 'patch', newValue: '1.26.9', newVersion: '1.26.9' }],
+      })),
+    }],
+  });
+  assert.equal(buildBranches.length, 3);
+  assert.deepEqual([...new Set(buildBranches.map(branch => branch.branchName))], ['renovate/go-build-environment']);
+  for (const branch of buildBranches) {
+    assert.equal(branch.automerge, true);
+    assert.equal(branch.platformAutomerge, true);
+    assert.equal(branch.automergeType, 'pr');
+    assert.equal(branch.minimumReleaseAge, null);
+    assert.equal(branch.rebaseWhen, 'behind-base-branch');
   }
   console.log('PASS: module patches and minors automerge in separate branches');
   console.log('PASS: compatible GitHub Actions updates automerge separately; major actions stay manual');
-  console.log('PASS: Kubernetes minors, module majors and CI tools stay manual; other module minors and all patches automerge');
+  console.log('PASS: Kubernetes minors, module majors and non-builder CI tools stay manual; other module minors and all patches automerge');
   console.log('PASS: unsupported Go versions are filtered and PR creation is limited');
-  console.log('PASS: routine releases wait seven days; known vulnerability fixes and compiler patches remain immediate');
+  console.log('PASS: routine releases wait seven days; known vulnerability fixes and build-environment patches remain immediate');
   console.log('PASS: OSV rules bypass the release delay without automerging Kubernetes minors or majors');
+  console.log('PASS: extracted GoReleaser patches and both Go compiler directives share one automerge branch');
 }
 
 main().catch(error => {
