@@ -460,17 +460,18 @@ This project uses GitHub Actions and GoReleaser for automated releases:
 Renovate runs daily and keeps compiler updates separate from library updates.
 Routine updates wait until releases are at least seven days old.
 Known vulnerability fixes and compiler patches have no release delay.
+OSV alerts identify known vulnerable dependencies and trigger fix PRs.
 GitHub Actions patches, minors, and digest updates use a separate automerge PR.
 Major action upgrades require manual review.
 CI tools use a separate manual group; their major upgrades get individual PRs.
-Module patches share one library PR, separate from minor updates.
-Module minors use three groups: AWS SDK, Kubernetes, and all other Go libraries.
+Module patches and minors use three groups: AWS SDK, Kubernetes, and other Go libraries.
+Each group keeps patches separate from minors.
 The other-library group includes ClickHouse, Elasticsearch, OpenTelemetry,
 OpenAPI, and `golang.org/x/*`.
 Module patches, AWS SDK minors, and other-library minors use native automerge
 after artifact validation and App approval.
 Kubernetes minors stay grouped for manual review.
-Renovate limits concurrent PRs and inherits the shared hourly creation limit.
+Renovate allows ten concurrent PRs and inherits the shared hourly creation limit.
 Compiler updates stay within the release line declared in `renovate.json`.
 Module candidates that declare a newer required Go release line are filtered out.
 CI rejects a module update that selects a compiler from another release line.
