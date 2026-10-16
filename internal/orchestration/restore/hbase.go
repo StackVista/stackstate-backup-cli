@@ -103,9 +103,8 @@ func WipePVCs(ctx context.Context, k8sClient *k8s.Client, namespace, zkQuorum st
 	for _, pvc := range pvcs.Items {
 		if err := k8sClient.DeletePVC(pvc.Namespace, pvc.Name); err != nil {
 			return err
-		} else {
-			logger.Infof("  - %s", pvc.Name)
 		}
+		logger.Infof("  - %s", pvc.Name)
 	}
 	logger.Successf("Deleted PVCs")
 
