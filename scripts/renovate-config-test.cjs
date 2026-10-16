@@ -235,6 +235,17 @@ async function main() {
     if (group) assert.equal(branch.branchName, `renovate/${branch.updateType === 'patch' ? 'patch-' : ''}${group}`);
     else assert.equal(branch.groupName, null);
   }
+  const openapiBranches = await flattenUpdates(config, {
+    gomod: [{
+      packageFile: 'go.mod',
+      deps: [{
+        depName: 'k8s.io/kube-openapi', packageName: 'k8s.io/kube-openapi', depType: 'indirect', datasource: 'go',
+        currentValue: 'v0.0.0-20250710124328-f3f2b991d03b',
+        updates: [{ updateType: 'digest', newValue: 'v0.0.0-20260721132016-d427ff9ee9ad' }],
+      }],
+    }],
+  });
+  assert.equal(openapiBranches.length, 0);
   const osv = new Vulnerabilities({
     getVulnerabilities: async (ecosystem, name) => [{
       id: 'GO-2099-0001',
@@ -329,6 +340,7 @@ async function main() {
   console.log('PASS: routine releases wait seven days; known vulnerability fixes and build-environment patches remain immediate');
   console.log('PASS: OSV rules bypass the release delay without automerging Kubernetes minors or majors');
   console.log('PASS: extracted GoReleaser patches and both Go compiler directives share one automerge branch');
+  console.log('PASS: standalone kube-openapi revision updates are disabled without blocking Kubernetes updates');
 }
 
 main().catch(error => {

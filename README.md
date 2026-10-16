@@ -473,6 +473,7 @@ OpenAPI, and `golang.org/x/*`.
 Module patches, AWS SDK minors, and other-library minors use native automerge
 after artifact validation and App approval.
 Kubernetes minors stay grouped for manual review.
+Kubernetes upgrades select compatible `kube-openapi` revisions instead of independent Renovate updates.
 Renovate allows ten concurrent PRs and inherits the shared hourly creation limit.
 Compiler updates stay within the release line declared in `renovate.json`.
 Module candidates that declare a newer required Go release line are filtered out.

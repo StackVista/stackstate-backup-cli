@@ -167,6 +167,12 @@
       "rebaseWhen": "conflicted"
     },
     {
+      "description": "Let Kubernetes consumer upgrades select a compatible kube-openapi revision",
+      "matchManagers": ["gomod"],
+      "matchPackageNames": ["k8s.io/kube-openapi"],
+      "enabled": false
+    },
+    {
       "description": "Apply known vulnerability fixes without a release delay",
       "matchJsonata": ["isVulnerabilityAlert = true or $exists(vulnerabilityFixVersion)"],
       "minimumReleaseAge": null
