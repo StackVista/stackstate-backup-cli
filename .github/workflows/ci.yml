@@ -16,7 +16,7 @@ permissions: {}
 
 env:
   # renovate: datasource=github-releases depName=goreleaser/goreleaser
-  GORELEASER_VERSION: v1.25.1
+  GORELEASER_VERSION: v1.26.2
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -50,7 +50,7 @@ jobs:
           # Require: The version of golangci-lint to use.
           # When `install-mode` is `binary` (default) the value can be v1.2 or v1.2.3 or `latest` to use the latest version.
           # When `install-mode` is `goinstall` the value can be v1.2.3, `latest`, or the hash of a commit.
-          version: v2.11.3
+          version: v2.14.0
 
   check-license:
     name: License scan
@@ -138,7 +138,7 @@ jobs:
       contents: read
     env:
       # renovate: datasource=go depName=golang.org/x/vuln
-      GOVULNCHECK_VERSION: v1.6.0
+      GOVULNCHECK_VERSION: v1.8.0
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
