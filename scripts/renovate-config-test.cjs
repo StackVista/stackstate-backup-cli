@@ -67,6 +67,7 @@ async function main() {
     assert.equal(patch.automerge, true);
     assert.equal(patch.rebaseWhen, 'behind-base-branch');
     assert.equal(minor.automerge, true);
+    assert.equal(minor.branchName, 'renovate/go-library-minors');
     assert.equal(minor.platformAutomerge, true);
     assert.equal(minor.rebaseWhen, 'behind-base-branch');
     assert.notEqual(patch.branchName, minor.branchName);
@@ -86,7 +87,7 @@ async function main() {
     });
     assert.deepEqual(
       [...new Set(libraries.filter(branch => branch.automerge).map(branch => branch.branchName))],
-      ['renovate/go-libraries', minor.branchName, 'renovate/go-x'],
+      ['renovate/go-libraries', 'renovate/go-library-minors'],
     );
     assert.equal(libraries.filter(branch => branch.automerge).length, 3);
   }
@@ -152,21 +153,21 @@ async function main() {
     ['k8s.io/apimachinery', 'minor', 'go-kubernetes'],
     ['k8s.io/client-go', 'minor', 'go-kubernetes'],
     ['sigs.k8s.io/structured-merge-diff/v6', 'minor', 'go-kubernetes'],
-    ['github.com/ClickHouse/clickhouse-go/v2', 'minor', 'go-clickhouse'],
-    ['github.com/ClickHouse/ch-go', 'minor', 'go-clickhouse'],
-    ['github.com/elastic/go-elasticsearch/v8', 'minor', 'go-elasticsearch'],
-    ['github.com/elastic/elastic-transport-go/v8', 'minor', 'go-elasticsearch'],
-    ['go.opentelemetry.io/otel', 'minor', 'go-opentelemetry'],
-    ['go.opentelemetry.io/otel/trace', 'minor', 'go-opentelemetry'],
-    ['github.com/go-openapi/jsonpointer', 'minor', 'go-openapi'],
-    ['github.com/go-openapi/swag', 'minor', 'go-openapi'],
-    ['golang.org/x/net', 'minor', 'go-x'],
-    ['golang.org/x/sys', 'minor', 'go-x'],
+    ['github.com/ClickHouse/clickhouse-go/v2', 'minor', 'go-library-minors'],
+    ['github.com/ClickHouse/ch-go', 'minor', 'go-library-minors'],
+    ['github.com/elastic/go-elasticsearch/v8', 'minor', 'go-library-minors'],
+    ['github.com/elastic/elastic-transport-go/v8', 'minor', 'go-library-minors'],
+    ['go.opentelemetry.io/otel', 'minor', 'go-library-minors'],
+    ['go.opentelemetry.io/otel/trace', 'minor', 'go-library-minors'],
+    ['github.com/go-openapi/jsonpointer', 'minor', 'go-library-minors'],
+    ['github.com/go-openapi/swag', 'minor', 'go-library-minors'],
+    ['golang.org/x/net', 'minor', 'go-library-minors'],
+    ['golang.org/x/sys', 'minor', 'go-library-minors'],
     ['github.com/aws/smithy-go', 'major', null],
     ['sigs.k8s.io/structured-merge-diff/v6', 'major', null],
     ['github.com/elastic/go-elasticsearch/v8', 'major', null],
     ['github.com/go-openapi/jsonpointer', 'major', null],
-    ['github.com/stretchr/testify', 'minor', null],
+    ['github.com/stretchr/testify', 'minor', 'go-library-minors'],
   ];
   const moduleBranches = await flattenUpdates(config, {
     gomod: [{

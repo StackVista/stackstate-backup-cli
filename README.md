@@ -462,9 +462,9 @@ GitHub Actions patches, minors, and digest updates use a separate automerge PR.
 Major action upgrades require manual review.
 CI tools use a separate manual group; their major upgrades get individual PRs.
 Module patches share one library PR, separate from minor updates.
-Module minors use separate AWS SDK, Kubernetes, ClickHouse, Elasticsearch,
-OpenTelemetry, OpenAPI, and `golang.org/x/*` groups.
-Other module minors get individual PRs.
+Module minors use three groups: AWS SDK, Kubernetes, and all other Go libraries.
+The other-library group includes ClickHouse, Elasticsearch, OpenTelemetry,
+OpenAPI, and `golang.org/x/*`.
 Module patches and minors use native automerge after artifact validation and App approval.
 Renovate limits concurrent PRs and inherits the shared hourly creation limit.
 Compiler updates stay within the release line declared in `renovate.json`.

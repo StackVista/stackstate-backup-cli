@@ -55,12 +55,15 @@
       }
     },
     {
-      "description": "Automerge individual module minors after required validation and App approval",
+      "description": "Group and automerge other module minors after required validation and App approval",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["require", "indirect", "replace"],
       "matchUpdateTypes": ["minor"],
-      "groupName": null,
-      "groupSlug": null,
+      "groupName": "Go library minors",
+      "groupSlug": "go-library-minors",
+      "group": {
+        "branchTopic": "go-library-minors"
+      },
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": true,
@@ -88,54 +91,6 @@
       "groupSlug": "go-kubernetes",
       "group": {
         "branchTopic": "go-kubernetes"
-      }
-    },
-    {
-      "description": "Group coupled ClickHouse client minor updates",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["require", "indirect", "replace"],
-      "matchPackageNames": ["github.com/ClickHouse/**"],
-      "matchUpdateTypes": ["minor"],
-      "groupName": "ClickHouse Go clients",
-      "groupSlug": "go-clickhouse",
-      "group": {
-        "branchTopic": "go-clickhouse"
-      }
-    },
-    {
-      "description": "Group coupled Elasticsearch client minor updates",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["require", "indirect", "replace"],
-      "matchPackageNames": ["github.com/elastic/**"],
-      "matchUpdateTypes": ["minor"],
-      "groupName": "Elasticsearch Go clients",
-      "groupSlug": "go-elasticsearch",
-      "group": {
-        "branchTopic": "go-elasticsearch"
-      }
-    },
-    {
-      "description": "Group coupled OpenTelemetry module minor updates",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["require", "indirect", "replace"],
-      "matchPackageNames": ["go.opentelemetry.io/**"],
-      "matchUpdateTypes": ["minor"],
-      "groupName": "OpenTelemetry Go modules",
-      "groupSlug": "go-opentelemetry",
-      "group": {
-        "branchTopic": "go-opentelemetry"
-      }
-    },
-    {
-      "description": "Group coupled OpenAPI module minor updates",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["require", "indirect", "replace"],
-      "matchPackageNames": ["github.com/go-openapi/**"],
-      "matchUpdateTypes": ["minor"],
-      "groupName": "OpenAPI Go modules",
-      "groupSlug": "go-openapi",
-      "group": {
-        "branchTopic": "go-openapi"
       }
     },
     {
@@ -176,18 +131,6 @@
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": true
-    },
-    {
-      "description": "Group golang.org/x module minor updates separately from patches",
-      "matchManagers": ["gomod"],
-      "matchDepTypes": ["require", "indirect", "replace"],
-      "matchPackageNames": ["golang.org/x/**"],
-      "matchUpdateTypes": ["minor"],
-      "groupName": "Go supplementary modules",
-      "groupSlug": "go-x",
-      "group": {
-        "branchTopic": "go-x"
-      }
     }
   ]
 }
