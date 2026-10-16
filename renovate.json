@@ -38,7 +38,7 @@
       "rebaseWhen": "behind-base-branch"
     },
     {
-      "description": "Enable all Go library updates, including indirect dependencies",
+      "description": "Look up Go libraries compatible with the approved compiler release line",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["require", "indirect", "replace"],
       "enabled": true,
@@ -54,6 +54,8 @@
     {
       "description": "Review major migrations after compatible updates",
       "matchUpdateTypes": ["major"],
+      "labels": ["dependencies/major"],
+      "addLabels": ["dependencies/major"],
       "groupName": null,
       "groupSlug": null,
       "automerge": false,
@@ -198,6 +200,14 @@
       "description": "Prioritize patch updates before minors and major migrations",
       "matchUpdateTypes": ["patch"],
       "prPriority": 10
+    },
+    {
+      "description": "Only update indirect Go dependencies for known vulnerabilities",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["indirect"],
+      "matchUpdateTypes": ["major", "minor", "patch", "pin", "digest", "pinDigest", "lockFileMaintenance", "rollback", "replacement"],
+      "matchJsonata": ["$not(isVulnerabilityAlert = true or $exists(vulnerabilityFixVersion))"],
+      "enabled": false
     },
     {
       "description": "Let Kubernetes consumer upgrades select a compatible kube-openapi revision",
