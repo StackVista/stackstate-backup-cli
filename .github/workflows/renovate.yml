@@ -24,12 +24,19 @@ jobs:
           persist-credentials: false
       - name: Create Renovate App token
         id: app-token
-        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0 # zizmor: ignore[github-app] App grants, restricted to this repository.
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
         with:
           client-id: ${{ vars.RENOVATE_GH_APP_CLIENT_ID }}
           private-key: ${{ secrets.RENOVATE_GH_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
           repositories: stackstate-backup-cli
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+          permission-workflows: write
+          permission-checks: read
+          permission-statuses: write
+          permission-vulnerability-alerts: read
       - name: Run Renovate
         uses: renovatebot/github-action@f0f41e5f2e706165f6814b1d0f0d0e319de7d1d9 # v46.3.8
         with:
