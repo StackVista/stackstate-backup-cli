@@ -174,7 +174,7 @@
       "matchPackageNames": [
         "golangci/golangci-lint",
         "goreleaser/goreleaser",
-        "github.com/google/go-licenses",
+        "github.com/google/go-licenses/v2",
         "golang.org/x/vuln"
       ],
       "matchUpdateTypes": ["patch", "minor", "digest", "pin", "pinDigest"],

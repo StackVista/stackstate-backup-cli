@@ -374,7 +374,7 @@ async function main() {
   ];
   for (const name of [
     'golangci/golangci-lint', 'goreleaser/goreleaser',
-    'github.com/google/go-licenses', 'golang.org/x/vuln',
+    'github.com/google/go-licenses/v2', 'golang.org/x/vuln',
   ]) {
     const dep = extracted.find(dep => (dep.packageName ?? dep.depName) === name);
     assert(dep, `Missing CI tool extraction: ${name}`);
