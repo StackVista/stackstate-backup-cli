@@ -26,6 +26,9 @@ const (
 	restoreNameTemplate      = "stackgraph-v2-restore"
 	configMapDefaultFileMode = 0755
 	purgeStackgraphDataFlag  = "-force"
+	backupLogVolumeName      = "backup-log"
+	restoreScriptsVolumeName = "backup-restore-scripts"
+	storageKeysVolumeName    = "minio-keys"
 )
 
 // Restore command flags
@@ -34,6 +37,7 @@ var (
 	useLatest        bool
 	skipConfirmation bool
 	skipStackpacks   bool
+	wipePVCs         bool
 )
 
 func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
@@ -53,6 +57,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&useLatest, "latest", false, "Restore from the most recent backup")
 	cmd.Flags().BoolVarP(&skipConfirmation, "yes", "y", false, "Skip confirmation prompt")
 	cmd.Flags().BoolVar(&skipStackpacks, "skip-stackpacks", false, "Skip restoring stackpacks backup")
+	cmd.Flags().BoolVar(&wipePVCs, "wipe-pvcs", false, "Wipe HDFS/HBase/Tephra PVCs before restoring")
 	cmd.MarkFlagsMutuallyExclusive("archive", "latest")
 	cmd.MarkFlagsOneRequired("archive", "latest")
 
@@ -124,6 +129,13 @@ func liveRestore(appCtx *app.Context) error {
 			}
 		}
 	}()
+
+	// Scale down hbase/hdfs/tephra and delete all pvcs
+	if wipePVCs {
+		if err := restore.WipePVCs(appCtx.Context, appCtx.K8sClient, appCtx.Namespace, appCtx.Config.Stackgraph.Restore.ZookeeperQuorum, appCtx.Logger); err != nil {
+			return err
+		}
+	}
 
 	// Setup Kubernetes resources for restore job
 	appCtx.Logger.Println()
@@ -306,9 +318,9 @@ func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvV
 // buildRestoreVolumeMounts constructs volume mounts for the restore job container
 func buildRestoreVolumeMounts(config *config.Config) []corev1.VolumeMount {
 	volumeMounts := []corev1.VolumeMount{
-		{Name: "backup-log", MountPath: "/opt/docker/etc_log"},
-		{Name: "backup-restore-scripts", MountPath: "/backup-restore-scripts"},
-		{Name: "minio-keys", MountPath: "/aws-keys"},
+		{Name: backupLogVolumeName, MountPath: "/opt/docker/etc_log"},
+		{Name: restoreScriptsVolumeName, MountPath: "/backup-restore-scripts"},
+		{Name: storageKeysVolumeName, MountPath: "/aws-keys"},
 		{Name: "tmp-data", MountPath: "/tmp-data"},
 	}
 
@@ -344,7 +356,7 @@ func buildRestoreInitContainers(config *config.Config) []corev1.Container {
 func buildRestoreVolumes(jobName string, config *config.Config, defaultMode int32) []corev1.Volume {
 	volumes := []corev1.Volume{
 		{
-			Name: "backup-log",
+			Name: backupLogVolumeName,
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{
@@ -354,7 +366,7 @@ func buildRestoreVolumes(jobName string, config *config.Config, defaultMode int3
 			},
 		},
 		{
-			Name: "backup-restore-scripts",
+			Name: restoreScriptsVolumeName,
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{
@@ -365,7 +377,7 @@ func buildRestoreVolumes(jobName string, config *config.Config, defaultMode int3
 			},
 		},
 		{
-			Name: "minio-keys",
+			Name: storageKeysVolumeName,
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
 					SecretName: restore.MinioKeysSecretName,

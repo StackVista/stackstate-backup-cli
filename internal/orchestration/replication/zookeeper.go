@@ -76,7 +76,7 @@ func (c *Checker) checkZooKeeper(ctx context.Context, inventory inventory) Resul
 }
 
 func (c *Checker) queryZooKeeper(ctx context.Context, pod string) (zooKeeperObservation, error) {
-	data, err := c.query(ctx, pod, "zookeeper", []string{"bash", "-ec", zookeeperQuery})
+	data, err := c.query(ctx, pod, "zookeeper", []string{bashExecutable, bashExecFlag, zookeeperQuery})
 	if err != nil {
 		return zooKeeperObservation{}, err
 	}
@@ -163,7 +163,7 @@ func evaluateZooKeeper(observations []zooKeeperObservation) Result {
 		problems = append(problems, fmt.Sprintf("expected one ZooKeeper leader; observed %d", leaders))
 	}
 	if len(problems) > 0 {
-		return Result{Component: "zookeeper", Status: Degraded, Messages: problems}
+		return Result{Component: zookeeperComponent, Status: Degraded, Messages: problems}
 	}
 	return result("zookeeper", Healthy, fmt.Sprintf("%d voting members available; one leader and %d synchronized followers", len(observations), len(observations)-1))
 }

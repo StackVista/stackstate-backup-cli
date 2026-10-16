@@ -93,7 +93,7 @@ func (p *fsckParser) result() Result {
 		return result("hdfs", Unknown, "incomplete fsck report; block replication could not be verified")
 	}
 	if p.problems > 0 {
-		return Result{Component: "hdfs", Status: Degraded,
+		return Result{Component: hdfsComponent, Status: Degraded,
 			Messages: append([]string{fmt.Sprintf("HDFS block audit found %d replication problems", p.problems)}, p.messages...)}
 	}
 	report := result("hdfs", Healthy, fmt.Sprintf("HDFS audit: %d files and %d completed block entries meet replication targets of at least two (including snapshot references)", p.files, p.completed))

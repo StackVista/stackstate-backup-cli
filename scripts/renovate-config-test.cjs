@@ -7,12 +7,21 @@ const { getConfig } = require(path.join(renovate, 'config/defaults.js'));
 const { mergeChildConfig } = require(path.join(renovate, 'config/utils.js'));
 const { resolveConfigPresets } = require(path.join(renovate, 'config/presets/index.js'));
 const { applyPackageRules } = require(path.join(renovate, 'util/package-rules/index.js'));
-const { getDatasourceFor } = require(path.join(renovate, 'modules/datasource/common.js'));
+const { getDatasourceFor, getDefaultVersioning } = require(path.join(renovate, 'modules/datasource/common.js'));
+const { get: getVersioning } = require(path.join(renovate, 'modules/versioning/index.js'));
 const { lookupUpdates } = require(path.join(renovate, 'workers/repository/process/lookup/index.js'));
+const { filterInternalChecks } = require(path.join(renovate, 'workers/repository/process/lookup/filter-checks.js'));
 const { flattenUpdates } = require(path.join(renovate, 'workers/repository/updates/flatten.js'));
+const { branchifyUpgrades } = require(path.join(renovate, 'workers/repository/updates/branchify.js'));
+const { sortBranches } = require(path.join(renovate, 'workers/repository/process/sort.js'));
+const { setCount, isLimitReached } = require(path.join(renovate, 'workers/global/limits.js'));
+const { Vulnerabilities } = require(path.join(renovate, 'workers/repository/process/vulnerabilities.js'));
 const actions = require(path.join(renovate, 'modules/manager/github-actions/index.js'));
 const regex = require(path.join(renovate, 'modules/manager/custom/regex/index.js'));
-require(path.join(renovate, 'config/global.js')).GlobalConfig.set({ platform: 'github' });
+require(path.join(renovate, 'config/global.js')).GlobalConfig.set({
+  platform: 'github',
+  localDir: path.resolve(__dirname, '..'),
+});
 
 async function main() {
   const repo = path.resolve(__dirname, '..');
@@ -29,6 +38,42 @@ async function main() {
     extends: [],
     semanticCommits: 'disabled',
   });
+  assert.equal(config.prConcurrentLimit, 0);
+  assert.equal(config.prHourlyLimit, 5);
+  assert.equal(config.osvVulnerabilityAlerts, true);
+  assert.equal(config.minimumReleaseAge, '7 days');
+  assert.equal(config.internalChecksFilter, 'strict');
+  const freshReleaseTimestamp = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const matureReleaseTimestamp = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString();
+  for (const [name, manager, depType, datasource, currentVersion, newVersion] of [
+    ['github.com/stretchr/testify', 'gomod', 'require', 'go', 'v1.0.0', 'v1.0.1'],
+    ['actions/checkout', 'github-actions', 'action', 'github-tags', 'v1.0.0', 'v1.0.1'],
+    ['go', 'gomod', 'golang', 'golang-version', '1.26.8', '1.26.9'],
+    ['goreleaser/goreleaser', 'custom.regex', undefined, 'github-releases', 'v1.25.1', 'v1.25.2'],
+  ]) {
+    const policy = await applyPackageRules({
+      ...config, depName: name, packageName: name, manager, depType, datasource,
+      currentVersion, currentValue: currentVersion, updateType: 'patch',
+    });
+    const immediate = name === 'go' || name === 'goreleaser/goreleaser';
+    const versioning = getVersioning(policy.versioning ?? getDefaultVersioning(datasource));
+    for (const releaseTimestamp of [freshReleaseTimestamp, matureReleaseTimestamp, undefined]) {
+      const result = await filterInternalChecks(policy, versioning, 'patch', [{ version: newVersion, releaseTimestamp }]);
+      assert.equal(result.pendingChecks, !immediate && releaseTimestamp !== matureReleaseTimestamp, name);
+    }
+    for (const security of [{ isVulnerabilityAlert: true }, { vulnerabilityFixVersion: newVersion }]) {
+      const securityPolicy = await applyPackageRules({ ...policy, ...security });
+      assert.equal(securityPolicy.minimumReleaseAge, null, name);
+      assert.equal(securityPolicy.prPriority, 20, name);
+      const result = await filterInternalChecks(securityPolicy, versioning, 'patch', [
+        { version: newVersion, releaseTimestamp: freshReleaseTimestamp },
+      ]);
+      assert.equal(result.pendingChecks, false, name);
+    }
+    const routinePolicy = await applyPackageRules({ ...policy, isVulnerabilityAlert: false });
+    assert.equal(routinePolicy.minimumReleaseAge, immediate ? null : '7 days', name);
+    assert.equal(routinePolicy.prPriority, 10, name);
+  }
   getDatasourceFor('go').getReleases = async () => ({
     releases: [
       ['v1.0.0', '1.18.0'],
@@ -59,13 +104,47 @@ async function main() {
     const branches = await flattenUpdates(config, {
       gomod: [{ packageFile: 'go.mod', deps: [{ ...dep, updates: val.updates }] }],
     });
+    if (depType === 'indirect') {
+      assert.equal(policy.enabled, true);
+      assert.deepEqual(branches, []);
+      const routineBranches = await flattenUpdates(config, {
+        gomod: [{
+          packageFile: 'go.mod',
+          deps: [{
+            ...dep,
+            updates: [
+              { updateType: 'major', newValue: 'v2.0.0', newVersion: 'v2.0.0', newMajor: 2 },
+              { updateType: 'digest', newValue: 'v0.0.0-20260101000000-abcdefabcdef' },
+              ...val.updates.map(update => ({ ...update, isVulnerabilityAlert: false })),
+            ],
+          }],
+        }],
+      });
+      assert.deepEqual(routineBranches, []);
+      for (const security of [{ isVulnerabilityAlert: true }, { vulnerabilityFixVersion: 'v1.0.1' }]) {
+        const securityBranches = await flattenUpdates(config, {
+          gomod: [{
+            packageFile: 'go.mod',
+            deps: [{ ...dep, updates: val.updates.map(update => ({ ...update, ...security })) }],
+          }],
+        });
+        assert.equal(securityBranches.length, 2);
+        for (const branch of securityBranches) {
+          assert.equal(branch.minimumReleaseAge, null);
+          assert.equal(branch.prPriority, 20);
+        }
+      }
+      continue;
+    }
     const patch = branches.find(branch => branch.updateType === 'patch');
     const minor = branches.find(branch => branch.updateType === 'minor');
-    assert.equal(patch.branchName, 'renovate/go-libraries');
+    assert.equal(patch.branchName, 'renovate/patch-go-libraries');
     assert.equal(patch.automerge, true);
     assert.equal(patch.rebaseWhen, 'behind-base-branch');
-    assert.equal(minor.automerge, false);
-    assert.equal(minor.rebaseWhen, 'conflicted');
+    assert.equal(minor.automerge, true);
+    assert.equal(minor.branchName, 'renovate/go-libraries');
+    assert.equal(minor.platformAutomerge, true);
+    assert.equal(minor.rebaseWhen, 'behind-base-branch');
     assert.notEqual(patch.branchName, minor.branchName);
     const libraries = await flattenUpdates(config, {
       gomod: [{
@@ -83,9 +162,9 @@ async function main() {
     });
     assert.deepEqual(
       [...new Set(libraries.filter(branch => branch.automerge).map(branch => branch.branchName))],
-      ['renovate/go-libraries'],
+      ['renovate/patch-go-libraries', 'renovate/go-libraries'],
     );
-    assert.equal(libraries.filter(branch => branch.automerge).length, 2);
+    assert.equal(libraries.filter(branch => branch.automerge).length, 3);
   }
   const actionBranches = await flattenUpdates(config, {
     'github-actions': [{
@@ -134,7 +213,7 @@ async function main() {
     }
   }
   assert.equal(actionBranches.filter(branch => branch.branchName === 'renovate/github-actions').length, 5);
-  assert.equal(actionBranches.find(branch => branch.manager === 'gomod').branchName, 'renovate/go-libraries');
+  assert.equal(actionBranches.find(branch => branch.manager === 'gomod').branchName, 'renovate/patch-go-libraries');
   for (const depType of ['github-runner', 'docker', 'uses-with']) {
     const policy = await applyPackageRules({
       ...config, manager: 'github-actions', depType, updateType: 'patch',
@@ -142,39 +221,154 @@ async function main() {
     assert.equal(policy.automerge, false);
   }
   const modules = [
-    ['github.com/aws/aws-sdk-go-v2', 'minor', 'go-aws-sdk'],
-    ['github.com/aws/aws-sdk-go-v2/config', 'minor', 'go-aws-sdk'],
-    ['github.com/aws/smithy-go', 'major', 'go-aws-sdk'],
-    ['k8s.io/api', 'minor', 'go-kubernetes'],
-    ['k8s.io/apimachinery', 'minor', 'go-kubernetes'],
-    ['k8s.io/client-go', 'minor', 'go-kubernetes'],
-    ['sigs.k8s.io/structured-merge-diff/v6', 'major', 'go-kubernetes'],
+    ['github.com/aws/aws-sdk-go-v2', 'minor', 'aws-go-modules'],
+    ['github.com/aws/aws-sdk-go-v2/config', 'minor', 'aws-go-modules'],
+    ['github.com/aws/smithy-go', 'minor', 'aws-go-modules'],
+    ['github.com/aws/smithy-go', 'patch', 'aws-go-modules'],
+    ['k8s.io/api', 'minor', 'kubernetes-go-modules'],
+    ['k8s.io/apimachinery', 'minor', 'kubernetes-go-modules'],
+    ['k8s.io/client-go', 'minor', 'kubernetes-go-modules'],
+    ['k8s.io/kops', 'minor', 'kubernetes-go-modules'],
+    ['sigs.k8s.io/controller-runtime', 'minor', 'kubernetes-go-modules'],
+    ['sigs.k8s.io/structured-merge-diff/v6', 'minor', 'kubernetes-go-modules'],
+    ['k8s.io/api', 'patch', 'kubernetes-go-modules'],
+    ['sigs.k8s.io/controller-runtime', 'patch', 'kubernetes-go-modules'],
+    ['github.com/ClickHouse/clickhouse-go/v2', 'minor', 'go-libraries'],
+    ['github.com/ClickHouse/ch-go', 'minor', 'go-libraries'],
+    ['github.com/elastic/go-elasticsearch/v8', 'minor', 'go-libraries'],
+    ['github.com/elastic/elastic-transport-go/v8', 'minor', 'go-libraries'],
+    ['go.opentelemetry.io/otel', 'minor', 'go-libraries'],
+    ['go.opentelemetry.io/otel/trace', 'minor', 'go-libraries'],
+    ['github.com/go-openapi/jsonpointer', 'minor', 'go-libraries'],
+    ['github.com/go-openapi/swag', 'minor', 'go-libraries'],
+    ['golang.org/x/net', 'minor', 'go-libraries'],
+    ['golang.org/x/sys', 'minor', 'go-libraries'],
+    ['github.com/aws/aws-sdk-go-v2', 'major', 'aws-go-modules'],
+    ['github.com/aws/smithy-go', 'major', 'aws-go-modules'],
+    ['k8s.io/api', 'major', 'kubernetes-go-modules'],
+    ['sigs.k8s.io/structured-merge-diff/v6', 'major', 'kubernetes-go-modules'],
+    ['github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute', 'major', 'azure-go-modules'],
+    ['github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork', 'major', 'azure-go-modules'],
+    ['go.opentelemetry.io/otel', 'major', 'opentelemetry-go-modules'],
+    ['go.opentelemetry.io/otel/trace', 'major', 'opentelemetry-go-modules'],
+    ['golang.org/x/net', 'major', 'golang-x-go-modules'],
+    ['golang.org/x/sys', 'major', 'golang-x-go-modules'],
     ['github.com/elastic/go-elasticsearch/v8', 'major', null],
-    ['github.com/stretchr/testify', 'minor', null],
+    ['github.com/go-openapi/jsonpointer', 'major', null],
+    ['github.com/stretchr/testify', 'minor', 'go-libraries'],
   ];
-  const manual = await flattenUpdates(config, {
+  const modulePackageFiles = {
     gomod: [{
       packageFile: 'go.mod',
       deps: modules.map(([name, type]) => ({
         depName: name, packageName: name, depType: 'require', datasource: 'go',
         currentValue: 'v1.0.0',
         updates: [{
-          updateType: type, newValue: type === 'major' ? 'v2.0.0' : 'v1.1.0',
-          newVersion: type === 'major' ? 'v2.0.0' : 'v1.1.0', newMajor: type === 'major' ? 2 : 1,
+          updateType: type, newValue: type === 'major' ? 'v2.0.0' : type === 'patch' ? 'v1.0.1' : 'v1.1.0',
+          newVersion: type === 'major' ? 'v2.0.0' : type === 'patch' ? 'v1.0.1' : 'v1.1.0', newMajor: type === 'major' ? 2 : 1,
         }],
       })),
     }],
-  });
-  for (const branch of manual) {
-    const group = modules.find(([name]) => name === branch.depName)[2];
-    assert.equal(branch.automerge, false);
-    assert.equal(branch.rebaseWhen, 'conflicted');
-    if (group) assert.equal(branch.branchName, `renovate/${group}`);
+  };
+  const moduleBranches = await flattenUpdates(config, modulePackageFiles);
+  for (const branch of moduleBranches) {
+    assert.deepEqual(branch.labels, [branch.updateType === 'major' ? 'dependencies/major' : 'dependencies']);
+    const group = modules.find(([name, type]) =>
+      name === branch.depName && type === branch.updateType)[2];
+    const automerge = branch.updateType === 'patch' || (branch.updateType === 'minor' && group !== 'kubernetes-go-modules');
+    assert.equal(branch.automerge, automerge);
+    assert.equal(branch.rebaseWhen, automerge ? 'behind-base-branch' : 'conflicted');
+    assert.equal(branch.prPriority ?? 0, branch.updateType === 'patch' ? 10 : branch.updateType === 'major' ? -1 : 0);
+    if (branch.automerge) {
+      assert.equal(branch.automergeType, 'pr');
+      assert.equal(branch.platformAutomerge, true);
+    }
+    if (group) assert.equal(branch.branchName, `renovate/${branch.updateType === 'patch' ? 'patch-' : branch.updateType === 'major' ? 'major-' : ''}${group}`);
     else assert.equal(branch.groupName, null);
+  }
+  const { branches: orderedModules } = await branchifyUpgrades({ ...config, errors: [], warnings: [] }, modulePackageFiles);
+  sortBranches(orderedModules);
+  assert.equal(orderedModules[0].updateType, 'patch');
+  assert.equal(orderedModules.at(-1).updateType, 'major');
+  for (const group of ['aws-go-modules', 'kubernetes-go-modules', 'azure-go-modules', 'opentelemetry-go-modules', 'golang-x-go-modules']) {
+    const majors = orderedModules.filter(branch => branch.branchName === `renovate/major-${group}`);
+    assert.equal(majors.length, 1, group);
+    assert.equal(majors[0].upgrades.length, 2, group);
+  }
+  const patch = moduleBranches.find(branch => branch.updateType === 'patch');
+  setCount('ConcurrentPRs', 100);
+  setCount('Branches', 100);
+  setCount('HourlyPRs', 0);
+  for (const limit of ['ConcurrentPRs', 'Branches']) {
+    assert.equal(isLimitReached(limit, { upgrades: [patch] }), false, limit);
+  }
+  setCount('HourlyPRs', 5);
+  assert.equal(isLimitReached('ConcurrentPRs', { upgrades: [patch] }), true);
+  setCount('HourlyPRs', 0);
+  const openapiBranches = await flattenUpdates(config, {
+    gomod: [{
+      packageFile: 'go.mod',
+      deps: [{
+        depName: 'k8s.io/kube-openapi', packageName: 'k8s.io/kube-openapi', depType: 'indirect', datasource: 'go',
+        currentValue: 'v0.0.0-20250710124328-f3f2b991d03b',
+        updates: [{ updateType: 'digest', newValue: 'v0.0.0-20260721132016-d427ff9ee9ad' }],
+      }],
+    }],
+  });
+  assert.equal(openapiBranches.length, 0);
+  const osv = new Vulnerabilities({
+    getVulnerabilities: async (ecosystem, name) => [{
+      id: 'GO-2099-0001',
+      affected: [{
+        package: { ecosystem, name },
+        ranges: [{ type: 'SEMVER', events: [{ introduced: '0' }, { fixed: '1.0.1' }] }],
+      }],
+    }],
+  });
+  for (const [name, depType] of [
+    ['github.com/stretchr/testify', 'require'],
+    ['github.com/aws/smithy-go', 'require'],
+    ['k8s.io/api', 'require'],
+    ['example.com/indirect', 'indirect'],
+  ]) {
+    const securityConfig = { ...config, packageRules: [...config.packageRules] };
+    const packageFiles = {
+      gomod: [{
+        packageFile: 'go.mod',
+        deps: [{
+          depName: name, packageName: name, depType, datasource: 'go', currentValue: 'v1.0.0',
+          updates: [
+            { updateType: 'patch', newValue: 'v1.0.1', newVersion: 'v1.0.1' },
+            { updateType: 'minor', newValue: 'v1.1.0', newVersion: 'v1.1.0' },
+            { updateType: 'major', newValue: 'v2.0.0', newVersion: 'v2.0.0', newMajor: 2 },
+          ],
+        }],
+      }],
+    };
+    await osv.appendVulnerabilityPackageRules(securityConfig, packageFiles);
+    assert(securityConfig.packageRules.length > config.packageRules.length, name);
+    const securityBranches = await flattenUpdates(securityConfig, packageFiles);
+    assert.equal(securityBranches.length, 3, name);
+    for (const branch of securityBranches) {
+      assert.equal(branch.isVulnerabilityAlert, true, name);
+      assert.equal(branch.minimumReleaseAge, null, name);
+      assert.equal(branch.prPriority, 20, name);
+      assert.equal(branch.groupName, null, name);
+      assert.deepEqual(branch.labels, ['security'], name);
+      assert.deepEqual([...new Set(branch.addLabels ?? [])], branch.updateType === 'major' ? ['dependencies/major'] : [], name);
+      assert.equal(branch.automerge, branch.updateType === 'patch'
+        || (branch.updateType === 'minor' && name !== 'k8s.io/api'), name);
+    }
+    const { branches: alerts } = await branchifyUpgrades({ ...securityConfig, errors: [], warnings: [] }, packageFiles);
+    assert.equal(alerts.length, 1, name);
+    const ordered = [...orderedModules, ...alerts];
+    sortBranches(ordered);
+    assert.equal(ordered[0].isVulnerabilityAlert, true, name);
+    assert.equal(ordered[1].updateType, 'patch', name);
   }
   const workflow = fs.readFileSync(path.join(repo, '.github/workflows/ci.yml'), 'utf8');
   const extracted = [
-    ...actions.extractPackageFile(workflow, '.github/workflows/ci.yml', config).deps,
+    ...(await actions.extractPackageFile(workflow, '.github/workflows/ci.yml', config)).deps,
     ...config.customManagers.flatMap(manager =>
       regex.extractPackageFile(workflow, '.github/workflows/ci.yml', manager)?.deps ?? []),
   ];
@@ -189,14 +383,51 @@ async function main() {
       const policy = await applyPackageRules({
         ...config, ...dep, packageName: name, manager, updateType: type,
       });
-      assert.equal(policy.automerge, false, name);
-      assert.equal(policy.rebaseWhen, 'conflicted', name);
-      assert.equal(policy.groupName, type === 'major' ? null : 'CI tools', name);
+      const builderPatch = name === 'goreleaser/goreleaser' && type === 'patch';
+      assert.equal(policy.automerge, builderPatch, name);
+      assert.equal(policy.rebaseWhen, builderPatch ? 'behind-base-branch' : 'conflicted', name);
+      assert.equal(policy.groupName, type === 'major' ? null : builderPatch ? 'Go build environment' : 'CI tools', name);
+      assert.equal(policy.minimumReleaseAge, builderPatch ? null : '7 days', name);
     }
   }
-  console.log('PASS: available module patches automerge independently of manual minors');
+  const builder = extracted.find(dep => (dep.packageName ?? dep.depName) === 'goreleaser/goreleaser');
+  const buildBranches = await flattenUpdates(config, {
+    'custom.regex': [{
+      packageFile: '.github/workflows/ci.yml',
+      deps: [{
+        ...builder,
+        packageName: builder.packageName ?? builder.depName,
+        updates: [{ updateType: 'patch', newValue: 'v1.25.2', newVersion: 'v1.25.2' }],
+      }],
+    }],
+    gomod: [{
+      packageFile: 'go.mod',
+      deps: ['golang', 'toolchain'].map(depType => ({
+        depName: 'go', packageName: 'go', depType, datasource: 'golang-version', currentValue: '1.26.8',
+        updates: [{ updateType: 'patch', newValue: '1.26.9', newVersion: '1.26.9' }],
+      })),
+    }],
+  });
+  assert.equal(buildBranches.length, 3);
+  assert.deepEqual([...new Set(buildBranches.map(branch => branch.branchName))], ['renovate/go-build-environment']);
+  for (const branch of buildBranches) {
+    assert.equal(branch.automerge, true);
+    assert.equal(branch.platformAutomerge, true);
+    assert.equal(branch.automergeType, 'pr');
+    assert.equal(branch.minimumReleaseAge, null);
+    assert.equal(branch.rebaseWhen, 'behind-base-branch');
+  }
+  console.log('PASS: module patches and minors automerge in separate branches');
   console.log('PASS: compatible GitHub Actions updates automerge separately; major actions stay manual');
-  console.log('PASS: unsupported Go versions are filtered; manual families and CI tools stay separate');
+  console.log('PASS: Kubernetes minors, module majors and non-builder CI tools stay manual; eligible library updates automerge');
+  console.log('PASS: unsupported Go versions are filtered; PR creation is paced without a concurrent cap');
+  console.log('PASS: security and patch updates precede minors and manual family-grouped majors');
+  console.log('PASS: routine releases wait seven days; known vulnerability fixes and build-environment patches remain immediate');
+  console.log('PASS: OSV rules bypass the release delay without automerging Kubernetes minors or majors');
+  console.log('PASS: extracted GoReleaser patches and both Go compiler directives share one automerge branch');
+  console.log('PASS: standalone kube-openapi revision updates are disabled without blocking Kubernetes updates');
+  console.log('PASS: indirect lookups remain enabled; only known vulnerability fixes produce updates');
+  console.log('PASS: majors use dependencies/major; security majors retain the security label');
 }
 
 main().catch(error => {
