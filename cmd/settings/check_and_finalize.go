@@ -47,7 +47,7 @@ func runCheckAndFinalize(appCtx *app.Context) error {
 		K8sClient:     appCtx.K8sClient,
 		Namespace:     appCtx.Namespace,
 		JobName:       checkJobName,
-		ServiceName:   "settings",
+		ServiceName:   settingsServiceName,
 		ScaleUpFn:     scale.ScaleUpAndReleaseLock,
 		ScaleDownFn:   scale.ScaleDown,
 		ScaleSelector: appCtx.Config.Settings.Restore.ScaleDownLabelSelector,

@@ -26,6 +26,9 @@ const (
 	restoreNameTemplate      = "stackgraph-v2-restore"
 	configMapDefaultFileMode = 0755
 	purgeStackgraphDataFlag  = "-force"
+	backupLogVolumeName      = "backup-log"
+	restoreScriptsVolumeName = "backup-restore-scripts"
+	storageKeysVolumeName    = "minio-keys"
 )
 
 // Restore command flags
@@ -318,9 +321,9 @@ func buildRestoreEnvVars(backupFile string, config *config.Config) []corev1.EnvV
 // buildRestoreVolumeMounts constructs volume mounts for the restore job container
 func buildRestoreVolumeMounts(config *config.Config) []corev1.VolumeMount {
 	volumeMounts := []corev1.VolumeMount{
-		{Name: "backup-log", MountPath: "/opt/docker/etc_log"},
-		{Name: "backup-restore-scripts", MountPath: "/backup-restore-scripts"},
-		{Name: "minio-keys", MountPath: "/aws-keys"},
+		{Name: backupLogVolumeName, MountPath: "/opt/docker/etc_log"},
+		{Name: restoreScriptsVolumeName, MountPath: "/backup-restore-scripts"},
+		{Name: storageKeysVolumeName, MountPath: "/aws-keys"},
 		{Name: "tmp-data", MountPath: "/tmp-data"},
 	}
 
@@ -356,7 +359,7 @@ func buildRestoreInitContainers(config *config.Config) []corev1.Container {
 func buildRestoreVolumes(jobName string, config *config.Config, defaultMode int32) []corev1.Volume {
 	volumes := []corev1.Volume{
 		{
-			Name: "backup-log",
+			Name: backupLogVolumeName,
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{
@@ -366,7 +369,7 @@ func buildRestoreVolumes(jobName string, config *config.Config, defaultMode int3
 			},
 		},
 		{
-			Name: "backup-restore-scripts",
+			Name: restoreScriptsVolumeName,
 			VolumeSource: corev1.VolumeSource{
 				ConfigMap: &corev1.ConfigMapVolumeSource{
 					LocalObjectReference: corev1.LocalObjectReference{
@@ -377,7 +380,7 @@ func buildRestoreVolumes(jobName string, config *config.Config, defaultMode int3
 			},
 		},
 		{
-			Name: "minio-keys",
+			Name: storageKeysVolumeName,
 			VolumeSource: corev1.VolumeSource{
 				Secret: &corev1.SecretVolumeSource{
 					SecretName: restore.MinioKeysSecretName,

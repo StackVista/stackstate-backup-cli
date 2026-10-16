@@ -45,7 +45,7 @@ func (c *Checker) checkClickHouse(ctx context.Context, inventory inventory) Resu
 		if member.replicas < minReplicas {
 			return result("clickhouse", Degraded, fmt.Sprintf("%s belongs to a shard with fewer than two replicas", member.pod.Name))
 		}
-		command := []string{"bash", "-ec", clickhouseQuery, "replication-check", clickhouseSQL}
+		command := []string{bashExecutable, bashExecFlag, clickhouseQuery, replicationScriptName, clickhouseSQL}
 		data, err := c.query(ctx, member.pod.Name, "clickhouse", command)
 		if err != nil {
 			return result("clickhouse", Unknown, err.Error())
@@ -67,7 +67,7 @@ func (c *Checker) verifyEmptyLogs(ctx context.Context, pod string, rows []replic
 		if !rows[n].needsLogVerification {
 			continue
 		}
-		command := []string{"bash", "-ec", clickhouseQuery, "replication-check", clickhouseEmptyLogSQL, "--param_log_path=" + rows[n].path + "/log"}
+		command := []string{bashExecutable, bashExecFlag, clickhouseQuery, replicationScriptName, clickhouseEmptyLogSQL, "--param_log_path=" + rows[n].path + "/log"}
 		data, err := c.query(ctx, pod, "clickhouse", command)
 		if err != nil {
 			return fmt.Errorf("%s: could not verify empty replication log: %w", pod, err)
@@ -178,7 +178,7 @@ func evaluateClickHouse(observations []replicaObservation) Result {
 	}
 	if len(problems) > 0 {
 		sort.Strings(problems)
-		return Result{Component: "clickhouse", Status: Degraded, Messages: problems}
+		return Result{Component: clickhouseComponent, Status: Degraded, Messages: problems}
 	}
 	report := result("clickhouse", Healthy, fmt.Sprintf("%d replicated table groups checked on every member; no pending data replication tasks", len(groups)))
 	if historicalErrors > 0 {

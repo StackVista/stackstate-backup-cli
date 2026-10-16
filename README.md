@@ -455,12 +455,60 @@ This project uses GitHub Actions and GoReleaser for automated releases:
 2. GitHub Actions automatically builds binaries for multiple platforms
 3. GoReleaser creates a GitHub release and uploads artifacts to S3
 
+### Dependency updates
+
+Renovate runs daily and keeps compiler updates separate from library updates.
+Routine updates wait until releases are at least seven days old.
+Known vulnerability fixes and build-environment patches have no release delay.
+OSV alerts identify known vulnerable dependencies and trigger fix PRs.
+GitHub Actions patches, minors, and digest updates use a separate automerge PR.
+Major action upgrades require manual review.
+CI tools use a separate manual group; their major upgrades get individual PRs.
+GoReleaser patches share the compiler-patch group and use native automerge.
+GoReleaser minors remain in the manual CI tool group.
+Module patches and minors use three groups: AWS SDK, Kubernetes, and other Go libraries.
+Each group keeps patches separate from minors.
+The other-library group includes ClickHouse, Elasticsearch, OpenTelemetry,
+OpenAPI, and `golang.org/x/*`.
+Module patches, AWS SDK minors, and other-library minors use native automerge
+after artifact validation and App approval.
+Kubernetes minors stay grouped for manual review.
+Kubernetes upgrades select compatible `kube-openapi` revisions instead of independent Renovate updates.
+Renovate allows ten concurrent PRs and inherits the shared hourly creation limit.
+Compiler updates stay within the release line declared in `renovate.json`.
+Module candidates that declare a newer required Go release line are filtered out.
+CI rejects a module update that selects a compiler from another release line.
+Manual groups rebase only when conflicting; automatic groups stay current with main.
+The shared approval action approves verified Renovate commits with native automerge enabled.
+GitHub requires the existing CI checks and an approving review before merging.
+Compiler patches use native automerge after artifact validation and App approval.
+Library updates include direct and indirect modules.
+Module majors and Go release-line migrations require individual manual review.
+Dependency updates reach published binaries through the existing tag release process.
+
+The approval workflow calls the pinned public `renovate-config` action directly.
+The separate approval App supplies the review token.
+The updater App needs Contents, Pull requests, Issues, and Workflows write permissions, plus Checks and Commit statuses read permissions.
+
+Before merging the Renovate workflows:
+
+1. Grant `renovate-update-app` access to this repository.
+2. Install `renovatee-approver-stackvista` on this repository.
+3. Apply the `pulumi-infra/github/repoVariables` changes that supply both Apps' credentials.
+4. Check that the live branch protection requires all five CI checks listed in `pulumi-infra/github/repositories/resources.yaml`.
+
 ## Development
 
 ### Running Tests
 
 ```bash
 go test ./...
+```
+
+Test the Renovate rules against an installed Renovate distribution:
+
+```bash
+mise exec -- node scripts/renovate-config-test.cjs /path/to/renovate/dist /path/to/renovate-config
 ```
 
 ### Linting

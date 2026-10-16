@@ -39,7 +39,7 @@ func (c *Checker) checkKafka(ctx context.Context, inventory inventory) Result {
 	if err := expectedMembers(members); err != nil {
 		return result("kafka", Degraded, err.Error())
 	}
-	command := []string{"bash", "-ec", kafkaQuery, "replication-check", "--bootstrap-server", "localhost:9092", "--describe"}
+	command := []string{bashExecutable, bashExecFlag, kafkaQuery, replicationScriptName, "--bootstrap-server", "localhost:9092", "--describe"}
 	data, err := c.query(ctx, members[0].pod.Name, "kafka", command)
 	if err != nil {
 		return result("kafka", Unknown, err.Error())
@@ -48,7 +48,7 @@ func (c *Checker) checkKafka(ctx context.Context, inventory inventory) Result {
 	if report.Status == Unknown || hasTransactionTopic(string(data)) {
 		return report
 	}
-	probe := []string{"bash", "-ec", transactionTopicQuery, "replication-check", "--bootstrap-server", "localhost:9092"}
+	probe := []string{bashExecutable, bashExecFlag, transactionTopicQuery, replicationScriptName, "--bootstrap-server", "localhost:9092"}
 	presence, err := c.query(ctx, members[0].pod.Name, "kafka", probe)
 	if err != nil || strings.TrimSpace(string(presence)) != "absent" {
 		report.Status = Unknown
@@ -144,7 +144,7 @@ func evaluateKafka(output string) Result {
 	}
 	report := result("kafka", Healthy, fmt.Sprintf("all partitions of %d topics have at least two replicas, complete ISR and an in-sync leader", len(counts)))
 	if len(problems) > 0 {
-		report = Result{Component: "kafka", Status: Degraded, Messages: problems}
+		report = Result{Component: kafkaComponent, Status: Degraded, Messages: problems}
 	}
 	return report
 }
