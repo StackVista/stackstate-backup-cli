@@ -4,6 +4,7 @@
     "github>StackVista/renovate-config",
     "github>StackVista/renovate-config:go"
   ],
+  "minimumReleaseAge": "7 days",
   "prConcurrentLimit": 5,
   "rebaseWhen": "behind-base-branch",
   "packageRules": [
@@ -82,7 +83,7 @@
       }
     },
     {
-      "description": "Group coupled Kubernetes client minor updates",
+      "description": "Review coupled Kubernetes client minors for API compatibility",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["require", "indirect", "replace"],
       "matchPackageNames": ["k8s.io/**", "sigs.k8s.io/**"],
@@ -91,7 +92,9 @@
       "groupSlug": "go-kubernetes",
       "group": {
         "branchTopic": "go-kubernetes"
-      }
+      },
+      "automerge": false,
+      "rebaseWhen": "conflicted"
     },
     {
       "description": "Keep module patches separate from minor updates",
@@ -131,6 +134,11 @@
       "automerge": true,
       "automergeType": "pr",
       "platformAutomerge": true
+    },
+    {
+      "description": "Apply known vulnerability fixes without a release delay",
+      "matchJsonata": ["isVulnerabilityAlert = true or $exists(vulnerabilityFixVersion)"],
+      "minimumReleaseAge": null
     }
   ]
 }
