@@ -12,10 +12,16 @@ const { get: getVersioning } = require(path.join(renovate, 'modules/versioning/i
 const { lookupUpdates } = require(path.join(renovate, 'workers/repository/process/lookup/index.js'));
 const { filterInternalChecks } = require(path.join(renovate, 'workers/repository/process/lookup/filter-checks.js'));
 const { flattenUpdates } = require(path.join(renovate, 'workers/repository/updates/flatten.js'));
+const { branchifyUpgrades } = require(path.join(renovate, 'workers/repository/updates/branchify.js'));
+const { sortBranches } = require(path.join(renovate, 'workers/repository/process/sort.js'));
+const { setCount, isLimitReached } = require(path.join(renovate, 'workers/global/limits.js'));
 const { Vulnerabilities } = require(path.join(renovate, 'workers/repository/process/vulnerabilities.js'));
 const actions = require(path.join(renovate, 'modules/manager/github-actions/index.js'));
 const regex = require(path.join(renovate, 'modules/manager/custom/regex/index.js'));
-require(path.join(renovate, 'config/global.js')).GlobalConfig.set({ platform: 'github' });
+require(path.join(renovate, 'config/global.js')).GlobalConfig.set({
+  platform: 'github',
+  localDir: path.resolve(__dirname, '..'),
+});
 
 async function main() {
   const repo = path.resolve(__dirname, '..');
@@ -32,7 +38,7 @@ async function main() {
     extends: [],
     semanticCommits: 'disabled',
   });
-  assert.equal(config.prConcurrentLimit, 10);
+  assert.equal(config.prConcurrentLimit, 0);
   assert.equal(config.prHourlyLimit, 5);
   assert.equal(config.osvVulnerabilityAlerts, true);
   assert.equal(config.minimumReleaseAge, '7 days');
@@ -58,6 +64,7 @@ async function main() {
     for (const security of [{ isVulnerabilityAlert: true }, { vulnerabilityFixVersion: newVersion }]) {
       const securityPolicy = await applyPackageRules({ ...policy, ...security });
       assert.equal(securityPolicy.minimumReleaseAge, null, name);
+      assert.equal(securityPolicy.prPriority, 20, name);
       const result = await filterInternalChecks(securityPolicy, versioning, 'patch', [
         { version: newVersion, releaseTimestamp: freshReleaseTimestamp },
       ]);
@@ -65,6 +72,7 @@ async function main() {
     }
     const routinePolicy = await applyPackageRules({ ...policy, isVulnerabilityAlert: false });
     assert.equal(routinePolicy.minimumReleaseAge, immediate ? null : '7 days', name);
+    assert.equal(routinePolicy.prPriority, 10, name);
   }
   getDatasourceFor('go').getReleases = async () => ({
     releases: [
@@ -203,13 +211,21 @@ async function main() {
     ['github.com/go-openapi/swag', 'minor', 'go-libraries'],
     ['golang.org/x/net', 'minor', 'go-libraries'],
     ['golang.org/x/sys', 'minor', 'go-libraries'],
-    ['github.com/aws/smithy-go', 'major', null],
-    ['sigs.k8s.io/structured-merge-diff/v6', 'major', null],
+    ['github.com/aws/aws-sdk-go-v2', 'major', 'aws-go-modules'],
+    ['github.com/aws/smithy-go', 'major', 'aws-go-modules'],
+    ['k8s.io/api', 'major', 'kubernetes-go-modules'],
+    ['sigs.k8s.io/structured-merge-diff/v6', 'major', 'kubernetes-go-modules'],
+    ['github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute', 'major', 'azure-go-modules'],
+    ['github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork', 'major', 'azure-go-modules'],
+    ['go.opentelemetry.io/otel', 'major', 'opentelemetry-go-modules'],
+    ['go.opentelemetry.io/otel/trace', 'major', 'opentelemetry-go-modules'],
+    ['golang.org/x/net', 'major', 'golang-x-go-modules'],
+    ['golang.org/x/sys', 'major', 'golang-x-go-modules'],
     ['github.com/elastic/go-elasticsearch/v8', 'major', null],
     ['github.com/go-openapi/jsonpointer', 'major', null],
     ['github.com/stretchr/testify', 'minor', 'go-libraries'],
   ];
-  const moduleBranches = await flattenUpdates(config, {
+  const modulePackageFiles = {
     gomod: [{
       packageFile: 'go.mod',
       deps: modules.map(([name, type]) => ({
@@ -221,20 +237,41 @@ async function main() {
         }],
       })),
     }],
-  });
+  };
+  const moduleBranches = await flattenUpdates(config, modulePackageFiles);
   for (const branch of moduleBranches) {
     const group = modules.find(([name, type]) =>
       name === branch.depName && type === branch.updateType)[2];
     const automerge = branch.updateType === 'patch' || (branch.updateType === 'minor' && group !== 'kubernetes-go-modules');
     assert.equal(branch.automerge, automerge);
     assert.equal(branch.rebaseWhen, automerge ? 'behind-base-branch' : 'conflicted');
+    assert.equal(branch.prPriority ?? 0, branch.updateType === 'patch' ? 10 : branch.updateType === 'major' ? -1 : 0);
     if (branch.automerge) {
       assert.equal(branch.automergeType, 'pr');
       assert.equal(branch.platformAutomerge, true);
     }
-    if (group) assert.equal(branch.branchName, `renovate/${branch.updateType === 'patch' ? 'patch-' : ''}${group}`);
+    if (group) assert.equal(branch.branchName, `renovate/${branch.updateType === 'patch' ? 'patch-' : branch.updateType === 'major' ? 'major-' : ''}${group}`);
     else assert.equal(branch.groupName, null);
   }
+  const { branches: orderedModules } = await branchifyUpgrades({ ...config, errors: [], warnings: [] }, modulePackageFiles);
+  sortBranches(orderedModules);
+  assert.equal(orderedModules[0].updateType, 'patch');
+  assert.equal(orderedModules.at(-1).updateType, 'major');
+  for (const group of ['aws-go-modules', 'kubernetes-go-modules', 'azure-go-modules', 'opentelemetry-go-modules', 'golang-x-go-modules']) {
+    const majors = orderedModules.filter(branch => branch.branchName === `renovate/major-${group}`);
+    assert.equal(majors.length, 1, group);
+    assert.equal(majors[0].upgrades.length, 2, group);
+  }
+  const patch = moduleBranches.find(branch => branch.updateType === 'patch');
+  setCount('ConcurrentPRs', 100);
+  setCount('Branches', 100);
+  setCount('HourlyPRs', 0);
+  for (const limit of ['ConcurrentPRs', 'Branches']) {
+    assert.equal(isLimitReached(limit, { upgrades: [patch] }), false, limit);
+  }
+  setCount('HourlyPRs', 5);
+  assert.equal(isLimitReached('ConcurrentPRs', { upgrades: [patch] }), true);
+  setCount('HourlyPRs', 0);
   const openapiBranches = await flattenUpdates(config, {
     gomod: [{
       packageFile: 'go.mod',
@@ -277,14 +314,21 @@ async function main() {
     for (const branch of securityBranches) {
       assert.equal(branch.isVulnerabilityAlert, true, name);
       assert.equal(branch.minimumReleaseAge, null, name);
+      assert.equal(branch.prPriority, 20, name);
       assert.equal(branch.groupName, null, name);
       assert.equal(branch.automerge, branch.updateType === 'patch'
         || (branch.updateType === 'minor' && name !== 'k8s.io/api'), name);
     }
+    const { branches: alerts } = await branchifyUpgrades({ ...securityConfig, errors: [], warnings: [] }, packageFiles);
+    assert.equal(alerts.length, 1, name);
+    const ordered = [...orderedModules, ...alerts];
+    sortBranches(ordered);
+    assert.equal(ordered[0].isVulnerabilityAlert, true, name);
+    assert.equal(ordered[1].updateType, 'patch', name);
   }
   const workflow = fs.readFileSync(path.join(repo, '.github/workflows/ci.yml'), 'utf8');
   const extracted = [
-    ...actions.extractPackageFile(workflow, '.github/workflows/ci.yml', config).deps,
+    ...(await actions.extractPackageFile(workflow, '.github/workflows/ci.yml', config)).deps,
     ...config.customManagers.flatMap(manager =>
       regex.extractPackageFile(workflow, '.github/workflows/ci.yml', manager)?.deps ?? []),
   ];
@@ -336,7 +380,8 @@ async function main() {
   console.log('PASS: module patches and minors automerge in separate branches');
   console.log('PASS: compatible GitHub Actions updates automerge separately; major actions stay manual');
   console.log('PASS: Kubernetes minors, module majors and non-builder CI tools stay manual; other module minors and all patches automerge');
-  console.log('PASS: unsupported Go versions are filtered and PR creation is limited');
+  console.log('PASS: unsupported Go versions are filtered; PR creation is paced without a concurrent cap');
+  console.log('PASS: security and patch updates precede minors and manual family-grouped majors');
   console.log('PASS: routine releases wait seven days; known vulnerability fixes and build-environment patches remain immediate');
   console.log('PASS: OSV rules bypass the release delay without automerging Kubernetes minors or majors');
   console.log('PASS: extracted GoReleaser patches and both Go compiler directives share one automerge branch');

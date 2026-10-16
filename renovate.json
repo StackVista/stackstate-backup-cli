@@ -6,7 +6,7 @@
   ],
   "osvVulnerabilityAlerts": true,
   "minimumReleaseAge": "7 days",
-  "prConcurrentLimit": 10,
+  "prConcurrentLimit": 0,
   "rebaseWhen": "conflicted",
   "packageRules": [
     {
@@ -52,6 +52,15 @@
       }
     },
     {
+      "description": "Review major migrations after compatible updates",
+      "matchUpdateTypes": ["major"],
+      "groupName": null,
+      "groupSlug": null,
+      "automerge": false,
+      "rebaseWhen": "conflicted",
+      "prPriority": -1
+    },
+    {
       "description": "Automerge Go library patches and minors after required validation",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["require", "indirect", "replace"],
@@ -74,11 +83,11 @@
       "rebaseWhen": "conflicted"
     },
     {
-      "description": "Group compatible Kubernetes modules with their coupled dependencies",
+      "description": "Group Kubernetes modules with their coupled dependencies",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["require", "indirect", "replace"],
       "matchPackageNames": ["k8s.io/**", "sigs.k8s.io/**"],
-      "matchUpdateTypes": ["patch", "minor"],
+      "matchUpdateTypes": ["patch", "minor", "major"],
       "groupName": "Kubernetes Go modules",
       "groupSlug": "kubernetes-go-modules"
     },
@@ -92,13 +101,40 @@
       "rebaseWhen": "conflicted"
     },
     {
-      "description": "Group compatible AWS SDK and Smithy modules",
+      "description": "Group AWS SDK and Smithy modules",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["require", "indirect", "replace"],
       "matchPackageNames": ["github.com/aws/**"],
-      "matchUpdateTypes": ["patch", "minor"],
+      "matchUpdateTypes": ["patch", "minor", "major"],
       "groupName": "AWS Go modules",
       "groupSlug": "aws-go-modules"
+    },
+    {
+      "description": "Group Azure module major migrations",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchPackageNames": ["github.com/Azure/**"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "Azure Go modules",
+      "groupSlug": "azure-go-modules"
+    },
+    {
+      "description": "Group OpenTelemetry module major migrations",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchPackageNames": ["go.opentelemetry.io/**"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "OpenTelemetry Go modules",
+      "groupSlug": "opentelemetry-go-modules"
+    },
+    {
+      "description": "Group golang.org/x module major migrations",
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["require", "indirect", "replace"],
+      "matchPackageNames": ["golang.org/x/**"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "golang.org/x Go modules",
+      "groupSlug": "golang-x-go-modules"
     },
     {
       "description": "Group manual Kubernetes module revisions",
@@ -159,12 +195,9 @@
       "rebaseWhen": "behind-base-branch"
     },
     {
-      "description": "Review major migrations individually",
-      "matchUpdateTypes": ["major"],
-      "groupName": null,
-      "groupSlug": null,
-      "automerge": false,
-      "rebaseWhen": "conflicted"
+      "description": "Prioritize patch updates before minors and major migrations",
+      "matchUpdateTypes": ["patch"],
+      "prPriority": 10
     },
     {
       "description": "Let Kubernetes consumer upgrades select a compatible kube-openapi revision",
@@ -175,7 +208,8 @@
     {
       "description": "Apply known vulnerability fixes without a release delay",
       "matchJsonata": ["isVulnerabilityAlert = true or $exists(vulnerabilityFixVersion)"],
-      "minimumReleaseAge": null
+      "minimumReleaseAge": null,
+      "prPriority": 20
     }
   ]
 }
