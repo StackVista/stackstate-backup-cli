@@ -220,6 +220,39 @@
       "matchJsonata": ["isVulnerabilityAlert = true or $exists(vulnerabilityFixVersion)"],
       "minimumReleaseAge": null,
       "prPriority": 20
+    },
+    {
+      "matchManagers": [
+        "custom.regex",
+        "github-actions"
+      ],
+      "matchPackageNames": [
+        "StackVista/renovate-config"
+      ],
+      "groupName": "Renovate configuration",
+      "groupSlug": "renovate-config",
+      "separateMajorMinor": false,
+      "separateMinorPatch": false,
+      "automerge": false
+    }
+  ],
+  "description": "Renovate release v1.0.0",
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Track the release behind shared Renovate preset SHA pins.",
+      "managerFilePatterns": [
+        "/(^|/)renovate\\.json$/"
+      ],
+      "matchStringsStrategy": "recursive",
+      "matchStrings": [
+        "^[\\s\\S]*\"description\"\\s*:\\s*\"Renovate release (?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)\"[\\s\\S]*$",
+        "^[\\s\\S]*?(?:local|github)>StackVista/renovate-config(?:(?::|//)[^\"#]+)?#(?<currentDigest>[a-f0-9]{40})[\\s\\S]*$"
+      ],
+      "depNameTemplate": "StackVista/renovate-config",
+      "datasourceTemplate": "github-tags",
+      "versioningTemplate": "semver",
+      "autoReplaceStringTemplate": "{{{replace '((?:local|github)>StackVista/renovate-config(?:(?::|//)[^\"#]+)?#)[a-f0-9]{40}' (replace 'SHA' newDigest '$1SHA') (replace '(\"description\"\\s*:\\s*\"Renovate release )v[0-9]+\\.[0-9]+\\.[0-9]+' (replace 'VERSION' newValue '$1VERSION') replaceString)}}}"
     }
   ]
 }
