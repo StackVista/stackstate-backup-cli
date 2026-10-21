@@ -1,8 +1,8 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "github>StackVista/renovate-config",
-    "github>StackVista/renovate-config:go"
+    "github>StackVista/renovate-config#005e342f15c5481932542b5552b23cdd21e624a9",
+    "github>StackVista/renovate-config:go#005e342f15c5481932542b5552b23cdd21e624a9"
   ],
   "osvVulnerabilityAlerts": true,
   "minimumReleaseAge": "7 days",
