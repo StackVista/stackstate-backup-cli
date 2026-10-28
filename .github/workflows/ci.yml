@@ -185,13 +185,15 @@ jobs:
           severity: CRITICAL,HIGH,MEDIUM,LOW
           with-grype: "true"
           upload-sarif: "false"
-      - name: Upload security evidence
+      - name: Upload release candidates and security evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-artifact-security
           path: |
             artifact-scan/metadata/
+            dist/*.tar.gz
+            dist/*.zip
             dist/*_checksums.txt
             reports/
           if-no-files-found: warn
