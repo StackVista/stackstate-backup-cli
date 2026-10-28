@@ -1,152 +1,12 @@
-name: Released artifact delivery scan
+name: Per-target released artifact Grype scan
 on:
   workflow_dispatch:
 permissions: {}
-env:
-  RELEASE_TAG: v0.11.2
-  RELEASE_SHA: ff789c22d91dccf49ae0f76e3be18c8c792eeaae
 jobs:
-  delivery:
-    name: Verify and scan published release artifacts
+  grype:
+    name: Scan each published binary separately with Grype
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ env.RELEASE_SHA }}
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: false
-      - name: Download release and record tag provenance
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          mkdir -p dist reports
-          gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" > reports/tag-ref.json
-          tag_object=$(jq -r '.object.sha' reports/tag-ref.json)
-          gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" > reports/tag-object.json
-          jq -e --arg sha "${RELEASE_SHA}" '.object.type == "commit" and .object.sha == $sha and .verification.verified == true' reports/tag-object.json
-          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" > reports/release.json
-          jq -e '.draft == false and .prerelease == false' reports/release.json
-          gh release download "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --dir dist
-          scripts/prepare-artifact-scan-rootfs.sh
-      - name: Verify published asset digests and embedded source versions
-        run: |
-          python3 - <<'VERIFY'
-          import hashlib, json, os, pathlib, subprocess
-          release = json.loads(pathlib.Path('reports/release.json').read_text())
-          assets = release['assets']
-          assert len(assets) == 6, [a['name'] for a in assets]
-          verified = []
-          for asset in assets:
-              path = pathlib.Path('dist') / asset['name']
-              digest = 'sha256:' + hashlib.sha256(path.read_bytes()).hexdigest()
-              assert digest == asset['digest'], asset['name']
-              verified.append({'name': asset['name'], 'digest': digest, 'url': asset['browser_download_url']})
-          metadata = list(pathlib.Path('artifact-scan/metadata').glob('*.txt'))
-          assert len(metadata) == 5
-          for path in metadata:
-              text = path.read_text()
-              assert 'go1.26.10' in text, path
-              assert 'golang.org/x/net\tv0.62.0\t' in text, path
-              assert 'vcs.revision=' + os.environ['RELEASE_SHA'] in text, path
-              assert 'vcs.modified=false' in text, path
-          binaries = list(pathlib.Path('artifact-scan/rootfs').rglob('sts-backup*'))
-          assert len(binaries) == 5
-          for binary in binaries:
-              symbols = subprocess.check_output(['go', 'tool', 'nm', str(binary)], text=True)
-              assert 'golang.org/x/crypto/openpgp' not in symbols, binary
-          pathlib.Path('reports/openpgp-symbols.txt').write_text('No OpenPGP symbols in any of the five published binaries; symbol tables retained.\n')
-          pathlib.Path('reports/verified-assets.json').write_text(json.dumps(verified, indent=2) + '\n')
-          print('All six published asset digests and five embedded build versions verified')
-          VERIFY
-          scripts/assert-go-symbols.sh artifact-scan/rootfs/opt/standalone/stackstate-backup-cli/*/sts-backup*
-          binary=artifact-scan/rootfs/opt/standalone/stackstate-backup-cli/linux-amd64/sts-backup
-          chmod +x "${binary}"
-          "${binary}" --help
-          "${binary}" version | tee artifact-scan/metadata/linux-smoke.txt
-          grep -Fx "Version: ${RELEASE_TAG#v}" artifact-scan/metadata/linux-smoke.txt
-          grep -Fx "Commit: ${RELEASE_SHA}" artifact-scan/metadata/linux-smoke.txt
-      - name: Verify S3 distribution matches the GitHub assets
-        run: |
-          python3 - <<'S3'
-          import concurrent.futures, hashlib, json, os, pathlib, urllib.request
-          base = 'https://s3.eu-west-1.amazonaws.com/cli-dl.stackstate.com/stackstate-backup-cli/'
-          with urllib.request.urlopen(base + 'LATEST_VERSION', timeout=30) as response:
-              latest = response.read().decode().strip()
-          assert latest == os.environ['RELEASE_TAG'], latest
-          assets = json.loads(pathlib.Path('reports/verified-assets.json').read_text())
-          def verify(asset):
-              url = base + os.environ['RELEASE_TAG'] + '/' + asset['name']
-              digest = hashlib.sha256()
-              with urllib.request.urlopen(url, timeout=60) as response:
-                  while chunk := response.read(1024 * 1024):
-                      digest.update(chunk)
-              actual = 'sha256:' + digest.hexdigest()
-              assert actual == asset['digest'], asset['name']
-              return {'name': asset['name'], 'url': url, 'digest': actual}
-          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
-              verified = list(pool.map(verify, assets))
-          pathlib.Path('reports/s3-verified-assets.json').write_text(json.dumps({'latest_version': latest, 'assets': verified}, indent=2) + '\n')
-          print('S3 latest-version pointer and all six S3 asset digests match the GitHub release')
-          S3
-      - name: Import verified published artifacts
-        run: docker import artifact-scan/rootfs.tar stackstate-backup-cli:delivery-scan
-      - name: Separate secret gate and informational vulnerability scans
-        uses: StackVista/image-pipeline/.github/actions/scan-image@508730536961e38718dbc2403448e2d418b1136f
-        with:
-          image: stackstate-backup-cli:delivery-scan
-          mode: inform
-          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
-          with-grype: "true"
-          upload-sarif: "false"
-      - name: Raw informational scans with all findings and no VEX filtering
-        run: |
-          trivy --version > reports/trivy-version.txt
-          grype version > reports/grype-version.txt
-          trivy image --scanners vuln --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
-            --format json --output reports/trivy-raw.json --exit-code 0 \
-            stackstate-backup-cli:delivery-scan
-          grype stackstate-backup-cli:delivery-scan --by-cve -o json > reports/grype-raw.json
-          python3 - <<'SUMMARY'
-          import json, pathlib
-          root = pathlib.Path('reports')
-          trivy = json.loads((root / 'trivy-raw.json').read_text())
-          secrets = json.loads((root / 'trivy-secrets.json').read_text())
-          grype = json.loads((root / 'grype-raw.json').read_text())
-          assert len(trivy['Results']) == 5
-          assert all(r['Type'] == 'gobinary' for r in trivy['Results'])
-          secret_count = sum(len(r.get('Secrets', [])) for r in secrets.get('Results', []))
-          assert secret_count == 0, secret_count
-          findings = [{'target': r['Target'], 'id': v['VulnerabilityID'], 'package': v['PkgName'], 'installed': v['InstalledVersion'], 'fixed': v.get('FixedVersion'), 'severity': v['Severity']} for r in trivy['Results'] for v in r.get('Vulnerabilities', [])]
-          grype_findings = [{'id': m['vulnerability']['id'], 'package': m['artifact']['name'], 'installed': m['artifact']['version'], 'fixed': m['vulnerability'].get('fix'), 'severity': m['vulnerability']['severity'], 'locations': m['artifact']['locations']} for m in grype['matches']]
-          assigned = {'CVE-2026-78661', 'CVE-2026-97045', 'GO-2026-6860', 'GO-2026-6866'}
-          identifiers = {f['id'] for f in findings + grype_findings}
-          for match in grype['matches']:
-              identifiers.update(v['id'] for v in match.get('relatedVulnerabilities', []))
-          summary = {'secret_count': secret_count, 'assigned_findings_present': sorted(assigned & identifiers), 'trivy_targets': 5, 'trivy_findings': findings, 'grype_findings': grype_findings}
-          (root / 'delivery-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-          print(json.dumps(summary, indent=2))
-          SUMMARY
-      - name: Retain delivery evidence and scanned archives
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: released-v0.11.2-delivery-evidence
-          path: |
-            reports/
-            artifact-scan/metadata/
-            dist/
-          if-no-files-found: error
-  windows:
-    name: Smoke test the published Windows zip
-    needs: delivery
-    runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
       actions: read
@@ -154,26 +14,64 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: released-v0.11.2-delivery-evidence
+          run-id: 40716838958
+          github-token: ${{ github.token }}
           path: released
-      - name: Verify checksum and execute the published Windows binary
-        shell: pwsh
+      - name: Verify and unpack previously scanned published archives
         run: |
-          $zip = @(Get-ChildItem released/dist/*.windows-x86_64.zip)
-          if ($zip.Count -ne 1) { throw "Expected one Windows zip" }
-          $checksums = @(Get-ChildItem released/dist/*_checksums.txt)
-          if ($checksums.Count -ne 1) { throw "Expected one checksum manifest" }
-          $line = @(Get-Content $checksums[0] | Where-Object { $_.EndsWith($zip[0].Name) })
-          if ($line.Count -ne 1) { throw "Expected one Windows checksum entry" }
-          $expected = ($line[0] -split '\s+')[0]
-          $actual = (Get-FileHash $zip[0] -Algorithm SHA256).Hash.ToLower()
-          if ($actual -ne $expected) { throw "Windows zip checksum mismatch" }
-          Expand-Archive $zip[0].FullName -DestinationPath expanded
-          $exe = @(Get-ChildItem expanded -Recurse -Filter sts-backup.exe)
-          if ($exe.Count -ne 1) { throw "Expected one Windows executable" }
-          & $exe[0].FullName --help
-          if ($LASTEXITCODE -ne 0) { throw "Windows help failed" }
-          $version = & $exe[0].FullName version
-          if ($LASTEXITCODE -ne 0) { throw "Windows version failed" }
-          $version | Write-Output
-          if ($version -notcontains "Version: $($env:RELEASE_TAG.Substring(1))") { throw "Wrong version" }
-          if ($version -notcontains "Commit: $env:RELEASE_SHA") { throw "Wrong source commit" }
+          cd released/dist
+          sha256sum --check stackstate-backup-cli_0.11.2_checksums.txt
+          for archive in *.tar.gz *.zip; do
+            target="${archive#stackstate-backup-cli-0.11.2.}"
+            target="${target%.tar.gz}"
+            target="${target%.zip}"
+            mkdir -p "../../binaries/${target}"
+            case "${archive}" in
+              *.tar.gz) tar -xzf "${archive}" -C "../../binaries/${target}" ;;
+              *.zip) unzip -q "${archive}" -d "../../binaries/${target}" ;;
+            esac
+          done
+      - name: Install the repository's pinned Grype version
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/grype/756eb9a24f7beeafb6871a24e943e8a3ae210695/install.sh \
+            | sudo sh -s -- -b /usr/local/bin v0.118.0
+      - name: Run informational Grype scan for each published binary
+        run: |
+          mkdir -p reports
+          grype version > reports/grype-version.txt
+          count=0
+          for target in binaries/*; do
+            binary="${target}/sts-backup"
+            [[ -f "${binary}" ]] || binary="${target}/sts-backup.exe"
+            [[ -f "${binary}" ]]
+            grype "file:${binary}" --by-cve -o json > "reports/grype-$(basename "${target}").json"
+            count=$((count + 1))
+          done
+          [[ "${count}" -eq 5 ]]
+          python3 - <<'SUMMARY'
+          import json, pathlib
+          reports = list(pathlib.Path('reports').glob('grype-*.json'))
+          assert len(reports) == 5
+          assigned = {'CVE-2026-78661', 'CVE-2026-97045', 'GO-2026-6860', 'GO-2026-6866'}
+          summary = []
+          for report in sorted(reports):
+              data = json.loads(report.read_text())
+              assert data['descriptor']['version'] == '0.118.0'
+              assert data['source']['type'] == 'file', data['source']
+              ids = {m['vulnerability']['id'] for m in data['matches']}
+              for match in data['matches']:
+                  ids.update(v['id'] for v in match.get('relatedVulnerabilities', []))
+              summary.append({'report': report.name, 'source': data['source'], 'assigned_findings_present': sorted(assigned & ids), 'findings': [{'id': m['vulnerability']['id'], 'package': m['artifact']['name'], 'installed': m['artifact']['version'], 'fixed': m['vulnerability'].get('fix'), 'severity': m['vulnerability']['severity']} for m in data['matches']]})
+          pathlib.Path('reports/per-target-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+          print(json.dumps(summary, indent=2))
+          SUMMARY
+      - name: Retain all per-target Grype reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: released-v0.11.2-per-target-grype
+          path: |
+            reports/
+            released/dist/*_checksums.txt
+            released/reports/verified-assets.json
+          if-no-files-found: error
