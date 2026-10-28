@@ -71,6 +71,29 @@ jobs:
           "${binary}" version | tee artifact-scan/metadata/linux-smoke.txt
           grep -Fx "Version: ${RELEASE_TAG#v}" artifact-scan/metadata/linux-smoke.txt
           grep -Fx "Commit: ${RELEASE_SHA}" artifact-scan/metadata/linux-smoke.txt
+      - name: Verify S3 distribution matches the GitHub assets
+        run: |
+          python3 - <<'S3'
+          import concurrent.futures, hashlib, json, os, pathlib, urllib.request
+          base = 'https://s3.eu-west-1.amazonaws.com/cli-dl.stackstate.com/stackstate-backup-cli/'
+          with urllib.request.urlopen(base + 'LATEST_VERSION', timeout=30) as response:
+              latest = response.read().decode().strip()
+          assert latest == os.environ['RELEASE_TAG'], latest
+          assets = json.loads(pathlib.Path('reports/verified-assets.json').read_text())
+          def verify(asset):
+              url = base + os.environ['RELEASE_TAG'] + '/' + asset['name']
+              digest = hashlib.sha256()
+              with urllib.request.urlopen(url, timeout=60) as response:
+                  while chunk := response.read(1024 * 1024):
+                      digest.update(chunk)
+              actual = 'sha256:' + digest.hexdigest()
+              assert actual == asset['digest'], asset['name']
+              return {'name': asset['name'], 'url': url, 'digest': actual}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+              verified = list(pool.map(verify, assets))
+          pathlib.Path('reports/s3-verified-assets.json').write_text(json.dumps({'latest_version': latest, 'assets': verified}, indent=2) + '\n')
+          print('S3 latest-version pointer and all six S3 asset digests match the GitHub release')
+          S3
       - name: Import verified published artifacts
         run: docker import artifact-scan/rootfs.tar stackstate-backup-cli:delivery-scan
       - name: Separate secret gate and informational vulnerability scans
