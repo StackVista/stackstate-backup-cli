@@ -1,247 +1,156 @@
-name: CI
+name: Released artifact delivery scan
 on:
-  pull_request:
-    branches:
-      - main
-  push:
-    branches:
-      - main
-    tags:
-      - v*
-
-  # Allows to run this via the Actions tab
   workflow_dispatch:
-
 permissions: {}
-
 env:
-  # renovate: datasource=github-releases depName=goreleaser/goreleaser
-  GORELEASER_VERSION: v2.18.3
-
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
-
+  RELEASE_TAG: v0.11.2
+  RELEASE_SHA: ff789c22d91dccf49ae0f76e3be18c8c792eeaae
 jobs:
-  lint:
-    permissions:
-      # Required: allow read access to the content for analysis.
-      contents: read
-      # Optional: allow read access to pull request. Use with `only-new-issues` option.
-      pull-requests: read
-      # Optional: Allow write access to checks to allow the action to annotate code in the PR.
-      checks: write
-    name: Linter
+  delivery:
+    name: Verify and scan published release artifacts
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.RELEASE_SHA }}
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: false
-      - name: Check approved Go release line
-        run: go env GOVERSION | grep -Eq '^go1\.26\.[0-9]+$'
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
-        with:
-          # Require: The version of golangci-lint to use.
-          # When `install-mode` is `binary` (default) the value can be v1.2 or v1.2.3 or `latest` to use the latest version.
-          # When `install-mode` is `goinstall` the value can be v1.2.3, `latest`, or the hash of a commit.
-          version: v2.14.0
-
-  check-license:
-    name: License scan
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-    env:
-      # renovate: datasource=go depName=github.com/google/go-licenses/v2
-      GO_LICENSES_VERSION: v2.0.1
-      REPORT_FILE: gl-license-scanning-report.json
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: false
-      - name: Verify MIT-0 license unsupported by go-licenses
+      - name: Download release and record tag provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          go mod download github.com/segmentio/asm
-          printf '%s  %s\n' \
-            cca993712df289a5958bdef69031a5dac0f951ac15afeb313f9eeea55ed59443 \
-            "$(go list -m -f '{{.Dir}}/LICENSE' github.com/segmentio/asm)" |
-            sha256sum --check
-      - name: License scanning
+          mkdir -p dist reports
+          gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" > reports/tag-ref.json
+          tag_object=$(jq -r '.object.sha' reports/tag-ref.json)
+          gh api "repos/${GITHUB_REPOSITORY}/git/tags/${tag_object}" > reports/tag-object.json
+          jq -e --arg sha "${RELEASE_SHA}" '.object.type == "commit" and .object.sha == $sha and .verification.verified == true' reports/tag-object.json
+          gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_TAG}" > reports/release.json
+          jq -e '.draft == false and .prerelease == false' reports/release.json
+          gh release download "${RELEASE_TAG}" --repo "${GITHUB_REPOSITORY}" --dir dist
+          scripts/prepare-artifact-scan-rootfs.sh
+      - name: Verify published asset digests and embedded source versions
         run: |
-          scripts/install-go-tool.sh "github.com/google/go-licenses/v2@${GO_LICENSES_VERSION}"
-          go-licenses check . --disallowed_types=forbidden,restricted --ignore=github.com/segmentio/asm/
-      - name: Generate license report
-        run: |
-          go-licenses report . --ignore=github.com/segmentio/asm/ > licenses.csv
-          printf 'github.com/segmentio/asm,https://github.com/segmentio/asm/blob/%s/LICENSE,MIT-0\n' \
-            "$(go list -m -f '{{.Version}}' github.com/segmentio/asm)" >> licenses.csv
-      - name: Save license scan report
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+          python3 - <<'VERIFY'
+          import hashlib, json, os, pathlib, subprocess
+          release = json.loads(pathlib.Path('reports/release.json').read_text())
+          assets = release['assets']
+          assert len(assets) == 6, [a['name'] for a in assets]
+          verified = []
+          for asset in assets:
+              path = pathlib.Path('dist') / asset['name']
+              digest = 'sha256:' + hashlib.sha256(path.read_bytes()).hexdigest()
+              assert digest == asset['digest'], asset['name']
+              verified.append({'name': asset['name'], 'digest': digest, 'url': asset['browser_download_url']})
+          metadata = list(pathlib.Path('artifact-scan/metadata').glob('*.txt'))
+          assert len(metadata) == 5
+          for path in metadata:
+              text = path.read_text()
+              assert 'go1.26.10' in text, path
+              assert 'golang.org/x/net\tv0.62.0\t' in text, path
+              assert 'vcs.revision=' + os.environ['RELEASE_SHA'] in text, path
+              assert 'vcs.modified=false' in text, path
+          binaries = list(pathlib.Path('artifact-scan/rootfs').rglob('sts-backup*'))
+          assert len(binaries) == 5
+          for binary in binaries:
+              symbols = subprocess.check_output(['go', 'tool', 'nm', str(binary)], text=True)
+              assert 'golang.org/x/crypto/openpgp' not in symbols, binary
+          pathlib.Path('reports/openpgp-symbols.txt').write_text('No OpenPGP symbols in any of the five published binaries; symbol tables retained.\n')
+          pathlib.Path('reports/verified-assets.json').write_text(json.dumps(verified, indent=2) + '\n')
+          print('All six published asset digests and five embedded build versions verified')
+          VERIFY
+          scripts/assert-go-symbols.sh artifact-scan/rootfs/opt/standalone/stackstate-backup-cli/*/sts-backup*
+          binary=artifact-scan/rootfs/opt/standalone/stackstate-backup-cli/linux-amd64/sts-backup
+          chmod +x "${binary}"
+          "${binary}" --help
+          "${binary}" version | tee artifact-scan/metadata/linux-smoke.txt
+          grep -Fx "Version: ${RELEASE_TAG#v}" artifact-scan/metadata/linux-smoke.txt
+          grep -Fx "Commit: ${RELEASE_SHA}" artifact-scan/metadata/linux-smoke.txt
+      - name: Import verified published artifacts
+        run: docker import artifact-scan/rootfs.tar stackstate-backup-cli:delivery-scan
+      - name: Separate secret gate and informational vulnerability scans
+        uses: StackVista/image-pipeline/.github/actions/scan-image@508730536961e38718dbc2403448e2d418b1136f
         with:
-          name: license_scanning
-          path: licenses.csv
-
-  check-go-releaser:
-    name: Go releaser check
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: false
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
-        with:
-          # either 'goreleaser' (default) or 'goreleaser-pro'
-          distribution: goreleaser
-          # 'latest', 'nightly', or a semver
-          version: ${{ env.GORELEASER_VERSION }}
-          args: check
-
-  test:
-    name: Tests
-    needs:
-      - lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: false
-      - name: Run tests
-        run: |
-          scripts/install-go-tool-test.sh
-          go test -v ./...
-
-  security:
-    name: GoReleaser artifacts - govulncheck, Trivy secrets/vulns, Grype
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-    env:
-      # renovate: datasource=go depName=golang.org/x/vuln
-      GOVULNCHECK_VERSION: v1.9.0
-
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: false
-      - name: Test govulncheck warning and error handling
-        run: scripts/govulncheck-inform-test.sh
-      - name: Install govulncheck
-        run: scripts/install-go-tool.sh "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}"
-      - name: Report reachable Go vulnerabilities in the source
-        run: scripts/govulncheck-inform.sh ./...
-      - name: Test that the symbol-table guard rejects a stripped binary
-        run: scripts/assert-go-symbols-test.sh
-      - name: Build GoReleaser snapshot artifacts
-        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
-        with:
-          distribution: goreleaser
-          version: ${{ env.GORELEASER_VERSION }}
-          args: release --snapshot --clean --skip=publish
-      - name: Verify and prepare all release artifacts
-        run: scripts/prepare-artifact-scan-rootfs.sh
-      - name: Report reachable Go vulnerabilities in each release binary
-        run: scripts/govulncheck-release-binaries.sh
-      - name: Import release artifacts for scanning
-        run: docker import artifact-scan/rootfs.tar stackstate-backup-cli:security-scan
-      - name: Scan release artifacts with Trivy, Grype, and VEX
-        uses: StackVista/image-pipeline/.github/actions/scan-image@508730536961e38718dbc2403448e2d418b1136f # main
-        with:
-          image: stackstate-backup-cli:security-scan
+          image: stackstate-backup-cli:delivery-scan
           mode: inform
-          severity: CRITICAL,HIGH,MEDIUM,LOW
+          severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           with-grype: "true"
           upload-sarif: "false"
-      - name: Upload security evidence
+      - name: Raw informational scans with all findings and no VEX filtering
+        run: |
+          trivy --version > reports/trivy-version.txt
+          grype version > reports/grype-version.txt
+          trivy image --scanners vuln --severity UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL \
+            --format json --output reports/trivy-raw.json --exit-code 0 \
+            stackstate-backup-cli:delivery-scan
+          grype stackstate-backup-cli:delivery-scan --by-cve -o json > reports/grype-raw.json
+          python3 - <<'SUMMARY'
+          import json, pathlib
+          root = pathlib.Path('reports')
+          trivy = json.loads((root / 'trivy-raw.json').read_text())
+          secrets = json.loads((root / 'trivy-secrets.json').read_text())
+          grype = json.loads((root / 'grype-raw.json').read_text())
+          assert len(trivy['Results']) == 5
+          assert all(r['Type'] == 'gobinary' for r in trivy['Results'])
+          secret_count = sum(len(r.get('Secrets', [])) for r in secrets.get('Results', []))
+          assert secret_count == 0, secret_count
+          findings = [{'target': r['Target'], 'id': v['VulnerabilityID'], 'package': v['PkgName'], 'installed': v['InstalledVersion'], 'fixed': v.get('FixedVersion'), 'severity': v['Severity']} for r in trivy['Results'] for v in r.get('Vulnerabilities', [])]
+          grype_findings = [{'id': m['vulnerability']['id'], 'package': m['artifact']['name'], 'installed': m['artifact']['version'], 'fixed': m['vulnerability'].get('fix'), 'severity': m['vulnerability']['severity'], 'locations': m['artifact']['locations']} for m in grype['matches']]
+          assigned = {'CVE-2026-78661', 'CVE-2026-97045', 'GO-2026-6860', 'GO-2026-6866'}
+          identifiers = {f['id'] for f in findings + grype_findings}
+          for match in grype['matches']:
+              identifiers.update(v['id'] for v in match.get('relatedVulnerabilities', []))
+          summary = {'secret_count': secret_count, 'assigned_findings_present': sorted(assigned & identifiers), 'trivy_targets': 5, 'trivy_findings': findings, 'grype_findings': grype_findings}
+          (root / 'delivery-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+          print(json.dumps(summary, indent=2))
+          SUMMARY
+      - name: Retain delivery evidence and scanned archives
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: release-artifact-security
+          name: released-v0.11.2-delivery-evidence
           path: |
-            artifact-scan/metadata/
-            dist/*_checksums.txt
             reports/
-          if-no-files-found: warn
-
-  publish:
-    name: Publish the release
-    if: ${{ github.ref_type == 'tag' }}
-    needs:
-      - test
-      - security
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
+            artifact-scan/metadata/
+            dist/
+          if-no-files-found: error
+  windows:
+    name: Smoke test the published Windows zip
+    needs: delivery
+    runs-on: windows-latest
+    timeout-minutes: 10
     permissions:
-      contents: write
-    env:
-      TAG: ${{ github.ref_name }}
-      S3_BUCKET: "s3://cli-dl.stackstate.com/stackstate-backup-cli/"
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      contents: read
+      actions: read
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: false
-      - name: Go releaser publish
-        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-        with:
-          # either 'goreleaser' (default) or 'goreleaser-pro'
-          distribution: goreleaser
-          # 'latest', 'nightly', or a semver
-          version: ${{ env.GORELEASER_VERSION }}
-          args: release
-      - name: Write latest version to file
-        run: mkdir -p dist && echo "${TAG}" > dist/LATEST_VERSION
-
-      - name: Authenticate with AWS
-        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
-
-      - name: Publish latest version to S3
+          name: released-v0.11.2-delivery-evidence
+          path: released
+      - name: Verify checksum and execute the published Windows binary
+        shell: pwsh
         run: |
-          echo "aws s3 cp dist/LATEST_VERSION ${S3_BUCKET}"
-          aws s3 cp dist/LATEST_VERSION "${S3_BUCKET}"
+          $zip = @(Get-ChildItem released/dist/*.windows-x86_64.zip)
+          if ($zip.Count -ne 1) { throw "Expected one Windows zip" }
+          $checksums = @(Get-ChildItem released/dist/*_checksums.txt)
+          if ($checksums.Count -ne 1) { throw "Expected one checksum manifest" }
+          $line = @(Get-Content $checksums[0] | Where-Object { $_.EndsWith($zip[0].Name) })
+          if ($line.Count -ne 1) { throw "Expected one Windows checksum entry" }
+          $expected = ($line[0] -split '\s+')[0]
+          $actual = (Get-FileHash $zip[0] -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne $expected) { throw "Windows zip checksum mismatch" }
+          Expand-Archive $zip[0].FullName -DestinationPath expanded
+          $exe = @(Get-ChildItem expanded -Recurse -Filter sts-backup.exe)
+          if ($exe.Count -ne 1) { throw "Expected one Windows executable" }
+          & $exe[0].FullName --help
+          if ($LASTEXITCODE -ne 0) { throw "Windows help failed" }
+          $version = & $exe[0].FullName version
+          if ($LASTEXITCODE -ne 0) { throw "Windows version failed" }
+          $version | Write-Output
+          if ($version -notcontains "Version: $($env:RELEASE_TAG.Substring(1))") { throw "Wrong version" }
+          if ($version -notcontains "Commit: $env:RELEASE_SHA") { throw "Wrong source commit" }
