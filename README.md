@@ -451,9 +451,18 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed information about the layere
 
 This project uses GitHub Actions and GoReleaser for automated releases:
 
-1. Push a new tag (e.g., `v1.0.0`)
-2. GitHub Actions automatically builds binaries for multiple platforms
-3. GoReleaser creates a GitHub release and uploads artifacts to S3
+1. Review a successful CI run for the intended commit. Its `release-artifact-security`
+   artifact contains the five GoReleaser snapshot archives, checksums, build metadata,
+   and scan reports for candidate testing.
+2. After human release approval, a maintainer pushes a new `v*` tag on the reviewed
+   commit on `main`.
+3. GitHub Actions runs tests and artifact security checks before the `Publish the release`
+   job rebuilds the binaries and publishes the GitHub and S3 release.
+
+Compiler and dependency updates reach users only through a new release; existing
+release archives keep their original binaries. Publication rebuilds the archives,
+so verify the published checksums and each binary's `go version -m` metadata,
+then confirm delivery in a subsequent scan covering all five release assets.
 
 ### Dependency updates
 
