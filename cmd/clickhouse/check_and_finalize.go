@@ -139,7 +139,7 @@ func waitAndFinalize(appCtx *app.Context, chClient ch.Interface, operationID str
 // finalizeRestore finalizes the restore by executing SQL, scaling up, and releasing lock
 func finalizeRestore(appCtx *app.Context) error {
 	if err := executePostRestoreSQL(appCtx); err != nil {
-		appCtx.Logger.Warningf("Post-restore SQL failed: %v", err)
+		warnPostRestoreSQLFailed(appCtx.Logger, err)
 	}
 
 	appCtx.Logger.Println()
@@ -220,7 +220,9 @@ var postRestoreStatements = []postRestoreStatement{
 	{query: "SYSTEM DROP QUERY CONDITION CACHE ON CLUSTER " + clusterName, skipIfUnsupported: true},
 }
 
+// Every statement is attempted: an unreachable replica can fail one drop while the others still apply.
 func runPostRestoreSQL(ctx context.Context, conn sqlExecer, log *logger.Logger) error {
+	var errs []error
 	for _, stmt := range postRestoreStatements {
 		log.Debugf("Executing SQL: %s", stmt.query)
 		err := conn.Exec(ctx, stmt.query)
@@ -230,8 +232,17 @@ func runPostRestoreSQL(ctx context.Context, conn sqlExecer, log *logger.Logger) 
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("failed to execute SQL %q: %w", stmt.query, err)
+			errs = append(errs, fmt.Errorf("failed to execute SQL %q: %w", stmt.query, err))
 		}
 	}
-	return nil
+	return errors.Join(errs...)
+}
+
+func warnPostRestoreSQLFailed(log *logger.Logger, err error) {
+	log.Warningf("Post-restore SQL failed: %v", err)
+	log.Warningf("Stale ClickHouse caches can make services read pre-restore data; traces schema migrations may re-run and crash-loop.")
+	log.Warningf("Run these statements manually against ClickHouse once all replicas are up:")
+	for _, stmt := range postRestoreStatements {
+		log.Warningf("  %s", stmt.query)
+	}
 }

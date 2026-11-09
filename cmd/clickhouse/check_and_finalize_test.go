@@ -31,12 +31,13 @@ const (
 func TestRunPostRestoreSQL(t *testing.T) {
 	syntaxError := &proto.Exception{Code: syntaxErrorCode, Message: "Syntax error"}
 	clusterMissing := &proto.Exception{Code: 701, Message: "Requested cluster 'default' not found"}
+	replicaTimeout := &proto.Exception{Code: 159, Message: "Distributed DDL task is not finished on 1 of 3 hosts"}
 
 	tests := []struct {
 		name        string
 		errs        map[string]error
 		wantQueries []string
-		wantErr     string
+		wantErrs    []string
 	}{
 		{
 			name:        "drops mark and query condition caches on every replica",
@@ -50,20 +51,29 @@ func TestRunPostRestoreSQL(t *testing.T) {
 		{
 			name:        "does not skip a syntax error from a required statement",
 			errs:        map[string]error{dropMarkCache: syntaxError},
-			wantQueries: []string{dropMarkCache},
-			wantErr:     dropMarkCache,
+			wantQueries: []string{dropMarkCache, dropQueryConditionCache},
+			wantErrs:    []string{dropMarkCache},
 		},
 		{
 			name:        "fails on other query condition cache errors",
 			errs:        map[string]error{dropQueryConditionCache: clusterMissing},
 			wantQueries: []string{dropMarkCache, dropQueryConditionCache},
-			wantErr:     "cluster 'default' not found",
+			wantErrs:    []string{"cluster 'default' not found"},
 		},
 		{
-			name:        "fails on connection errors",
-			errs:        map[string]error{dropMarkCache: errors.New("connection reset")},
-			wantQueries: []string{dropMarkCache},
-			wantErr:     "connection reset",
+			name:        "still drops query condition cache when mark cache drop times out",
+			errs:        map[string]error{dropMarkCache: replicaTimeout},
+			wantQueries: []string{dropMarkCache, dropQueryConditionCache},
+			wantErrs:    []string{dropMarkCache, "Distributed DDL task"},
+		},
+		{
+			name: "reports every failed statement",
+			errs: map[string]error{
+				dropMarkCache:           errors.New("connection reset"),
+				dropQueryConditionCache: errors.New("broken pipe"),
+			},
+			wantQueries: []string{dropMarkCache, dropQueryConditionCache},
+			wantErrs:    []string{"connection reset", "broken pipe"},
 		},
 	}
 
@@ -74,11 +84,13 @@ func TestRunPostRestoreSQL(t *testing.T) {
 			err := runPostRestoreSQL(context.Background(), conn, logger.New(true, false))
 
 			assert.Equal(t, tt.wantQueries, conn.queries)
-			if tt.wantErr == "" {
+			if len(tt.wantErrs) == 0 {
 				require.NoError(t, err)
 				return
 			}
-			assert.ErrorContains(t, err, tt.wantErr)
+			for _, want := range tt.wantErrs {
+				assert.ErrorContains(t, err, want)
+			}
 		})
 	}
 }
