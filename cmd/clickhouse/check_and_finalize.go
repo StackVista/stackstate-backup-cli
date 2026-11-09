@@ -1,14 +1,18 @@
 package clickhouse
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/proto"
 	"github.com/spf13/cobra"
 	"github.com/stackvista/stackstate-backup-cli/cmd/cmdutils"
 	"github.com/stackvista/stackstate-backup-cli/internal/app"
 	ch "github.com/stackvista/stackstate-backup-cli/internal/clients/clickhouse"
 	"github.com/stackvista/stackstate-backup-cli/internal/foundation/config"
+	"github.com/stackvista/stackstate-backup-cli/internal/foundation/logger"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/portforward"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/restore"
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/scale"
@@ -186,14 +190,48 @@ func executePostRestoreSQL(appCtx *app.Context) error {
 		_ = closeConn()
 	}()
 
-	// Execute post-restore SQL command
-	query := "SYSTEM DROP MARK CACHE"
-
-	appCtx.Logger.Debugf("Executing SQL: %s", query)
-	if err := conn.Exec(appCtx.Context, query); err != nil {
-		return fmt.Errorf("failed to execute SQL: %w", err)
+	if err := runPostRestoreSQL(appCtx.Context, conn, appCtx.Logger); err != nil {
+		return err
 	}
 
 	appCtx.Logger.Successf("Post-restore SQL executed successfully")
+	return nil
+}
+
+type sqlExecer interface {
+	Exec(ctx context.Context, query string, args ...any) error
+}
+
+type postRestoreStatement struct {
+	query string
+	// ClickHouse before 25.3 has no query condition cache and rejects the statement as a syntax error.
+	skipIfUnsupported bool
+}
+
+const (
+	clusterName     = "default"
+	syntaxErrorCode = 62
+)
+
+// The service port-forward reaches a single pod, so caches are dropped through the chart's cluster.
+// The query condition cache keeps pre-restore results because restored parts reuse table UUIDs and part names.
+var postRestoreStatements = []postRestoreStatement{
+	{query: "SYSTEM DROP MARK CACHE ON CLUSTER " + clusterName},
+	{query: "SYSTEM DROP QUERY CONDITION CACHE ON CLUSTER " + clusterName, skipIfUnsupported: true},
+}
+
+func runPostRestoreSQL(ctx context.Context, conn sqlExecer, log *logger.Logger) error {
+	for _, stmt := range postRestoreStatements {
+		log.Debugf("Executing SQL: %s", stmt.query)
+		err := conn.Exec(ctx, stmt.query)
+		var exception *proto.Exception
+		if stmt.skipIfUnsupported && errors.As(err, &exception) && exception.Code == syntaxErrorCode {
+			log.Infof("Skipping SQL not supported by this ClickHouse version: %s", stmt.query)
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("failed to execute SQL %q: %w", stmt.query, err)
+		}
+	}
 	return nil
 }
