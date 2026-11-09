@@ -202,6 +202,8 @@ const (
 type AppsScale struct {
 	Name     string
 	Replicas int32
+	// PodSelector selects the workload's pods (from spec.selector); only set by scale-down.
+	PodSelector string
 }
 
 // RestoreLockInfo holds information about an active restore lock on a resource
@@ -376,6 +378,16 @@ func scaleUpStatefulSetFromAnnotation(ctx context.Context, client kubernetes.Int
 	return scaledTo, found, err
 }
 
+// podSelectorString converts a workload's spec.selector into a pod label selector string.
+// The restore label sits on the workload only, so pods must be found through spec.selector.
+func podSelectorString(name string, selector *metav1.LabelSelector) (string, error) {
+	sel, err := metav1.LabelSelectorAsSelector(selector)
+	if err != nil {
+		return "", fmt.Errorf("invalid selector on %s: %w", name, err)
+	}
+	return sel.String(), nil
+}
+
 // ScaleDownDeployments scales down deployments matching a label selector to 0 replicas
 // Returns a list of deployment names and their original replica counts
 func (c *Client) ScaleDownDeployments(namespace, labelSelector string) ([]AppsScale, error) {
@@ -391,13 +403,18 @@ func (c *Client) ScaleDownDeployments(namespace, labelSelector string) ([]AppsSc
 
 	var scaledResources []AppsScale
 	for _, dep := range deployments.Items {
+		podSelector, err := podSelectorString(dep.Name, dep.Spec.Selector)
+		if err != nil {
+			return scaledResources, err
+		}
 		originalReplicas, err := scaleDownDeployment(ctx, c.clientset, namespace, dep.Name)
 		if err != nil {
 			return scaledResources, fmt.Errorf("failed to scale down deployment %s: %w", dep.Name, err)
 		}
 		scaledResources = append(scaledResources, AppsScale{
-			Name:     dep.Name,
-			Replicas: originalReplicas,
+			Name:        dep.Name,
+			Replicas:    originalReplicas,
+			PodSelector: podSelector,
 		})
 	}
 
@@ -454,13 +471,18 @@ func (c *Client) ScaleDownStatefulSets(namespace, labelSelector string) ([]AppsS
 
 	var scaledResources []AppsScale
 	for _, sts := range statefulSets.Items {
+		podSelector, err := podSelectorString(sts.Name, sts.Spec.Selector)
+		if err != nil {
+			return scaledResources, err
+		}
 		originalReplicas, err := scaleDownStatefulSet(ctx, c.clientset, namespace, sts.Name)
 		if err != nil {
 			return scaledResources, fmt.Errorf("failed to scale down statefulset %s: %w", sts.Name, err)
 		}
 		scaledResources = append(scaledResources, AppsScale{
-			Name:     sts.Name,
-			Replicas: originalReplicas,
+			Name:        sts.Name,
+			Replicas:    originalReplicas,
+			PodSelector: podSelector,
 		})
 	}
 

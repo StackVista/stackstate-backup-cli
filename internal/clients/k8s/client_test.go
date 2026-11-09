@@ -965,3 +965,30 @@ func TestClient_SetAndClearRestoreLock_Integration(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, locks)
 }
+
+func TestClient_ScaleDownReturnsPodSelector(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	client := &Client{clientset: fakeClient}
+	ctx := context.Background()
+	meta := map[string]string{"restore": "true"}
+	selector := &metav1.LabelSelector{MatchLabels: map[string]string{"app": "x", "tier": "y"}}
+
+	deploy := createDeployment("deploy", "test-ns", meta, 1)
+	deploy.Spec.Selector = selector
+	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(ctx, &deploy, metav1.CreateOptions{})
+	require.NoError(t, err)
+	sts := createStatefulSet("sts", "test-ns", meta, 1)
+	sts.Spec.Selector = selector
+	_, err = fakeClient.AppsV1().StatefulSets("test-ns").Create(ctx, &sts, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	deployScales, err := client.ScaleDownDeployments("test-ns", "restore=true")
+	require.NoError(t, err)
+	require.Len(t, deployScales, 1)
+	assert.Equal(t, "app=x,tier=y", deployScales[0].PodSelector)
+
+	stsScales, err := client.ScaleDownStatefulSets("test-ns", "restore=true")
+	require.NoError(t, err)
+	require.Len(t, stsScales, 1)
+	assert.Equal(t, "app=x,tier=y", stsScales[0].PodSelector)
+}

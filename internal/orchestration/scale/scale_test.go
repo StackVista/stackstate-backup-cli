@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
@@ -1152,4 +1153,53 @@ func TestScaleDownWithLock_FullCycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Len(t, scaledApps, 1)
+}
+
+// The restore label sits on the workload only; pods must be found through spec.selector.
+func TestScaleDown_WaitsForPodsSelectedByWorkload(t *testing.T) {
+	podLabels := map[string]string{"app": "receiver"}
+	deploy := createDeployment("receiver", podLabels, 1)
+	deploy.Labels = map[string]string{"restore": "true"}
+	sts := createStatefulSet("receiver-sts", podLabels, 1)
+	sts.Labels = map[string]string{"restore": "true"}
+	sts.Spec.Selector = &metav1.LabelSelector{MatchLabels: map[string]string{"app": "receiver-sts"}}
+
+	tests := []struct {
+		name string
+		kind string
+		pod  string
+	}{
+		{"deployment", "deployment", "receiver-0"},
+		{"statefulset", "statefulset", "receiver-sts-0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeClient := fake.NewSimpleClientset()
+			client := k8s.NewTestClient(fakeClient)
+			ctx := context.Background()
+			podAppLabel := "receiver"
+			if tt.kind == "deployment" {
+				_, err := fakeClient.AppsV1().Deployments("test-ns").Create(ctx, &deploy, metav1.CreateOptions{})
+				require.NoError(t, err)
+			} else {
+				podAppLabel = "receiver-sts"
+				_, err := fakeClient.AppsV1().StatefulSets("test-ns").Create(ctx, &sts, metav1.CreateOptions{})
+				require.NoError(t, err)
+			}
+			pod := createPod(tt.pod, map[string]string{"app": podAppLabel}, corev1.PodRunning)
+			_, err := fakeClient.CoreV1().Pods("test-ns").Create(ctx, &pod, metav1.CreateOptions{})
+			require.NoError(t, err)
+
+			go func() {
+				time.Sleep(3 * time.Second)
+				_ = fakeClient.CoreV1().Pods("test-ns").Delete(ctx, tt.pod, metav1.DeleteOptions{})
+			}()
+
+			_, err = ScaleDown(client, "test-ns", "restore=true", logger.New(true, false))
+			require.NoError(t, err)
+
+			_, err = fakeClient.CoreV1().Pods("test-ns").Get(ctx, tt.pod, metav1.GetOptions{})
+			assert.True(t, apierrors.IsNotFound(err), "ScaleDown returned while the pod still existed")
+		})
+	}
 }
