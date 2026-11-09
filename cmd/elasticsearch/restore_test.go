@@ -2,6 +2,8 @@ package elasticsearch
 
 import (
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,13 +23,30 @@ type mockESClientForRestore struct {
 	indexExistsMap   map[string]bool
 	restoreErr       error
 	getSnapshotErr   error
-	rolloverErr      error
 	deletedIndices   []string
 	restoredSnapshot string
-	rolledOverDS     string
+	restoredTargets  string
+	restoredPartial  bool
+	// datastreams maps a live data stream to its backing indices.
+	datastreams           map[string][]string
+	datastreamDeleteCalls []string
+	deleteDatastreamErr   error
+	// listCalls counts ListIndices calls; addOnListCall adds indices on the given call, modelling a writer.
+	listCalls     int
+	addOnListCall map[int][]string
 }
 
 func (m *mockESClientForRestore) ListIndices(_ string) ([]string, error) {
+	m.listCalls++
+	if added := m.addOnListCall[m.listCalls]; len(added) > 0 {
+		if m.indexExistsMap == nil {
+			m.indexExistsMap = make(map[string]bool)
+		}
+		for _, index := range added {
+			m.indices = append(m.indices, index)
+			m.indexExistsMap[index] = true
+		}
+	}
 	return m.indices, nil
 }
 
@@ -42,7 +61,13 @@ func (m *mockESClientForRestore) DeleteIndex(index string) error {
 	if m.deleteErr != nil {
 		return m.deleteErr
 	}
+	for _, backing := range m.datastreams {
+		if len(backing) > 0 && backing[len(backing)-1] == index {
+			return fmt.Errorf("index [%s] is the write index for data stream and cannot be deleted", index)
+		}
+	}
 	m.deletedIndices = append(m.deletedIndices, index)
+	m.indices = slices.DeleteFunc(m.indices, func(i string) bool { return i == index })
 	// Update exists map
 	if m.indexExistsMap == nil {
 		m.indexExistsMap = make(map[string]bool)
@@ -62,20 +87,43 @@ func (m *mockESClientForRestore) IndexExists(index string) (bool, error) {
 	return exists, nil
 }
 
-func (m *mockESClientForRestore) RestoreSnapshot(_, snapshotName, _ string, _ bool) error {
+// RestoreSnapshot fails like Elasticsearch when a requested snapshot index is still open on the target.
+func (m *mockESClientForRestore) RestoreSnapshot(_, snapshotName, targets string, partial bool) error {
 	if m.restoreErr != nil {
 		return m.restoreErr
 	}
+	for _, target := range strings.Split(targets, ",") {
+		if m.snapshot != nil && !slices.Contains(m.snapshot.Indices, target) && !slices.Contains(m.snapshot.DataStreams, target) {
+			return fmt.Errorf("index_not_found_exception: no such index [%s]", target)
+		}
+		if slices.Contains(m.indices, target) {
+			return fmt.Errorf("cannot restore index [%s] because an open index with same name already exists", target)
+		}
+	}
 	m.restoredSnapshot = snapshotName
+	m.restoredTargets = targets
+	m.restoredPartial = partial
 	return nil
 }
 
-func (m *mockESClientForRestore) RolloverDatastream(datastreamName string) error {
-	if m.rolloverErr != nil {
-		return m.rolloverErr
+func (m *mockESClientForRestore) DeleteDatastream(datastreamName string) (bool, error) {
+	m.datastreamDeleteCalls = append(m.datastreamDeleteCalls, datastreamName)
+	if m.deleteDatastreamErr != nil {
+		return false, m.deleteDatastreamErr
 	}
-	m.rolledOverDS = datastreamName
-	return nil
+	backing, ok := m.datastreams[datastreamName]
+	if !ok {
+		return false, nil
+	}
+	m.indices = slices.DeleteFunc(m.indices, func(i string) bool { return slices.Contains(backing, i) })
+	if m.indexExistsMap == nil {
+		m.indexExistsMap = make(map[string]bool)
+	}
+	for _, index := range backing {
+		m.indexExistsMap[index] = false
+	}
+	delete(m.datastreams, datastreamName)
+	return true, nil
 }
 
 func (m *mockESClientForRestore) ListSnapshots(_ string) ([]elasticsearch.Snapshot, error) {
@@ -295,6 +343,229 @@ func TestDeleteAllSTSIndicesHonorsIndicesPattern(t *testing.T) {
 	assert.Equal(t, []string{"sts_topology"}, client.deletedIndices)
 }
 
+func newLogsRestoreContext() *app.Context {
+	return &app.Context{
+		Config: &config.Config{
+			Elasticsearch: config.ElasticsearchConfig{
+				Restore: config.RestoreConfig{
+					IndexPrefix:           "sts",
+					DatastreamIndexPrefix: ".ds-sts_k8s_logs",
+					DatastreamName:        "sts_k8s_logs",
+					IndicesPattern:        "sts*,.ds-sts_k8s_logs*",
+				},
+			},
+		},
+		Logger: logger.New(true, false),
+	}
+}
+
+//nolint:funlen
+func TestReplaceSTSIndicesRestoresLogsDatastream(t *testing.T) {
+	const (
+		topo = "sts_topology_events-2026.11.01"
+		b1   = ".ds-sts_k8s_logs-2026.11.01-000001"
+		b2   = ".ds-sts_k8s_logs-2026.11.01-000002"
+		b3   = ".ds-sts_k8s_logs-2026.11.09-000003"
+		full = topo + "," + b1 + "," + b2 + ",sts_k8s_logs"
+	)
+	dsSnapshot := "sts_k8s_logs"
+
+	tests := []struct {
+		name                string
+		pattern             string
+		targetIndices       []string
+		targetDatastreams   map[string][]string
+		addOnListCall       map[int][]string
+		deleteDatastreamErr error
+		snapshotState       string
+		expectDSCalls       []string
+		expectDeleted       []string
+		expectTargets       string
+		expectRemaining     []string
+		expectListCalls     int
+		expectPartial       bool
+		expectErr           string
+	}{
+		{
+			name:            "T1 no STS indices",
+			targetIndices:   []string{},
+			expectTargets:   full,
+			expectRemaining: []string{},
+			expectListCalls: 2,
+		},
+		{
+			name:            "T2 plain indices only",
+			targetIndices:   []string{topo, "other"},
+			expectDeleted:   []string{topo},
+			expectTargets:   full,
+			expectRemaining: []string{"other"},
+		},
+		{
+			name:              "T3 live data stream write index collides",
+			targetIndices:     []string{topo, b2},
+			targetDatastreams: map[string][]string{dsSnapshot: {b2}},
+			expectDSCalls:     []string{dsSnapshot},
+			expectDeleted:     []string{topo},
+			expectTargets:     full,
+			expectRemaining:   []string{},
+			expectListCalls:   3,
+		},
+		{
+			name:          "T4 orphaned backing indices, no data stream",
+			targetIndices: []string{topo, b1},
+			expectDSCalls: []string{dsSnapshot},
+			expectDeleted: []string{topo, b1},
+			expectTargets: full,
+		},
+		{
+			name:              "T5 data stream plus orphans",
+			targetIndices:     []string{topo, b1, b3},
+			targetDatastreams: map[string][]string{dsSnapshot: {b3}},
+			expectDSCalls:     []string{dsSnapshot},
+			expectDeleted:     []string{topo, b1},
+			expectTargets:     full,
+			expectRemaining:   []string{},
+		},
+		{
+			name:              "T7 pattern excludes logs",
+			pattern:           "sts_topology*",
+			targetIndices:     []string{topo, b2},
+			targetDatastreams: map[string][]string{dsSnapshot: {b2}},
+			expectDeleted:     []string{topo},
+			expectTargets:     topo,
+			expectRemaining:   []string{b2},
+		},
+		{
+			name:          "T8 writer recreates the data stream",
+			targetIndices: []string{topo},
+			addOnListCall: map[int][]string{2: {".ds-sts_k8s_logs-2026.11.09-000001"}},
+			expectDeleted: []string{topo},
+			expectErr:     "reappeared after deletion",
+		},
+		{
+			name:                "T9 data stream delete fails",
+			targetIndices:       []string{b1},
+			deleteDatastreamErr: fmt.Errorf("boom"),
+			expectDSCalls:       []string{dsSnapshot},
+			expectErr:           "failed to delete datastream",
+			expectRemaining:     []string{b1},
+		},
+		{
+			name:              "T10 partial is passed through",
+			targetIndices:     []string{topo, b2},
+			targetDatastreams: map[string][]string{dsSnapshot: {b2}},
+			snapshotState:     "PARTIAL",
+			expectDSCalls:     []string{dsSnapshot},
+			expectDeleted:     []string{topo},
+			expectTargets:     full,
+			expectRemaining:   []string{},
+			expectPartial:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := tt.snapshotState
+			if state == "" {
+				state = elasticsearch.StatusSuccess
+			}
+			snapshot := &elasticsearch.Snapshot{
+				Snapshot:    "sts-backup-20261101",
+				State:       state,
+				Indices:     []string{topo, b1, b2},
+				DataStreams: []string{dsSnapshot},
+			}
+			client := &mockESClientForRestore{
+				indices:             slices.Clone(tt.targetIndices),
+				snapshot:            snapshot,
+				datastreams:         tt.targetDatastreams,
+				addOnListCall:       tt.addOnListCall,
+				deleteDatastreamErr: tt.deleteDatastreamErr,
+				indexExistsMap:      map[string]bool{},
+			}
+			for _, index := range tt.targetIndices {
+				client.indexExistsMap[index] = true
+			}
+			appCtx := newLogsRestoreContext()
+			if tt.pattern != "" {
+				appCtx.Config.Elasticsearch.Restore.IndicesPattern = tt.pattern
+			}
+			restoreIndices, err := restorableSnapshotIndices(snapshot, appCtx.Config.Elasticsearch.Restore)
+			require.NoError(t, err)
+			targets, err := restoreTargets(snapshot, restoreIndices, appCtx.Config.Elasticsearch.Restore)
+			require.NoError(t, err)
+
+			err = replaceSTSIndices(client, appCtx, "backup-repo", snapshot, targets)
+
+			assert.Equal(t, tt.expectDSCalls, client.datastreamDeleteCalls)
+			assert.Equal(t, tt.expectDeleted, client.deletedIndices)
+			if tt.expectErr != "" {
+				require.ErrorContains(t, err, tt.expectErr)
+				assert.Empty(t, client.restoredTargets, "restore must not be sent")
+				if tt.name == "T8 writer recreates the data stream" {
+					assert.ErrorContains(t, err, ".ds-sts_k8s_logs-2026.11.09-000001")
+				}
+				if tt.expectRemaining != nil {
+					assert.Equal(t, tt.expectRemaining, client.indices)
+				}
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectTargets, client.restoredTargets)
+			assert.Equal(t, tt.expectPartial, client.restoredPartial)
+			if tt.expectRemaining != nil {
+				assert.Equal(t, tt.expectRemaining, client.indices)
+			}
+			if tt.expectListCalls != 0 {
+				assert.Equal(t, tt.expectListCalls, client.listCalls)
+			}
+		})
+	}
+}
+
+func TestRestoreTargetsRejectsSnapshotWithoutDatastream(t *testing.T) {
+	restoreConfig := newLogsRestoreContext().Config.Elasticsearch.Restore
+	const topo = "sts_topology_events-2026.11.01"
+
+	_, err := restoreTargets(&elasticsearch.Snapshot{Snapshot: "snap"},
+		[]string{topo, ".ds-sts_k8s_logs-2026.11.01-000001"}, restoreConfig)
+	require.ErrorContains(t, err, "not the sts_k8s_logs data stream")
+
+	targets, err := restoreTargets(&elasticsearch.Snapshot{Snapshot: "snap"}, []string{topo}, restoreConfig)
+	require.NoError(t, err)
+	assert.Equal(t, []string{topo}, targets)
+}
+
+func TestRestoreTargetsKeepCompletionExpectation(t *testing.T) {
+	const (
+		topo = "sts_topology_events-2026.11.01"
+		b1   = ".ds-sts_k8s_logs-2026.11.01-000001"
+		b2   = ".ds-sts_k8s_logs-2026.11.01-000002"
+	)
+	appCtx := newLogsRestoreContext()
+	restoreConfig := appCtx.Config.Elasticsearch.Restore
+	snapshot := &elasticsearch.Snapshot{
+		Snapshot:    "snap",
+		Indices:     []string{topo, b1, b2},
+		DataStreams: []string{"sts_k8s_logs"},
+	}
+
+	expected, err := restorableSnapshotIndices(snapshot, restoreConfig)
+	require.NoError(t, err)
+	targets, err := restoreTargets(snapshot, expected, restoreConfig)
+	require.NoError(t, err)
+	fromCheck, err := expectedRestoredIndices(&snapshotOnlyClient{snapshot: snapshot}, appCtx, "repo", "snap")
+	require.NoError(t, err)
+
+	assert.Equal(t, expected, fromCheck)
+	assert.NotContains(t, expected, "sts_k8s_logs")
+	assert.Equal(t, append(slices.Clone(expected), "sts_k8s_logs"), targets)
+
+	restored := elasticsearch.IndexHealth{NumberOfShards: 1, ActivePrimaryShards: 1}
+	health := map[string]elasticsearch.IndexHealth{topo: restored, b1: restored, b2: restored}
+	assert.True(t, measureRestore(expected, restoreConfig.DatastreamIndexPrefix, health).complete())
+}
+
 // TestHasDatastreamIndices tests datastream detection
 func TestHasDatastreamIndices(t *testing.T) {
 	tests := []struct {
@@ -357,10 +628,8 @@ func TestMockESClientForRestore(t *testing.T) {
 		indicesToDelete    []string
 		deleteErr          error
 		restoreErr         error
-		rolloverErr        error
 		expectDeletedCount int
 		expectRestoreOK    bool
-		expectRolloverOK   bool
 	}{
 		{
 			name:               "successful restore with index deletion",
@@ -398,14 +667,6 @@ func TestMockESClientForRestore(t *testing.T) {
 			expectDeletedCount: 0,
 			expectRestoreOK:    false,
 		},
-		{
-			name:               "successful rollover",
-			initialIndices:     []string{"sts_k8s_logs-000001"},
-			indicesToDelete:    []string{},
-			rolloverErr:        nil,
-			expectDeletedCount: 0,
-			expectRolloverOK:   true,
-		},
 	}
 
 	for _, tt := range tests {
@@ -414,7 +675,6 @@ func TestMockESClientForRestore(t *testing.T) {
 				indices:        tt.initialIndices,
 				deleteErr:      tt.deleteErr,
 				restoreErr:     tt.restoreErr,
-				rolloverErr:    tt.rolloverErr,
 				indexExistsMap: make(map[string]bool),
 				snapshot: &elasticsearch.Snapshot{
 					Snapshot:   "test-snapshot",
@@ -441,15 +701,8 @@ func TestMockESClientForRestore(t *testing.T) {
 
 			assert.Equal(t, tt.expectDeletedCount, len(mockClient.deletedIndices))
 
-			// Test rollover if applicable
-			if tt.expectRolloverOK {
-				err := mockClient.RolloverDatastream("sts_k8s_logs")
-				assert.NoError(t, err)
-				assert.Equal(t, "sts_k8s_logs", mockClient.rolledOverDS)
-			}
-
 			// Test restore
-			err := mockClient.RestoreSnapshot("backup-repo", "test-snapshot", "sts_*", false)
+			err := mockClient.RestoreSnapshot("backup-repo", "test-snapshot", "sts_topology,sts_metrics", false)
 			if tt.expectRestoreOK {
 				assert.NoError(t, err)
 				assert.Equal(t, "test-snapshot", mockClient.restoredSnapshot)

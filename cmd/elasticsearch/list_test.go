@@ -273,8 +273,8 @@ func (m *mockESClient) ConfigureSLMPolicy(_, _, _, _, _, _ string, _, _ int) err
 	return fmt.Errorf("not implemented")
 }
 
-func (m *mockESClient) RolloverDatastream(_ string) error {
-	return fmt.Errorf("not implemented")
+func (m *mockESClient) DeleteDatastream(_ string) (bool, error) {
+	return false, fmt.Errorf("not implemented")
 }
 
 // createFakeClientWithConfig creates a fake Kubernetes client with a ConfigMap containing the given config

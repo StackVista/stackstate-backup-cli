@@ -96,8 +96,8 @@ func (m *mockESClientForConfigure) RestoreSnapshot(_, _, _ string, _ bool) error
 	return fmt.Errorf("not implemented")
 }
 
-func (m *mockESClientForConfigure) RolloverDatastream(_ string) error {
-	return fmt.Errorf("not implemented")
+func (m *mockESClientForConfigure) DeleteDatastream(_ string) (bool, error) {
+	return false, fmt.Errorf("not implemented")
 }
 
 // TestConfigureCmd_Unit tests the command structure

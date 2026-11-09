@@ -134,7 +134,8 @@ func TestClient_GetSnapshot(t *testing.T) {
 						"uuid": "uuid-1",
 						"repository": "test-repo",
 						"state": "SUCCESS",
-						"indices": ["index-1", "index-2"]
+						"indices": ["index-1", "index-2"],
+						"data_streams": ["sts_k8s_logs"]
 					}
 				]
 			}`,
@@ -181,6 +182,7 @@ func TestClient_GetSnapshot(t *testing.T) {
 			assert.NotNil(t, snapshot)
 			assert.Equal(t, tt.snapshotName, snapshot.Snapshot)
 			assert.Equal(t, tt.repository, snapshot.Repository)
+			assert.Equal(t, []string{"sts_k8s_logs"}, snapshot.DataStreams)
 		})
 	}
 }
@@ -305,6 +307,43 @@ func TestClient_DeleteIndex(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 			}
+		})
+	}
+}
+
+func TestClient_DeleteDatastream(t *testing.T) {
+	tests := []struct {
+		name           string
+		responseStatus int
+		expectDeleted  bool
+		expectError    bool
+	}{
+		{name: "deleted", responseStatus: http.StatusOK, expectDeleted: true},
+		{name: "not found", responseStatus: http.StatusNotFound, expectDeleted: false},
+		{name: "elasticsearch error", responseStatus: http.StatusInternalServerError, expectError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := mockESServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/_data_stream/sts_k8s_logs", r.URL.Path)
+				assert.Equal(t, http.MethodDelete, r.Method)
+
+				w.WriteHeader(tt.responseStatus)
+			}))
+			defer server.Close()
+
+			client, err := NewClient(server.URL)
+			require.NoError(t, err)
+
+			deleted, err := client.DeleteDatastream("sts_k8s_logs")
+
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectDeleted, deleted)
 		})
 	}
 }

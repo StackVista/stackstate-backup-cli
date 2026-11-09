@@ -60,6 +60,7 @@ type Snapshot struct {
 	EndTimeMillis    int64             `json:"end_time_in_millis"`
 	DurationInMillis int64             `json:"duration_in_millis"`
 	Indices          []string          `json:"indices"`
+	DataStreams      []string          `json:"data_streams"`
 	Failures         []SnapshotFailure `json:"failures"`
 	Shards           struct {
 		Total      int `json:"total"`
@@ -240,22 +241,27 @@ func (c *Client) IndexExists(index string) (bool, error) {
 	return true, nil
 }
 
-// RolloverDatastream performs a rollover on a datastream
-func (c *Client) RolloverDatastream(datastreamName string) error {
-	res, err := c.es.Indices.Rollover(
-		datastreamName,
-		c.es.Indices.Rollover.WithContext(context.Background()),
+// DeleteDatastream deletes a data stream together with all of its backing indices.
+// It reports false when the data stream does not exist.
+func (c *Client) DeleteDatastream(datastreamName string) (bool, error) {
+	res, err := c.es.Indices.DeleteDataStream(
+		[]string{datastreamName},
+		c.es.Indices.DeleteDataStream.WithContext(context.Background()),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to rollover datastream: %w", err)
+		return false, fmt.Errorf("failed to delete datastream: %w", err)
 	}
 	defer res.Body.Close()
 
-	if res.IsError() {
-		return fmt.Errorf("elasticsearch returned error: %s", res.String())
+	if res.StatusCode == http.StatusNotFound {
+		return false, nil
 	}
 
-	return nil
+	if res.IsError() {
+		return false, fmt.Errorf("elasticsearch returned error: %s", res.String())
+	}
+
+	return true, nil
 }
 
 // DeleteSnapshotRepository deletes a snapshot repository
