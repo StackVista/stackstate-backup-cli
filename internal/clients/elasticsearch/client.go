@@ -60,6 +60,7 @@ type Snapshot struct {
 	EndTimeMillis    int64             `json:"end_time_in_millis"`
 	DurationInMillis int64             `json:"duration_in_millis"`
 	Indices          []string          `json:"indices"`
+	DataStreams      []string          `json:"data_streams"`
 	Failures         []SnapshotFailure `json:"failures"`
 	Shards           struct {
 		Total      int `json:"total"`
@@ -240,22 +241,73 @@ func (c *Client) IndexExists(index string) (bool, error) {
 	return true, nil
 }
 
-// RolloverDatastream performs a rollover on a datastream
-func (c *Client) RolloverDatastream(datastreamName string) error {
-	res, err := c.es.Indices.Rollover(
-		datastreamName,
-		c.es.Indices.Rollover.WithContext(context.Background()),
+// DeleteDatastream deletes a data stream together with all of its backing indices.
+// It reports false when the data stream does not exist.
+func (c *Client) DeleteDatastream(datastreamName string) (bool, error) {
+	res, err := c.es.Indices.DeleteDataStream(
+		[]string{datastreamName},
+		c.es.Indices.DeleteDataStream.WithContext(context.Background()),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to rollover datastream: %w", err)
+		return false, fmt.Errorf("failed to delete datastream: %w", err)
 	}
 	defer res.Body.Close()
 
-	if res.IsError() {
-		return fmt.Errorf("elasticsearch returned error: %s", res.String())
+	if res.StatusCode == http.StatusNotFound {
+		return false, nil
 	}
 
-	return nil
+	if res.IsError() {
+		return false, fmt.Errorf("elasticsearch returned error: %s", res.String())
+	}
+
+	return true, nil
+}
+
+// GetDatastream returns the names of a data stream's backing indices.
+// It reports false when the data stream does not exist.
+func (c *Client) GetDatastream(datastreamName string) ([]string, bool, error) {
+	res, err := c.es.Indices.GetDataStream(
+		c.es.Indices.GetDataStream.WithName(datastreamName),
+		c.es.Indices.GetDataStream.WithContext(context.Background()),
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to get datastream: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode == http.StatusNotFound {
+		return nil, false, nil
+	}
+
+	if res.IsError() {
+		return nil, false, fmt.Errorf("elasticsearch returned error: %s", res.String())
+	}
+
+	var body struct {
+		DataStreams []struct {
+			Name    string `json:"name"`
+			Indices []struct {
+				IndexName string `json:"index_name"`
+			} `json:"indices"`
+		} `json:"data_streams"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		return nil, false, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	for _, ds := range body.DataStreams {
+		if ds.Name != datastreamName {
+			continue
+		}
+		indices := make([]string, len(ds.Indices))
+		for i, idx := range ds.Indices {
+			indices[i] = idx.IndexName
+		}
+		return indices, true, nil
+	}
+
+	return nil, false, nil
 }
 
 // DeleteSnapshotRepository deletes a snapshot repository

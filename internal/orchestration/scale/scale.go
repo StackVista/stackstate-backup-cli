@@ -3,6 +3,7 @@ package scale
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -19,7 +20,7 @@ const (
 )
 
 // ScaleDown scales down deployments matching the label selector and logs the results.
-// It waits for all pods to terminate before returning.
+// It waits until no pod selected by any scaled workload remains.
 //
 //nolint:revive // Package name "scale" with function "ScaleDown" is intentionally verbose for clarity
 func ScaleDown(k8sClient *k8s.Client, namespace, labelSelector string, log *logger.Logger) ([]k8s.AppsScale, error) {
@@ -54,8 +55,16 @@ func ScaleDown(k8sClient *k8s.Client, namespace, labelSelector string, log *logg
 		log.Infof("  - %s (replicas: %d -> 0)", dep.Name, dep.Replicas)
 	}
 
-	// Wait for pods to terminate
-	if err := waitForPodsToTerminate(k8sClient, namespace, labelSelector, log); err != nil {
+	var podSelectors []string
+	for _, app := range scaledApps {
+		if app.PodSelector != "" {
+			podSelectors = append(podSelectors, app.PodSelector)
+		}
+	}
+	slices.Sort(podSelectors)
+	podSelectors = slices.Compact(podSelectors)
+
+	if err := waitForPodsToTerminate(k8sClient, namespace, podSelectors, log); err != nil {
 		return scaledApps, fmt.Errorf("failed waiting for pods to terminate: %w", err)
 	}
 
@@ -141,8 +150,8 @@ func ScaleUpAndReleaseLock(k8sClient *k8s.Client, namespace, labelSelector strin
 	return nil
 }
 
-// waitForPodsToTerminate polls for pod termination until all pods matching the label selector are gone
-func waitForPodsToTerminate(k8sClient *k8s.Client, namespace, labelSelector string, log *logger.Logger) error {
+// waitForPodsToTerminate polls until no pod matches any of the pod selectors
+func waitForPodsToTerminate(k8sClient *k8s.Client, namespace string, podSelectors []string, log *logger.Logger) error {
 	ctx := context.Background()
 	ticker := time.NewTicker(podTerminationCheckInterval)
 	defer ticker.Stop()
@@ -156,29 +165,28 @@ func waitForPodsToTerminate(k8sClient *k8s.Client, namespace, labelSelector stri
 		case <-timeout:
 			return fmt.Errorf("timeout waiting for pods to terminate after %v", podTerminationTimeout)
 		case <-ticker.C:
-			podList, err := k8sClient.Clientset().CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
-				LabelSelector: labelSelector,
-			})
-			if err != nil {
-				return fmt.Errorf("failed to list pods: %w", err)
-			}
-
-			// Filter out pods in terminal states (Succeeded, Failed) or being deleted
-			activePods := 0
-			for _, pod := range podList.Items {
-				if pod.Status.Phase != corev1.PodSucceeded &&
-					pod.Status.Phase != corev1.PodFailed &&
-					pod.DeletionTimestamp == nil {
-					activePods++
+			total := 0
+			for _, selector := range podSelectors {
+				podList, err := k8sClient.Clientset().CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{
+					LabelSelector: selector,
+				})
+				if err != nil {
+					return fmt.Errorf("failed to list pods: %w", err)
+				}
+				for _, pod := range podList.Items {
+					// Finished pods (e.g. evicted) linger after scale-to-0 and never go away on their own.
+					if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+						total++
+					}
 				}
 			}
 
-			if activePods == 0 && len(podList.Items) == 0 {
+			if total == 0 {
 				log.Successf("All pods have terminated")
 				return nil
 			}
 
-			log.Infof("Waiting for %d pod(s) to terminate...", activePods+len(podList.Items)-activePods)
+			log.Infof("Waiting for %d pod(s) to terminate...", total)
 		}
 	}
 }

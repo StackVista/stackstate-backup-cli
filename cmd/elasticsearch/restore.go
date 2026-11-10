@@ -3,6 +3,7 @@ package elasticsearch
 import (
 	"fmt"
 	"path"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -39,7 +40,7 @@ func restoreCmd(globalFlags *config.CLIGlobalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "restore",
 		Short: "Restore Elasticsearch from a snapshot",
-		Long:  `Restore Elasticsearch indices from a snapshot. Deletes existing STS indices before restore. Waits for completion by default; use --background to run asynchronously.`,
+		Long:  `Restore Elasticsearch indices and the logs data stream from a snapshot. Deletes existing STS indices and the logs data stream before restore. Waits for completion by default; use --background to run asynchronously.`,
 		Run: func(_ *cobra.Command, _ []string) {
 			cmdutils.Run(globalFlags, runRestore, cmdutils.StorageIsRequired)
 		}}
@@ -99,7 +100,7 @@ func runRestore(appCtx *app.Context) error {
 
 	// Reject snapshots that cannot be monitored safely before scaling down workloads or deleting
 	// any indices. check-and-finalize repeats this validation for independently resumed operations.
-	restoreIndices, err := restorableSnapshotIndices(snapshotDetails, appCtx.Config.Elasticsearch.Restore)
+	targets, err := prepareRestoreTargets(snapshotDetails, appCtx.Config.Elasticsearch.Restore)
 	if err != nil {
 		return err
 	}
@@ -135,20 +136,9 @@ func runRestore(appCtx *app.Context) error {
 		return err
 	}
 
-	// Delete all STS indices before restore
-	appCtx.Logger.Println()
-	if err := deleteAllSTSIndices(esClient, appCtx); err != nil {
-		return err
+	if err := replaceSTSIndices(esClient, appCtx, repository, snapshotDetails, targets); err != nil {
+		return withFinalizeHint(err, appCtx.Namespace)
 	}
-
-	// Trigger async restore
-	appCtx.Logger.Println()
-	isPartial := snapshotDetails.State == "PARTIAL"
-	appCtx.Logger.Infof("Triggering restore for snapshot: %s", selectedSnapshot)
-	if err := esClient.RestoreSnapshot(repository, selectedSnapshot, strings.Join(restoreIndices, ","), isPartial); err != nil {
-		return fmt.Errorf("failed to trigger restore: %w", err)
-	}
-	appCtx.Logger.Successf("Restore triggered successfully")
 
 	if runBackground {
 		restore.PrintAPIRunningRestoreStatus("elasticsearch", selectedSnapshot, appCtx.Namespace, appCtx.Logger)
@@ -156,6 +146,43 @@ func runRestore(appCtx *app.Context) error {
 	}
 
 	return checkAndFinalize(esClient, appCtx, repository, selectedSnapshot, !runBackground, restoreNoProgressIn)
+}
+
+// prepareRestoreTargets validates the snapshot and builds the restore request. It needs no cluster
+// access, so it runs before anything is scaled down or deleted.
+func prepareRestoreTargets(snapshot *es.Snapshot, restoreConfig config.RestoreConfig) ([]string, error) {
+	restoreIndices, err := restorableSnapshotIndices(snapshot, restoreConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	return restoreTargets(snapshot, restoreIndices, restoreConfig)
+}
+
+// withFinalizeHint tells the user how to release workloads that stay scaled down after a failure.
+func withFinalizeHint(err error, namespace string) error {
+	return fmt.Errorf("%w. Workloads are still scaled down; after fixing this, release them with: "+
+		"sts-backup elasticsearch check-and-finalize --finalize-only -n %s", err, namespace)
+}
+
+// replaceSTSIndices deletes the target's STS indices and triggers an asynchronous restore of the snapshot's.
+func replaceSTSIndices(esClient es.Interface, appCtx *app.Context, repository string, snapshot *es.Snapshot, targets []string) error {
+	appCtx.Logger.Println()
+	if err := deleteAllSTSIndices(esClient, appCtx); err != nil {
+		return err
+	}
+
+	appCtx.Logger.Println()
+	isPartial := snapshot.State == "PARTIAL"
+	appCtx.Logger.Infof("Triggering restore for snapshot: %s", snapshot.Snapshot)
+	if err := esClient.RestoreSnapshot(repository, snapshot.Snapshot, strings.Join(targets, ","), isPartial); err != nil {
+		return fmt.Errorf("failed to trigger restore (if the error names an existing index or data stream, "+
+			"a workload not matched by scaleDownLabelSelector %q may be writing to Elasticsearch): %w",
+			appCtx.Config.Elasticsearch.Restore.ScaleDownLabelSelector, err)
+	}
+	appCtx.Logger.Successf("Restore triggered successfully")
+
+	return nil
 }
 
 // getLatestSnapshot retrieves the most recent snapshot from the repository
@@ -210,48 +237,111 @@ func validateSnapshotState(snapshot *es.Snapshot, appCtx *app.Context, skipConfi
 	}
 }
 
-// deleteAllSTSIndices deletes all STS indices including datastream rollover if needed
+// deleteAllSTSIndices deletes all STS indices, including the logs data stream and any of its
+// backing indices left without one.
 func deleteAllSTSIndices(esClient es.Interface, appCtx *app.Context) error {
-	appCtx.Logger.Infof("Fetching current Elasticsearch indices...")
-	allIndices, err := esClient.ListIndices("*")
-	if err != nil {
-		return fmt.Errorf("failed to list indices: %w", err)
-	}
+	restoreConfig := appCtx.Config.Elasticsearch.Restore
 
-	stsIndices := filterSTSIndices(allIndices, appCtx.Config.Elasticsearch.Restore.IndexPrefix, appCtx.Config.Elasticsearch.Restore.DatastreamIndexPrefix)
-	stsIndices, err = filterIndicesByPattern(stsIndices, appCtx.Config.Elasticsearch.Restore.IndicesPattern)
+	appCtx.Logger.Infof("Fetching current Elasticsearch indices...")
+	stsIndices, err := listSTSIndices(esClient, restoreConfig)
 	if err != nil {
-		return fmt.Errorf("invalid Elasticsearch restore indicesPattern: %w", err)
+		return err
 	}
 
 	if len(stsIndices) == 0 {
 		appCtx.Logger.Infof("No STS indices found to delete")
-		return nil
-	}
-
-	appCtx.Logger.Infof("Found %d STS index(es) to delete", len(stsIndices))
-	for _, index := range stsIndices {
-		appCtx.Logger.Debugf("  - %s", index)
-	}
-
-	// Check for datastream and rollover if needed
-	if hasDatastreamIndices(stsIndices, appCtx.Config.Elasticsearch.Restore.DatastreamIndexPrefix) {
-		appCtx.Logger.Infof("Rolling over datastream '%s'...", appCtx.Config.Elasticsearch.Restore.DatastreamName)
-		if err := esClient.RolloverDatastream(appCtx.Config.Elasticsearch.Restore.DatastreamName); err != nil {
-			return fmt.Errorf("failed to rollover datastream: %w", err)
+	} else {
+		appCtx.Logger.Infof("Found %d STS index(es) to delete", len(stsIndices))
+		for _, index := range stsIndices {
+			appCtx.Logger.Debugf("  - %s", index)
 		}
-		appCtx.Logger.Successf("Datastream rolled over successfully")
 	}
 
-	// Delete all indices
-	appCtx.Logger.Infof("Deleting %d index(es)...", len(stsIndices))
+	// Rolling over instead would leave a new write index behind that can collide with the snapshot.
+	if hasDatastreamIndices(stsIndices, restoreConfig.DatastreamIndexPrefix) {
+		appCtx.Logger.Infof("Deleting datastream '%s'...", restoreConfig.DatastreamName)
+		deleted, err := esClient.DeleteDatastream(restoreConfig.DatastreamName)
+		if err != nil {
+			return fmt.Errorf("failed to delete datastream: %w", err)
+		}
+		if deleted {
+			appCtx.Logger.Successf("Datastream deleted successfully")
+			if stsIndices, err = listSTSIndices(esClient, restoreConfig); err != nil {
+				return err
+			}
+		} else {
+			appCtx.Logger.Infof("Datastream '%s' does not exist; deleting its backing indices directly", restoreConfig.DatastreamName)
+		}
+	}
+
+	if len(stsIndices) > 0 {
+		appCtx.Logger.Infof("Deleting %d index(es)...", len(stsIndices))
+	}
 	for _, index := range stsIndices {
 		if err := deleteIndexWithVerification(esClient, index, appCtx.Logger); err != nil {
 			return err
 		}
 	}
+
+	// A workload that is still writing recreates indices, which would restore into a dirty target.
+	remaining, err := listSTSIndices(esClient, restoreConfig)
+	if err != nil {
+		return err
+	}
+	if len(remaining) > 0 {
+		return fmt.Errorf("STS indices reappeared after deletion, so a workload is still writing to Elasticsearch: %s. "+
+			"Check for writers not matched by scaleDownLabelSelector %q",
+			strings.Join(remaining, ", "), restoreConfig.ScaleDownLabelSelector)
+	}
 	appCtx.Logger.Successf("All indices deleted successfully")
 	return nil
+}
+
+func listSTSIndices(esClient es.Interface, restoreConfig config.RestoreConfig) ([]string, error) {
+	allIndices, err := esClient.ListIndices("*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to list indices: %w", err)
+	}
+
+	stsIndices := filterSTSIndices(allIndices, restoreConfig.IndexPrefix, restoreConfig.DatastreamIndexPrefix)
+	stsIndices, err = filterIndicesByPattern(stsIndices, restoreConfig.IndicesPattern)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Elasticsearch restore indicesPattern: %w", err)
+	}
+
+	return stsIndices, nil
+}
+
+// restoreTargets adds the logs data stream to the restore request. Naming only its backing indices
+// restores them as plain indices and leaves the data stream missing. Naming a data stream the
+// snapshot lacks fails the whole restore, so that case is rejected up front.
+func restoreTargets(snapshot *es.Snapshot, indices []string, restoreConfig config.RestoreConfig) ([]string, error) {
+	if !hasDatastreamIndices(indices, restoreConfig.DatastreamIndexPrefix) {
+		return indices, nil
+	}
+
+	if !slices.Contains(snapshot.DataStreams, restoreConfig.DatastreamName) {
+		return nil, fmt.Errorf("snapshot %s contains %s backing indices but not the %s data stream, "+
+			"so the logs cannot be restored as a data stream; use a snapshot taken by the backup SLM policy",
+			snapshot.Snapshot, restoreConfig.DatastreamIndexPrefix, restoreConfig.DatastreamName)
+	}
+
+	// Naming the data stream restores all of its snapshotted backing indices, which completion
+	// tracking and the deletion would not cover if the pattern selected only some of them.
+	var omitted []string
+	for _, index := range snapshot.Indices {
+		if isDatastreamBackingIndex(index, restoreConfig.DatastreamIndexPrefix) && !slices.Contains(indices, index) {
+			omitted = append(omitted, index)
+		}
+	}
+	if len(omitted) > 0 {
+		slices.Sort(omitted)
+		return nil, fmt.Errorf("indicesPattern %q selects only some %s backing indices, but restoring the %s data stream "+
+			"restores all of them; omitted: %s. The pattern must select all of them or none",
+			restoreConfig.IndicesPattern, restoreConfig.DatastreamIndexPrefix, restoreConfig.DatastreamName, strings.Join(omitted, ", "))
+	}
+
+	return append(slices.Clone(indices), restoreConfig.DatastreamName), nil
 }
 
 // filterSTSIndices filters indices that match the configured STS prefixes

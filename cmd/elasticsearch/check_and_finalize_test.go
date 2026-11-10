@@ -22,6 +22,7 @@ type healthResult struct {
 
 // fakeHealthClient replays results in order, repeating the last one once exhausted.
 type fakeHealthClient struct {
+	es.Interface
 	results []healthResult
 	calls   int
 }
@@ -541,6 +542,20 @@ func TestReconnectingHealthClient(t *testing.T) {
 		assert.Nil(t, client.pf, "must not adopt a port-forward it did not open")
 	})
 
+	t.Run("verification calls drop a broken client so the next call reconnects", func(t *testing.T) {
+		broken := &brokenDatastreamClient{}
+		client := &reconnectingHealthClient{client: broken}
+
+		_, _, err := client.GetDatastream("sts_k8s_logs")
+		require.Error(t, err)
+		assert.Nil(t, client.client)
+
+		client.client = broken
+		_, err = client.ListIndices("*")
+		require.Error(t, err)
+		assert.Nil(t, client.client)
+	})
+
 	t.Run("disconnect is safe to call repeatedly", func(t *testing.T) {
 		client := &reconnectingHealthClient{client: &fakeHealthClient{}}
 
@@ -549,4 +564,16 @@ func TestReconnectingHealthClient(t *testing.T) {
 			client.disconnect()
 		})
 	})
+}
+
+type brokenDatastreamClient struct {
+	es.Interface
+}
+
+func (brokenDatastreamClient) GetDatastream(string) ([]string, bool, error) {
+	return nil, false, errors.New("connection refused")
+}
+
+func (brokenDatastreamClient) ListIndices(string) ([]string, error) {
+	return nil, errors.New("connection refused")
 }

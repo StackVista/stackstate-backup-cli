@@ -2,6 +2,7 @@ package elasticsearch
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -104,7 +105,7 @@ const (
 // health check. It starts from the caller's client so the happy path opens no extra port-forward.
 type reconnectingHealthClient struct {
 	appCtx *app.Context
-	client indicesHealthGetter
+	client es.Interface
 	pf     *portforward.Conn
 }
 
@@ -124,6 +125,40 @@ func (r *reconnectingHealthClient) GetIndicesHealth() (map[string]es.IndexHealth
 	}
 
 	return health, nil
+}
+
+// GetDatastream and ListIndices let the post-restore verification survive a tunnel that dropped
+// during a long restore, the same way polling does.
+func (r *reconnectingHealthClient) GetDatastream(name string) ([]string, bool, error) {
+	if r.client == nil {
+		if err := r.connect(); err != nil {
+			return nil, false, err
+		}
+	}
+
+	indices, exists, err := r.client.GetDatastream(name)
+	if err != nil {
+		r.disconnect()
+		return nil, false, err
+	}
+
+	return indices, exists, nil
+}
+
+func (r *reconnectingHealthClient) ListIndices(pattern string) ([]string, error) {
+	if r.client == nil {
+		if err := r.connect(); err != nil {
+			return nil, err
+		}
+	}
+
+	indices, err := r.client.ListIndices(pattern)
+	if err != nil {
+		r.disconnect()
+		return nil, err
+	}
+
+	return indices, nil
 }
 
 func (r *reconnectingHealthClient) connect() error {
@@ -427,7 +462,7 @@ func checkAndFinalize(
 		switch status {
 		case es.StatusSuccess:
 			appCtx.Logger.Successf("Restore completed successfully")
-			return finalizeRestore(appCtx)
+			return verifyAndFinalize(healthClient, appCtx, expected)
 		default:
 			return fmt.Errorf("restore completed with unexpected status: %s", status)
 		}
@@ -438,7 +473,9 @@ func checkAndFinalize(
 
 	if waitForComplete {
 		appCtx.Logger.Println()
-		return waitAndFinalize(statusFn, appCtx, snapshotName)
+		return waitAndFinalize(statusFn, appCtx, snapshotName, func() error {
+			return verifyAndFinalize(healthClient, appCtx, expected)
+		})
 	}
 
 	// Not waiting - print status and exit
@@ -448,15 +485,94 @@ func checkAndFinalize(
 }
 
 // waitAndFinalize waits for restore to complete and finalizes (scale up)
-func waitAndFinalize(statusFn func() (string, bool, error), appCtx *app.Context, snapshotName string) error {
+func waitAndFinalize(statusFn func() (string, bool, error), appCtx *app.Context, snapshotName string, finalize func() error) error {
 	restore.PrintAPIWaitingMessage("elasticsearch", snapshotName, appCtx.Namespace, appCtx.Logger)
 
 	if err := restore.WaitForAPIRestore(statusFn, 0, appCtx.Logger); err != nil {
 		return err
 	}
 
-	// Finalize restore (scale up)
+	return finalize()
+}
+
+// logsDatastreamReader is the part of the Elasticsearch client the post-restore verification needs.
+type logsDatastreamReader interface {
+	GetDatastream(datastreamName string) ([]string, bool, error)
+	ListIndices(pattern string) ([]string, error)
+}
+
+const verifyAttempts = 3
+
+// verifyRetryInterval is a variable so tests do not wait.
+var verifyRetryInterval = 2 * time.Second
+
+// withRetries retries transient request failures, such as a port-forward that dropped. It does not
+// apply to verification verdicts, which are returned by the caller after the data is fetched.
+func withRetries(log *logger.Logger, what string, fn func() error) error {
+	var err error
+	for attempt := 1; attempt <= verifyAttempts; attempt++ {
+		if err = fn(); err == nil {
+			return nil
+		}
+		if attempt < verifyAttempts {
+			log.Warningf("%s failed (%d/%d), retrying: %v", what, attempt, verifyAttempts, err)
+			time.Sleep(verifyRetryInterval)
+		}
+	}
+
+	return err
+}
+
+// verifyAndFinalize refuses to scale up over a restore that left the logs outside the data stream.
+func verifyAndFinalize(client logsDatastreamReader, appCtx *app.Context, expected []string) error {
+	if err := verifyLogsDatastream(client, appCtx.Logger, appCtx.Config.Elasticsearch.Restore, expected); err != nil {
+		return withFinalizeHint(err, appCtx.Namespace)
+	}
+
 	return finalizeRestore(appCtx)
+}
+
+// verifyLogsDatastream checks that the logs data stream exists and that no logs backing index sits
+// outside it. It does nothing when the restore did not include logs backing indices.
+func verifyLogsDatastream(client logsDatastreamReader, log *logger.Logger, restoreConfig config.RestoreConfig, expected []string) error {
+	if !hasDatastreamIndices(expected, restoreConfig.DatastreamIndexPrefix) {
+		return nil
+	}
+
+	var backing []string
+	var exists bool
+	err := withRetries(log, "Data stream check", func() (err error) {
+		backing, exists, err = client.GetDatastream(restoreConfig.DatastreamName)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("failed to verify datastream '%s': %w", restoreConfig.DatastreamName, err)
+	}
+	if !exists {
+		return fmt.Errorf("restore completed but the '%s' data stream does not exist", restoreConfig.DatastreamName)
+	}
+
+	var allIndices []string
+	err = withRetries(log, "Index listing", func() (err error) {
+		allIndices, err = client.ListIndices(restoreConfig.DatastreamIndexPrefix + "-*")
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list indices: %w", err)
+	}
+	var orphans []string
+	for _, index := range allIndices {
+		if isDatastreamBackingIndex(index, restoreConfig.DatastreamIndexPrefix) && !slices.Contains(backing, index) {
+			orphans = append(orphans, index)
+		}
+	}
+	if len(orphans) > 0 {
+		sort.Strings(orphans)
+		return fmt.Errorf("restore completed but %d '%s' backing index(es) are outside the data stream: %s",
+			len(orphans), restoreConfig.DatastreamName, strings.Join(orphans, ", "))
+	}
+
+	return nil
 }
 
 // finalizeRestore performs post-restore finalization (scale up deployments and release lock)

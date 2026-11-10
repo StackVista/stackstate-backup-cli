@@ -16,7 +16,8 @@ type Interface interface {
 	IndexExists(index string) (bool, error)
 
 	// Datastream operations
-	RolloverDatastream(datastreamName string) error
+	DeleteDatastream(datastreamName string) (bool, error)
+	GetDatastream(datastreamName string) ([]string, bool, error)
 
 	// Repository and SLM operations
 	DeleteSnapshotRepository(name string) error

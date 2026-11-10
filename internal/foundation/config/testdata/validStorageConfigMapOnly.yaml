@@ -63,7 +63,7 @@ elasticsearch:
     indexPrefix: sts
     # Prefix for datastream indices (datastreams use pattern: .ds-{name}-{generation})
     datastreamIndexPrefix: .ds-sts_k8s_logs
-    # Name of the datastream (used for rollover operations)
+    # Name of the datastream (deleted and restored together with its backing indices)
     datastreamName: sts_k8s_logs
     # Pattern for indices to restore from snapshot (comma-separated glob patterns)
     indicesPattern: sts*,.ds-sts_k8s_logs*
