@@ -129,6 +129,12 @@ func (m *mockESClientForRestore) RestoreSnapshot(_, snapshotName, targets string
 	}
 	for _, name := range m.snapshot.DataStreams {
 		if slices.Contains(strings.Split(targets, ","), name) {
+			// Like Elasticsearch, naming the stream restores all of its snapshotted backing indices.
+			for _, index := range m.snapshot.Indices {
+				if strings.HasPrefix(index, ".ds-"+name+"-") && !slices.Contains(m.restoredPlain, index) {
+					m.restoredPlain = append(m.restoredPlain, index)
+				}
+			}
 			m.restoredDatastreams[name] = slices.DeleteFunc(slices.Clone(m.restoredPlain), func(i string) bool {
 				return !strings.HasPrefix(i, ".ds-"+name+"-")
 			})
@@ -568,6 +574,62 @@ func TestRestoreTargetsRejectsSnapshotWithoutDatastream(t *testing.T) {
 	targets, err := restoreTargets(&elasticsearch.Snapshot{Snapshot: "snap"}, []string{topo}, restoreConfig)
 	require.NoError(t, err)
 	assert.Equal(t, []string{topo}, targets)
+}
+
+func TestPrepareRestoreTargetsRequiresAllOrNoLogsBackingIndices(t *testing.T) {
+	const (
+		topo = "sts_topology_events-2026.11.01"
+		b1   = ".ds-sts_k8s_logs-2026.11.01-000001"
+		b2   = ".ds-sts_k8s_logs-2026.11.01-000002"
+	)
+	snapshot := &elasticsearch.Snapshot{
+		Snapshot: "snap", State: elasticsearch.StatusSuccess,
+		Indices: []string{topo, b1, b2}, DataStreams: []string{"sts_k8s_logs"},
+	}
+
+	tests := []struct {
+		name          string
+		pattern       string
+		expectErr     string
+		expectTargets []string
+	}{
+		{name: "one of two backing indices", pattern: "sts*,.ds-sts_k8s_logs-2026.11.01-000002", expectErr: "omitted: " + b1},
+		{name: "exclusion of a backing index", pattern: "sts*,.ds-sts_k8s_logs*,-" + b1, expectErr: "omitted: " + b1},
+		{name: "all backing indices", pattern: "sts*,.ds-sts_k8s_logs*", expectTargets: []string{topo, b1, b2, "sts_k8s_logs"}},
+		{name: "no backing indices", pattern: "sts*", expectTargets: []string{topo}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			restoreConfig := newLogsRestoreContext().Config.Elasticsearch.Restore
+			restoreConfig.IndicesPattern = tt.pattern
+
+			targets, err := prepareRestoreTargets(snapshot, restoreConfig)
+
+			if tt.expectErr != "" {
+				require.ErrorContains(t, err, tt.expectErr)
+				assert.ErrorContains(t, err, "must select all of them or none")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectTargets, targets)
+		})
+	}
+}
+
+func TestMockRestoreExpandsNamedDatastream(t *testing.T) {
+	const (
+		b1 = ".ds-sts_k8s_logs-2026.11.01-000001"
+		b2 = ".ds-sts_k8s_logs-2026.11.01-000002"
+	)
+	client := &mockESClientForRestore{
+		snapshot:       &elasticsearch.Snapshot{Indices: []string{b1, b2}, DataStreams: []string{"sts_k8s_logs"}},
+		indexExistsMap: map[string]bool{},
+	}
+
+	require.NoError(t, client.RestoreSnapshot("repo", "snap", b2+",sts_k8s_logs", false))
+
+	assert.Equal(t, []string{b2, b1}, client.restoredDatastreams["sts_k8s_logs"])
+	assert.Empty(t, client.restoredPlain)
 }
 
 func TestPrepareRestoreTargetsRejectsBeforeAnyClusterAccess(t *testing.T) {

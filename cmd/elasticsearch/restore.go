@@ -326,6 +326,21 @@ func restoreTargets(snapshot *es.Snapshot, indices []string, restoreConfig confi
 			snapshot.Snapshot, restoreConfig.DatastreamIndexPrefix, restoreConfig.DatastreamName)
 	}
 
+	// Naming the data stream restores all of its snapshotted backing indices, which completion
+	// tracking and the deletion would not cover if the pattern selected only some of them.
+	var omitted []string
+	for _, index := range snapshot.Indices {
+		if isDatastreamBackingIndex(index, restoreConfig.DatastreamIndexPrefix) && !slices.Contains(indices, index) {
+			omitted = append(omitted, index)
+		}
+	}
+	if len(omitted) > 0 {
+		slices.Sort(omitted)
+		return nil, fmt.Errorf("indicesPattern %q selects only some %s backing indices, but restoring the %s data stream "+
+			"restores all of them; omitted: %s. The pattern must select all of them or none",
+			restoreConfig.IndicesPattern, restoreConfig.DatastreamIndexPrefix, restoreConfig.DatastreamName, strings.Join(omitted, ", "))
+	}
+
 	return append(slices.Clone(indices), restoreConfig.DatastreamName), nil
 }
 
