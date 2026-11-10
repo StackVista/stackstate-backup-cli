@@ -100,6 +100,10 @@ func (m *mockESClientForConfigure) DeleteDatastream(_ string) (bool, error) {
 	return false, fmt.Errorf("not implemented")
 }
 
+func (m *mockESClientForConfigure) GetDatastream(_ string) ([]string, bool, error) {
+	return nil, false, fmt.Errorf("not implemented")
+}
+
 // TestConfigureCmd_Unit tests the command structure
 func TestConfigureCmd_Unit(t *testing.T) {
 	flags := config.NewCLIGlobalFlags()

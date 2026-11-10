@@ -2,6 +2,7 @@ package elasticsearch
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -427,7 +428,7 @@ func checkAndFinalize(
 		switch status {
 		case es.StatusSuccess:
 			appCtx.Logger.Successf("Restore completed successfully")
-			return finalizeRestore(appCtx)
+			return verifyAndFinalize(esClient, appCtx, expected)
 		default:
 			return fmt.Errorf("restore completed with unexpected status: %s", status)
 		}
@@ -438,7 +439,9 @@ func checkAndFinalize(
 
 	if waitForComplete {
 		appCtx.Logger.Println()
-		return waitAndFinalize(statusFn, appCtx, snapshotName)
+		return waitAndFinalize(statusFn, appCtx, snapshotName, func() error {
+			return verifyAndFinalize(esClient, appCtx, expected)
+		})
 	}
 
 	// Not waiting - print status and exit
@@ -448,15 +451,57 @@ func checkAndFinalize(
 }
 
 // waitAndFinalize waits for restore to complete and finalizes (scale up)
-func waitAndFinalize(statusFn func() (string, bool, error), appCtx *app.Context, snapshotName string) error {
+func waitAndFinalize(statusFn func() (string, bool, error), appCtx *app.Context, snapshotName string, finalize func() error) error {
 	restore.PrintAPIWaitingMessage("elasticsearch", snapshotName, appCtx.Namespace, appCtx.Logger)
 
 	if err := restore.WaitForAPIRestore(statusFn, 0, appCtx.Logger); err != nil {
 		return err
 	}
 
-	// Finalize restore (scale up)
+	return finalize()
+}
+
+// verifyAndFinalize refuses to scale up over a restore that left the logs outside the data stream.
+func verifyAndFinalize(esClient es.Interface, appCtx *app.Context, expected []string) error {
+	if err := verifyLogsDatastream(esClient, appCtx.Config.Elasticsearch.Restore, expected); err != nil {
+		return withFinalizeHint(err, appCtx.Namespace)
+	}
+
 	return finalizeRestore(appCtx)
+}
+
+// verifyLogsDatastream checks that the logs data stream exists and that no logs backing index sits
+// outside it. It does nothing when the restore did not include logs backing indices.
+func verifyLogsDatastream(esClient es.Interface, restoreConfig config.RestoreConfig, expected []string) error {
+	if !hasDatastreamIndices(expected, restoreConfig.DatastreamIndexPrefix) {
+		return nil
+	}
+
+	backing, exists, err := esClient.GetDatastream(restoreConfig.DatastreamName)
+	if err != nil {
+		return fmt.Errorf("failed to verify datastream '%s': %w", restoreConfig.DatastreamName, err)
+	}
+	if !exists {
+		return fmt.Errorf("restore completed but the '%s' data stream does not exist", restoreConfig.DatastreamName)
+	}
+
+	allIndices, err := esClient.ListIndices(restoreConfig.DatastreamIndexPrefix + "-*")
+	if err != nil {
+		return fmt.Errorf("failed to list indices: %w", err)
+	}
+	var orphans []string
+	for _, index := range allIndices {
+		if isDatastreamBackingIndex(index, restoreConfig.DatastreamIndexPrefix) && !slices.Contains(backing, index) {
+			orphans = append(orphans, index)
+		}
+	}
+	if len(orphans) > 0 {
+		sort.Strings(orphans)
+		return fmt.Errorf("restore completed but %d '%s' backing index(es) are outside the data stream: %s",
+			len(orphans), restoreConfig.DatastreamName, strings.Join(orphans, ", "))
+	}
+
+	return nil
 }
 
 // finalizeRestore performs post-restore finalization (scale up deployments and release lock)

@@ -100,12 +100,7 @@ func runRestore(appCtx *app.Context) error {
 
 	// Reject snapshots that cannot be monitored safely before scaling down workloads or deleting
 	// any indices. check-and-finalize repeats this validation for independently resumed operations.
-	restoreIndices, err := restorableSnapshotIndices(snapshotDetails, appCtx.Config.Elasticsearch.Restore)
-	if err != nil {
-		return err
-	}
-
-	targets, err := restoreTargets(snapshotDetails, restoreIndices, appCtx.Config.Elasticsearch.Restore)
+	targets, err := prepareRestoreTargets(snapshotDetails, appCtx.Config.Elasticsearch.Restore)
 	if err != nil {
 		return err
 	}
@@ -142,7 +137,7 @@ func runRestore(appCtx *app.Context) error {
 	}
 
 	if err := replaceSTSIndices(esClient, appCtx, repository, snapshotDetails, targets); err != nil {
-		return err
+		return withFinalizeHint(err, appCtx.Namespace)
 	}
 
 	if runBackground {
@@ -151,6 +146,23 @@ func runRestore(appCtx *app.Context) error {
 	}
 
 	return checkAndFinalize(esClient, appCtx, repository, selectedSnapshot, !runBackground, restoreNoProgressIn)
+}
+
+// prepareRestoreTargets validates the snapshot and builds the restore request. It needs no cluster
+// access, so it runs before anything is scaled down or deleted.
+func prepareRestoreTargets(snapshot *es.Snapshot, restoreConfig config.RestoreConfig) ([]string, error) {
+	restoreIndices, err := restorableSnapshotIndices(snapshot, restoreConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	return restoreTargets(snapshot, restoreIndices, restoreConfig)
+}
+
+// withFinalizeHint tells the user how to release workloads that stay scaled down after a failure.
+func withFinalizeHint(err error, namespace string) error {
+	return fmt.Errorf("%w. Workloads are still scaled down; after fixing this, release them with: "+
+		"sts-backup elasticsearch check-and-finalize --finalize-only -n %s", err, namespace)
 }
 
 // replaceSTSIndices deletes the target's STS indices and triggers an asynchronous restore of the snapshot's.
@@ -164,7 +176,9 @@ func replaceSTSIndices(esClient es.Interface, appCtx *app.Context, repository st
 	isPartial := snapshot.State == "PARTIAL"
 	appCtx.Logger.Infof("Triggering restore for snapshot: %s", snapshot.Snapshot)
 	if err := esClient.RestoreSnapshot(repository, snapshot.Snapshot, strings.Join(targets, ","), isPartial); err != nil {
-		return fmt.Errorf("failed to trigger restore: %w", err)
+		return fmt.Errorf("failed to trigger restore (if the error names an existing index or data stream, "+
+			"a workload not matched by scaleDownLabelSelector %q may be writing to Elasticsearch): %w",
+			appCtx.Config.Elasticsearch.Restore.ScaleDownLabelSelector, err)
 	}
 	appCtx.Logger.Successf("Restore triggered successfully")
 
@@ -276,9 +290,8 @@ func deleteAllSTSIndices(esClient es.Interface, appCtx *app.Context) error {
 	}
 	if len(remaining) > 0 {
 		return fmt.Errorf("STS indices reappeared after deletion, so a workload is still writing to Elasticsearch: %s. "+
-			"Check for writers not matched by scaleDownLabelSelector %q. "+
-			"Workloads are still scaled down; after fixing this, release them with: sts-backup elasticsearch check-and-finalize --finalize-only -n %s",
-			strings.Join(remaining, ", "), restoreConfig.ScaleDownLabelSelector, appCtx.Namespace)
+			"Check for writers not matched by scaleDownLabelSelector %q",
+			strings.Join(remaining, ", "), restoreConfig.ScaleDownLabelSelector)
 	}
 	appCtx.Logger.Successf("All indices deleted successfully")
 	return nil

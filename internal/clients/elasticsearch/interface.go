@@ -17,6 +17,7 @@ type Interface interface {
 
 	// Datastream operations
 	DeleteDatastream(datastreamName string) (bool, error)
+	GetDatastream(datastreamName string) ([]string, bool, error)
 
 	// Repository and SLM operations
 	DeleteSnapshotRepository(name string) error

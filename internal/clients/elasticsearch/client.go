@@ -264,6 +264,52 @@ func (c *Client) DeleteDatastream(datastreamName string) (bool, error) {
 	return true, nil
 }
 
+// GetDatastream returns the names of a data stream's backing indices.
+// It reports false when the data stream does not exist.
+func (c *Client) GetDatastream(datastreamName string) ([]string, bool, error) {
+	res, err := c.es.Indices.GetDataStream(
+		c.es.Indices.GetDataStream.WithName(datastreamName),
+		c.es.Indices.GetDataStream.WithContext(context.Background()),
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to get datastream: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode == http.StatusNotFound {
+		return nil, false, nil
+	}
+
+	if res.IsError() {
+		return nil, false, fmt.Errorf("elasticsearch returned error: %s", res.String())
+	}
+
+	var body struct {
+		DataStreams []struct {
+			Name    string `json:"name"`
+			Indices []struct {
+				IndexName string `json:"index_name"`
+			} `json:"indices"`
+		} `json:"data_streams"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		return nil, false, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	for _, ds := range body.DataStreams {
+		if ds.Name != datastreamName {
+			continue
+		}
+		indices := make([]string, len(ds.Indices))
+		for i, idx := range ds.Indices {
+			indices[i] = idx.IndexName
+		}
+		return indices, true, nil
+	}
+
+	return nil, false, nil
+}
+
 // DeleteSnapshotRepository deletes a snapshot repository
 func (c *Client) DeleteSnapshotRepository(name string) error {
 	res, err := c.es.Snapshot.DeleteRepository(

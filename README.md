@@ -346,6 +346,8 @@ elasticsearch:
     indicesPattern: sts*,.ds-sts_k8s_logs*
 ```
 
+`indicesPattern` selects indices to delete and restore. The restore names the `datastreamName` data stream, so it brings back all of the data stream's snapshotted backing indices and a pattern cannot select only some of them. Keep `datastreamIndexPrefix` matched by the pattern.
+
 Apply to Kubernetes:
 
 ```bash

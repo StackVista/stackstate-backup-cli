@@ -348,6 +348,55 @@ func TestClient_DeleteDatastream(t *testing.T) {
 	}
 }
 
+func TestClient_GetDatastream(t *testing.T) {
+	tests := []struct {
+		name           string
+		responseStatus int
+		responseBody   string
+		expectIndices  []string
+		expectExists   bool
+		expectError    bool
+	}{
+		{
+			name:           "exists",
+			responseStatus: http.StatusOK,
+			responseBody:   `{"data_streams":[{"name":"sts_k8s_logs","indices":[{"index_name":".ds-sts_k8s_logs-1"},{"index_name":".ds-sts_k8s_logs-2"}]}]}`,
+			expectIndices:  []string{".ds-sts_k8s_logs-1", ".ds-sts_k8s_logs-2"},
+			expectExists:   true,
+		},
+		{name: "not found", responseStatus: http.StatusNotFound, responseBody: `{}`},
+		{name: "empty result", responseStatus: http.StatusOK, responseBody: `{"data_streams":[]}`},
+		{name: "elasticsearch error", responseStatus: http.StatusInternalServerError, responseBody: `{}`, expectError: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := mockESServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/_data_stream/sts_k8s_logs", r.URL.Path)
+				assert.Equal(t, http.MethodGet, r.Method)
+
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.responseStatus)
+				_, _ = w.Write([]byte(tt.responseBody))
+			}))
+			defer server.Close()
+
+			client, err := NewClient(server.URL)
+			require.NoError(t, err)
+
+			indices, exists, err := client.GetDatastream("sts_k8s_logs")
+
+			if tt.expectError {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.expectExists, exists)
+			assert.Equal(t, tt.expectIndices, indices)
+		})
+	}
+}
+
 func TestClient_IndexExists(t *testing.T) {
 	tests := []struct {
 		name           string

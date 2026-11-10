@@ -277,6 +277,10 @@ func (m *mockESClient) DeleteDatastream(_ string) (bool, error) {
 	return false, fmt.Errorf("not implemented")
 }
 
+func (m *mockESClient) GetDatastream(_ string) ([]string, bool, error) {
+	return nil, false, fmt.Errorf("not implemented")
+}
+
 // createFakeClientWithConfig creates a fake Kubernetes client with a ConfigMap containing the given config
 func createFakeClientWithConfig(t *testing.T, storageConfig string) *fake.Clientset {
 	t.Helper()

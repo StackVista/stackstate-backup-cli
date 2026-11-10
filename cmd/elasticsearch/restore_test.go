@@ -34,6 +34,23 @@ type mockESClientForRestore struct {
 	// listCalls counts ListIndices calls; addOnListCall adds indices on the given call, modelling a writer.
 	listCalls     int
 	addOnListCall map[int][]string
+	// restoredDatastreams and restoredPlain record what _restore brought back: a named data stream
+	// gets its backing indices, anything else comes back as plain indices.
+	restoredDatastreams map[string][]string
+	restoredPlain       []string
+}
+
+// settle makes the indices brought back by _restore visible to ListIndices.
+func (m *mockESClientForRestore) settle() {
+	m.indices = slices.Clone(m.restoredPlain)
+	for _, backing := range m.restoredDatastreams {
+		m.indices = append(m.indices, backing...)
+	}
+}
+
+func (m *mockESClientForRestore) GetDatastream(name string) ([]string, bool, error) {
+	backing, ok := m.restoredDatastreams[name]
+	return backing, ok, nil
 }
 
 func (m *mockESClientForRestore) ListIndices(_ string) ([]string, error) {
@@ -103,6 +120,23 @@ func (m *mockESClientForRestore) RestoreSnapshot(_, snapshotName, targets string
 	m.restoredSnapshot = snapshotName
 	m.restoredTargets = targets
 	m.restoredPartial = partial
+	m.restoredDatastreams = map[string][]string{}
+	m.restoredPlain = nil
+	for _, target := range strings.Split(targets, ",") {
+		if !slices.Contains(m.snapshot.DataStreams, target) {
+			m.restoredPlain = append(m.restoredPlain, target)
+		}
+	}
+	for _, name := range m.snapshot.DataStreams {
+		if slices.Contains(strings.Split(targets, ","), name) {
+			m.restoredDatastreams[name] = slices.DeleteFunc(slices.Clone(m.restoredPlain), func(i string) bool {
+				return !strings.HasPrefix(i, ".ds-"+name+"-")
+			})
+			m.restoredPlain = slices.DeleteFunc(m.restoredPlain, func(i string) bool {
+				return strings.HasPrefix(i, ".ds-"+name+"-")
+			})
+		}
+	}
 	return nil
 }
 
@@ -534,6 +568,93 @@ func TestRestoreTargetsRejectsSnapshotWithoutDatastream(t *testing.T) {
 	targets, err := restoreTargets(&elasticsearch.Snapshot{Snapshot: "snap"}, []string{topo}, restoreConfig)
 	require.NoError(t, err)
 	assert.Equal(t, []string{topo}, targets)
+}
+
+func TestPrepareRestoreTargetsRejectsBeforeAnyClusterAccess(t *testing.T) {
+	restoreConfig := newLogsRestoreContext().Config.Elasticsearch.Restore
+	snapshot := &elasticsearch.Snapshot{
+		Snapshot: "snap",
+		State:    elasticsearch.StatusSuccess,
+		Indices:  []string{"sts_topology_events-2026.11.01", ".ds-sts_k8s_logs-2026.11.01-000001"},
+	}
+
+	targets, err := prepareRestoreTargets(snapshot, restoreConfig)
+
+	require.ErrorContains(t, err, "not the sts_k8s_logs data stream")
+	assert.Nil(t, targets)
+}
+
+func TestVerifyLogsDatastream(t *testing.T) {
+	const (
+		topo = "sts_topology_events-2026.11.01"
+		b1   = ".ds-sts_k8s_logs-2026.11.01-000001"
+		b2   = ".ds-sts_k8s_logs-2026.11.01-000002"
+	)
+	appCtx := newLogsRestoreContext()
+	restoreConfig := appCtx.Config.Elasticsearch.Restore
+	snapshot := &elasticsearch.Snapshot{
+		Snapshot: "snap", State: elasticsearch.StatusSuccess,
+		Indices: []string{topo, b1, b2}, DataStreams: []string{"sts_k8s_logs"},
+	}
+	expected, err := restorableSnapshotIndices(snapshot, restoreConfig)
+	require.NoError(t, err)
+
+	t.Run("restored as a data stream", func(t *testing.T) {
+		client := &mockESClientForRestore{snapshot: snapshot, indexExistsMap: map[string]bool{}}
+		targets, err := restoreTargets(snapshot, expected, restoreConfig)
+		require.NoError(t, err)
+		require.NoError(t, client.RestoreSnapshot("repo", "snap", strings.Join(targets, ","), false))
+		client.settle()
+
+		assert.NoError(t, verifyLogsDatastream(client, restoreConfig, expected))
+	})
+
+	t.Run("restored as plain indices", func(t *testing.T) {
+		client := &mockESClientForRestore{snapshot: snapshot, indexExistsMap: map[string]bool{}}
+		require.NoError(t, client.RestoreSnapshot("repo", "snap", strings.Join(expected, ","), false))
+		client.settle()
+
+		err := verifyLogsDatastream(client, restoreConfig, expected)
+
+		require.ErrorContains(t, err, "'sts_k8s_logs' data stream does not exist")
+	})
+
+	t.Run("backing index outside the data stream", func(t *testing.T) {
+		client := &mockESClientForRestore{snapshot: snapshot, indexExistsMap: map[string]bool{}}
+		targets, err := restoreTargets(snapshot, expected, restoreConfig)
+		require.NoError(t, err)
+		require.NoError(t, client.RestoreSnapshot("repo", "snap", strings.Join(targets, ","), false))
+		client.settle()
+		client.indices = append(client.indices, ".ds-sts_k8s_logs-2026.11.09-000001")
+
+		err = verifyLogsDatastream(client, restoreConfig, expected)
+
+		require.ErrorContains(t, err, "outside the data stream: .ds-sts_k8s_logs-2026.11.09-000001")
+	})
+
+	t.Run("restore without logs indices is not checked", func(t *testing.T) {
+		client := &mockESClientForRestore{snapshot: snapshot}
+
+		assert.NoError(t, verifyLogsDatastream(client, restoreConfig, []string{topo}))
+	})
+}
+
+func TestVerifyAndFinalizeFailsWithFinalizeHint(t *testing.T) {
+	appCtx := newLogsRestoreContext()
+	appCtx.Namespace = "ns"
+	snapshot := &elasticsearch.Snapshot{
+		Snapshot: "snap", State: elasticsearch.StatusSuccess,
+		Indices:     []string{"sts_topology_events-2026.11.01", ".ds-sts_k8s_logs-2026.11.01-000001"},
+		DataStreams: []string{"sts_k8s_logs"},
+	}
+	client := &mockESClientForRestore{snapshot: snapshot, indexExistsMap: map[string]bool{}}
+	require.NoError(t, client.RestoreSnapshot("repo", "snap", strings.Join(snapshot.Indices, ","), false))
+	client.settle()
+
+	err := verifyAndFinalize(client, appCtx, snapshot.Indices)
+
+	require.ErrorContains(t, err, "does not exist")
+	assert.ErrorContains(t, err, "check-and-finalize --finalize-only -n ns")
 }
 
 func TestRestoreTargetsKeepCompletionExpectation(t *testing.T) {
