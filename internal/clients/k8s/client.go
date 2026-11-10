@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -276,6 +277,10 @@ func scaleDownDeployment(ctx context.Context, client kubernetes.Interface, names
 		if dep.Annotations == nil {
 			dep.Annotations = make(map[string]string)
 		}
+		if recorded, ok := recordedReplicas(dep.Annotations, originalReplicas); ok {
+			originalReplicas = recorded
+			return nil
+		}
 		dep.Annotations[PreRestoreReplicasAnnotation] = fmt.Sprintf("%d", originalReplicas)
 		zero := int32(0)
 		dep.Spec.Replicas = &zero
@@ -298,6 +303,10 @@ func scaleDownStatefulSet(ctx context.Context, client kubernetes.Interface, name
 		}
 		if sts.Annotations == nil {
 			sts.Annotations = make(map[string]string)
+		}
+		if recorded, ok := recordedReplicas(sts.Annotations, originalReplicas); ok {
+			originalReplicas = recorded
+			return nil
 		}
 		sts.Annotations[PreRestoreReplicasAnnotation] = fmt.Sprintf("%d", originalReplicas)
 		zero := int32(0)
@@ -386,6 +395,20 @@ func podSelectorString(name string, selector *metav1.LabelSelector) (string, err
 		return "", fmt.Errorf("invalid selector on %s: %w", name, err)
 	}
 	return sel.String(), nil
+}
+
+// recordedReplicas returns the replica count saved by an earlier scale-down when the workload is
+// already at 0. A retry after a failed scale-down must not overwrite it with 0, or scale-up
+// would restore 0 replicas.
+func recordedReplicas(annotations map[string]string, currentReplicas int32) (int32, bool) {
+	if currentReplicas != 0 {
+		return 0, false
+	}
+	recorded, err := strconv.ParseInt(annotations[PreRestoreReplicasAnnotation], 10, 32)
+	if err != nil {
+		return 0, false
+	}
+	return int32(recorded), true
 }
 
 // ScaleDownDeployments scales down deployments matching a label selector to 0 replicas

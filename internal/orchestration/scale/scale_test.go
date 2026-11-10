@@ -123,7 +123,7 @@ func TestScaleDown_PodsInTerminalState(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Create pods in terminal states (should be ignored by waitForPodsToTerminate)
+	// Create pods in terminal states (ignored by waitForPodsToTerminate)
 	pod1 := createPod("pod1", map[string]string{"app": "test"}, corev1.PodSucceeded)
 	pod2 := createPod("pod2", map[string]string{"app": "test"}, corev1.PodFailed)
 
@@ -137,21 +137,10 @@ func TestScaleDown_PodsInTerminalState(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	// Delete terminal pods (simulating cleanup)
-	go func() {
-		time.Sleep(100 * time.Millisecond)
-		_ = fakeClient.CoreV1().Pods("test-ns").Delete(
-			context.Background(), "pod1", metav1.DeleteOptions{},
-		)
-		_ = fakeClient.CoreV1().Pods("test-ns").Delete(
-			context.Background(), "pod2", metav1.DeleteOptions{},
-		)
-	}()
-
 	// Execute scale down
 	scaledDeployments, err := ScaleDown(client, "test-ns", "app=test", log)
 
-	// Assertions - should succeed quickly since pods are in terminal states
+	// Finished pods are never deleted here: the wait must not count them
 	require.NoError(t, err)
 	assert.Len(t, scaledDeployments, 1)
 }
@@ -1202,4 +1191,78 @@ func TestScaleDown_WaitsForPodsSelectedByWorkload(t *testing.T) {
 			assert.True(t, apierrors.IsNotFound(err), "ScaleDown returned while the pod still existed")
 		})
 	}
+}
+
+func TestScaleDown_IgnoresFinishedPodsButWaitsForRunningOnes(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	client := k8s.NewTestClient(fakeClient)
+	ctx := context.Background()
+	labels := map[string]string{"app": "test"}
+
+	deploy := createDeployment("deploy1", labels, 1)
+	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(ctx, &deploy, metav1.CreateOptions{})
+	require.NoError(t, err)
+	for _, pod := range []corev1.Pod{
+		createPod("evicted", labels, corev1.PodFailed),
+		createPod("done", labels, corev1.PodSucceeded),
+		createPod("running", labels, corev1.PodRunning),
+	} {
+		_, err = fakeClient.CoreV1().Pods("test-ns").Create(ctx, &pod, metav1.CreateOptions{})
+		require.NoError(t, err)
+	}
+
+	go func() {
+		time.Sleep(3 * time.Second)
+		_ = fakeClient.CoreV1().Pods("test-ns").Delete(ctx, "running", metav1.DeleteOptions{})
+	}()
+
+	_, err = ScaleDown(client, "test-ns", "app=test", logger.New(true, false))
+	require.NoError(t, err)
+
+	_, err = fakeClient.CoreV1().Pods("test-ns").Get(ctx, "running", metav1.GetOptions{})
+	assert.True(t, apierrors.IsNotFound(err), "ScaleDown returned while the running pod still existed")
+	_, err = fakeClient.CoreV1().Pods("test-ns").Get(ctx, "evicted", metav1.GetOptions{})
+	assert.NoError(t, err)
+}
+
+// A retry after a failed scale-down finds the workload already at 0 and must keep the recorded count.
+func TestScaleDown_RetryKeepsRecordedReplicas(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	client := k8s.NewTestClient(fakeClient)
+	ctx := context.Background()
+	labels := map[string]string{"app": "test"}
+
+	deploy := createDeployment("deploy1", labels, 3)
+	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(ctx, &deploy, metav1.CreateOptions{})
+	require.NoError(t, err)
+	sts := createStatefulSet("sts1", labels, 2)
+	_, err = fakeClient.AppsV1().StatefulSets("test-ns").Create(ctx, &sts, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	for range 2 {
+		scaled, err := ScaleDown(client, "test-ns", "app=test", logger.New(true, false))
+		require.NoError(t, err)
+		require.Len(t, scaled, 2)
+		assert.Equal(t, int32(3), scaled[0].Replicas)
+		assert.Equal(t, int32(2), scaled[1].Replicas)
+	}
+
+	deployAfter, err := fakeClient.AppsV1().Deployments("test-ns").Get(ctx, "deploy1", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "3", deployAfter.Annotations[k8s.PreRestoreReplicasAnnotation])
+	stsAfter, err := fakeClient.AppsV1().StatefulSets("test-ns").Get(ctx, "sts1", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, "2", stsAfter.Annotations[k8s.PreRestoreReplicasAnnotation])
+
+	_, err = client.ScaleUpDeploymentsFromAnnotations("test-ns", "app=test")
+	require.NoError(t, err)
+	_, err = client.ScaleUpStatefulSetsFromAnnotations("test-ns", "app=test")
+	require.NoError(t, err)
+
+	deployUp, err := fakeClient.AppsV1().Deployments("test-ns").Get(ctx, "deploy1", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, int32(3), *deployUp.Spec.Replicas)
+	stsUp, err := fakeClient.AppsV1().StatefulSets("test-ns").Get(ctx, "sts1", metav1.GetOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), *stsUp.Spec.Replicas)
 }

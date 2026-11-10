@@ -6,6 +6,7 @@ import (
 	"slices"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/stackvista/stackstate-backup-cli/internal/clients/k8s"
@@ -172,7 +173,12 @@ func waitForPodsToTerminate(k8sClient *k8s.Client, namespace string, podSelector
 				if err != nil {
 					return fmt.Errorf("failed to list pods: %w", err)
 				}
-				total += len(podList.Items)
+				for _, pod := range podList.Items {
+					// Finished pods (e.g. evicted) linger after scale-to-0 and never go away on their own.
+					if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
+						total++
+					}
+				}
 			}
 
 			if total == 0 {
