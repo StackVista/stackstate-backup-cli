@@ -606,7 +606,7 @@ func TestVerifyLogsDatastream(t *testing.T) {
 		require.NoError(t, client.RestoreSnapshot("repo", "snap", strings.Join(targets, ","), false))
 		client.settle()
 
-		assert.NoError(t, verifyLogsDatastream(client, restoreConfig, expected))
+		assert.NoError(t, verifyLogsDatastream(client, appCtx.Logger, restoreConfig, expected))
 	})
 
 	t.Run("restored as plain indices", func(t *testing.T) {
@@ -614,7 +614,7 @@ func TestVerifyLogsDatastream(t *testing.T) {
 		require.NoError(t, client.RestoreSnapshot("repo", "snap", strings.Join(expected, ","), false))
 		client.settle()
 
-		err := verifyLogsDatastream(client, restoreConfig, expected)
+		err := verifyLogsDatastream(client, appCtx.Logger, restoreConfig, expected)
 
 		require.ErrorContains(t, err, "'sts_k8s_logs' data stream does not exist")
 	})
@@ -627,7 +627,7 @@ func TestVerifyLogsDatastream(t *testing.T) {
 		client.settle()
 		client.indices = append(client.indices, ".ds-sts_k8s_logs-2026.11.09-000001")
 
-		err = verifyLogsDatastream(client, restoreConfig, expected)
+		err = verifyLogsDatastream(client, appCtx.Logger, restoreConfig, expected)
 
 		require.ErrorContains(t, err, "outside the data stream: .ds-sts_k8s_logs-2026.11.09-000001")
 	})
@@ -635,7 +635,50 @@ func TestVerifyLogsDatastream(t *testing.T) {
 	t.Run("restore without logs indices is not checked", func(t *testing.T) {
 		client := &mockESClientForRestore{snapshot: snapshot}
 
-		assert.NoError(t, verifyLogsDatastream(client, restoreConfig, []string{topo}))
+		assert.NoError(t, verifyLogsDatastream(client, appCtx.Logger, restoreConfig, []string{topo}))
+	})
+}
+
+type flakyDatastreamReader struct {
+	failures int
+	calls    int
+	backing  []string
+}
+
+func (f *flakyDatastreamReader) GetDatastream(string) ([]string, bool, error) {
+	f.calls++
+	if f.calls <= f.failures {
+		return nil, false, fmt.Errorf("connection refused")
+	}
+	return f.backing, true, nil
+}
+
+func (f *flakyDatastreamReader) ListIndices(string) ([]string, error) {
+	return f.backing, nil
+}
+
+func TestVerifyLogsDatastreamRetriesTransientErrors(t *testing.T) {
+	verifyRetryInterval = 0
+	t.Cleanup(func() { verifyRetryInterval = 2 * time.Second })
+	appCtx := newLogsRestoreContext()
+	restoreConfig := appCtx.Config.Elasticsearch.Restore
+	expected := []string{"sts_topology_events-2026.11.01", ".ds-sts_k8s_logs-2026.11.01-000001"}
+	backing := []string{".ds-sts_k8s_logs-2026.11.01-000001"}
+
+	t.Run("recovers after a dropped connection", func(t *testing.T) {
+		reader := &flakyDatastreamReader{failures: verifyAttempts - 1, backing: backing}
+
+		assert.NoError(t, verifyLogsDatastream(reader, appCtx.Logger, restoreConfig, expected))
+		assert.Equal(t, verifyAttempts, reader.calls)
+	})
+
+	t.Run("gives up after the last attempt", func(t *testing.T) {
+		reader := &flakyDatastreamReader{failures: verifyAttempts, backing: backing}
+
+		err := verifyLogsDatastream(reader, appCtx.Logger, restoreConfig, expected)
+
+		require.ErrorContains(t, err, "failed to verify datastream")
+		assert.Equal(t, verifyAttempts, reader.calls)
 	})
 }
 
