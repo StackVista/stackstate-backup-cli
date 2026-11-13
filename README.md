@@ -451,11 +451,28 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed information about the layere
 
 ## CI/CD
 
-This project uses GitHub Actions and GoReleaser for automated releases:
+The **Release** workflow runs daily at 06:00 UTC and batches dependency/compiler-only
+changes since the last published release into a patch release, including manual
+dependency repairs. Application, embedded-script and packaging changes require a
+manual release. CI/docs changes alone produce no release.
 
-1. Push a new tag (e.g., `v1.0.0`)
-2. GitHub Actions automatically builds binaries for multiple platforms
-3. GoReleaser creates a GitHub release and uploads artifacts to S3
+For an immediate release, run **Release** on `main` with operation `release` and
+a `patch`, `minor` or `major` bump. Automatic and manual runs share one publication
+lock and require successful main CI for the selected commit, including lint,
+tests, license checks, GoReleaser configuration and artifact security checks.
+The release uses that commit's Go compiler and GoReleaser version, creates its tag,
+and publishes GitHub and S3 artifacts through GoReleaser. GitHub stays in draft
+until artifact uploads complete; the S3 `LATEST_VERSION` file is updated afterward.
+Direct tag pushes do not publish.
+The first release after adopting this workflow needs a manual bump because the
+publication configuration changed.
+
+For a failed release, run **Release** with operation `retry` and its unpublished
+`vX.Y.Z` in `version`. The retry rebuilds the original tagged commit and replaces
+incomplete draft assets; archive bytes may differ. New releases wait while a
+newer unpublished tag or draft exists. Recover it or manually clean up its draft
+and tag. Published releases and tags are never replaced. If only the final
+`LATEST_VERSION` upload fails after publication, repair that file separately.
 
 ### Dependency updates
 
@@ -486,7 +503,7 @@ GitHub requires the existing CI checks and an approving review before merging.
 Compiler patches use native automerge after artifact validation and App approval.
 Library updates include direct and indirect modules.
 Module majors and Go release-line migrations require individual manual review.
-Dependency updates reach published binaries through the existing tag release process.
+Dependency updates reach published binaries through the daily maintenance release workflow.
 
 The approval workflow calls the pinned public `renovate-config` action directly.
 The separate approval App supplies the review token.

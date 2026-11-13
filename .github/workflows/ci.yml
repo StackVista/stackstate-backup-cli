@@ -6,10 +6,7 @@ on:
   push:
     branches:
       - main
-    tags:
-      - v*
 
-  # Allows to run this via the Actions tab
   workflow_dispatch:
 
 permissions: {}
@@ -25,11 +22,8 @@ concurrency:
 jobs:
   lint:
     permissions:
-      # Required: allow read access to the content for analysis.
       contents: read
-      # Optional: allow read access to pull request. Use with `only-new-issues` option.
       pull-requests: read
-      # Optional: Allow write access to checks to allow the action to annotate code in the PR.
       checks: write
     name: Linter
     runs-on: ubuntu-latest
@@ -47,9 +41,6 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
-          # Require: The version of golangci-lint to use.
-          # When `install-mode` is `binary` (default) the value can be v1.2 or v1.2.3 or `latest` to use the latest version.
-          # When `install-mode` is `goinstall` the value can be v1.2.3, `latest`, or the hash of a commit.
           version: v2.15.0
 
   check-license:
@@ -111,9 +102,7 @@ jobs:
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
-          # either 'goreleaser' (default) or 'goreleaser-pro'
           distribution: goreleaser
-          # 'latest', 'nightly', or a semver
           version: ${{ env.GORELEASER_VERSION }}
           args: check
 
@@ -134,6 +123,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+      - name: Run release orchestration tests
+        run: python3 -m unittest discover -s .github/scripts -p "test_*.py"
       - name: Run tests
         run: |
           scripts/install-go-tool-test.sh
@@ -195,53 +186,3 @@ jobs:
             dist/*_checksums.txt
             reports/
           if-no-files-found: warn
-
-  publish:
-    name: Publish the release
-    if: ${{ github.ref_type == 'tag' }}
-    needs:
-      - test
-      - security
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    env:
-      TAG: ${{ github.ref_name }}
-      S3_BUCKET: "s3://cli-dl.stackstate.com/stackstate-backup-cli/"
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: go.mod
-          cache: false
-      - name: Go releaser publish
-        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-        with:
-          # either 'goreleaser' (default) or 'goreleaser-pro'
-          distribution: goreleaser
-          # 'latest', 'nightly', or a semver
-          version: ${{ env.GORELEASER_VERSION }}
-          args: release
-      - name: Write latest version to file
-        run: mkdir -p dist && echo "${TAG}" > dist/LATEST_VERSION
-
-      - name: Authenticate with AWS
-        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
-
-      - name: Publish latest version to S3
-        run: |
-          echo "aws s3 cp dist/LATEST_VERSION ${S3_BUCKET}"
-          aws s3 cp dist/LATEST_VERSION "${S3_BUCKET}"
