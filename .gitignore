@@ -25,3 +25,6 @@ release-notes.md
 release-notes.json
 
 .localdev/
+
+__pycache__/
+*.pyc

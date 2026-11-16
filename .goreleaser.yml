@@ -5,6 +5,8 @@ release:
     owner: stackvista
     name: stackstate-backup-cli
   name_template: '{{.Tag}}'
+  use_existing_draft: true
+  replace_existing_artifacts: true
 before:
   hooks:
     - go mod download

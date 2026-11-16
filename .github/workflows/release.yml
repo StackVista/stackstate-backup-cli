@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Create a release or retry an unpublished tag
+        type: choice
+        options: [release, retry]
+        default: release
+      bump:
+        description: Version increment for a new release
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: Unpublished version to retry (vX.Y.Z)
+        type: string
+        default: ""
+
+permissions: {}
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: stackstate-backup-cli-release
+      cancel-in-progress: false
+      queue: max
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASE_OPERATION: ${{ github.event_name == 'workflow_dispatch' && inputs.operation || 'automatic' }}
+      RELEASE_COMMIT: ${{ github.sha }}
+      RELEASE_BUMP: ${{ inputs.bump || 'patch' }}
+      RELEASE_VERSION: ${{ inputs.version }}
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: automation
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select fixed commit and version
+        id: plan
+        working-directory: automation
+        run: python3 .github/scripts/release.py plan
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: steps.plan.outputs.eligible == 'true'
+        with:
+          ref: ${{ steps.plan.outputs.commit }}
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.plan.outputs.eligible == 'true'
+        with:
+          cache: false
+          go-version-file: source/go.mod
+
+      - name: Create the tag without moving an existing tag
+        if: steps.plan.outputs.eligible == 'true'
+        working-directory: source
+        env:
+          RELEASE_VERSION: ${{ steps.plan.outputs.tag }}
+          RELEASE_COMMIT: ${{ steps.plan.outputs.commit }}
+        run: python3 ../automation/.github/scripts/release.py tag
+
+      - name: Authenticate with AWS
+        if: steps.plan.outputs.eligible == 'true'
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_DEFAULT_REGION }}
+
+      - name: GoReleaser GitHub and S3 publication
+        if: steps.plan.outputs.eligible == 'true'
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          version: ${{ steps.plan.outputs.releaser }}
+          workdir: source
+          args: release --clean --parallelism 1
+        env:
+          GORELEASER_CURRENT_TAG: ${{ steps.plan.outputs.tag }}
+          GORELEASER_PREVIOUS_TAG: ${{ steps.plan.outputs.base }}
+
+      - name: Publish latest version to S3
+        if: steps.plan.outputs.eligible == 'true'
+        working-directory: source
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+          S3_BUCKET: s3://cli-dl.stackstate.com/stackstate-backup-cli/
+        run: |
+          printf '%s\n' "$TAG" > dist/LATEST_VERSION
+          aws s3 cp dist/LATEST_VERSION "$S3_BUCKET"
