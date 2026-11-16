@@ -56,6 +56,30 @@ def module_behavior(text):
     return text.split()
 
 
+def workflow_environment(text):
+    lines = text.splitlines()
+    blocks, parents = [], []
+    for index, line in enumerate(lines):
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        indent = len(line) - len(line.lstrip())
+        while parents and parents[-1][0] >= indent:
+            parents.pop()
+        if re.match(r"(?:-[ \t]+)?(?:env|'env'|\"env\"):", line.lstrip()):
+            block = [line]
+            block_indent = indent + (2 if line.lstrip().startswith("- ") else 0)
+            for following in lines[index + 1:]:
+                if not following.strip() or following.lstrip().startswith("#"):
+                    continue
+                if len(following) - len(following.lstrip()) <= block_indent:
+                    break
+                block.append(following)
+            blocks.append((tuple(parents), RELEASER.sub("  GORELEASER_VERSION: VERSION", "\n".join(block))))
+        if re.match(r"(?:-[ \t]+)?[\w-]+:", line.lstrip()):
+            parents.append((indent, line))
+    return blocks
+
+
 def classify(base, candidate):
     maintenance, application = False, []
     paths = subprocess.check_output(["git", "diff", "--no-renames", "--name-only", "-z", base, candidate]).decode().split("\0")
@@ -69,7 +93,7 @@ def classify(base, candidate):
                 maintenance = True
         elif path in {".github/workflows/ci.yml", ".github/workflows/release.yml"}:
             before, after = file_at(base, path), file_at(candidate, path)
-            if commands(before) != commands(after):
+            if commands(before) != commands(after) or workflow_environment(before) != workflow_environment(after):
                 application.append(path)
             elif RELEASER.findall(before) != RELEASER.findall(after):
                 maintenance = True

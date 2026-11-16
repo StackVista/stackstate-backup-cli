@@ -454,7 +454,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed information about the layere
 The **Release** workflow runs daily at 06:00 UTC and batches dependency/compiler-only
 changes since the last published release into a patch release, including manual
 dependency repairs. Application, embedded-script and packaging changes require a
-manual release. CI/docs changes alone produce no release.
+manual release. Workflow environment changes also require a manual release,
+except for the GoReleaser version pin. Other CI/docs changes alone produce no release.
 
 For an immediate release, run **Release** on `main` with operation `release` and
 a `patch`, `minor` or `major` bump. Automatic and manual runs share one publication

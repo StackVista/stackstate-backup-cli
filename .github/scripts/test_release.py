@@ -78,6 +78,73 @@ class ClassifierTests(unittest.TestCase):
         self.write(path, Path(path).read_text().replace("--snapshot", "--snapshot --single-target"))
         self.assertEqual(self.classify(), (False, [path]))
 
+    def test_release_build_environment_requires_manual_selection(self):
+        path = ".github/workflows/release.yml"
+        original = "jobs:\n  release:\n    env:\n      GOTOOLCHAIN: local\n    steps:\n      - run: goreleaser release --clean\n"
+        for dependency_update in (False, True):
+            with self.subTest(dependency_update=dependency_update):
+                self.write(path, original)
+                self.write("go.sum", "original sum\n")
+                self.commit()
+                self.base = self.tree
+                self.write(path, original.replace("      GOTOOLCHAIN: local", "      GOTOOLCHAIN: local\n      GOFLAGS: -trimpath"))
+                if dependency_update:
+                    self.write("go.sum", "new sum\n")
+                self.assertEqual(self.classify(), (dependency_update, [path]))
+
+    def test_environment_changes_at_every_workflow_scope_require_manual_selection(self):
+        path = ".github/workflows/ci.yml"
+        original = Path(path).read_text()
+        variants = {
+            "workflow": original.replace(f"  GORELEASER_VERSION: {RELEASER}", f"  GORELEASER_VERSION: {RELEASER}\n  GOFLAGS: -trimpath"),
+            "job": original.replace("  build:\n", "  build:\n    env:\n      CGO_ENABLED: 1\n"),
+            "step": original + "        env:\n          GOEXPERIMENT: arenas\n",
+            "inline": original.replace("  build:\n", "  build:\n    env: {GOFLAGS: '-trimpath'}\n"),
+        }
+        for scope, changed in variants.items():
+            with self.subTest(scope=scope):
+                self.write(path, changed)
+                self.assertEqual(self.classify(), (False, [path]))
+
+    def test_environment_value_changes_and_removals_require_manual_selection(self):
+        path = ".github/workflows/release.yml"
+        original = "env:\n  GOFLAGS: -trimpath\njobs:\n  release:\n    steps:\n      - run: goreleaser release --clean\n"
+        self.write(path, original)
+        self.commit()
+        self.base = self.tree
+        for changed in (original.replace("-trimpath", "-race"), original.replace("env:\n  GOFLAGS: -trimpath\n", "")):
+            with self.subTest(changed=changed):
+                self.write(path, changed)
+                self.assertEqual(self.classify(), (False, [path]))
+
+    def test_releaser_pin_update_with_build_environment_change_requires_manual_selection(self):
+        path = ".github/workflows/ci.yml"
+        self.write(path, Path(path).read_text().replace("v2.19.0", "v2.19.1") + "        env:\n          GOFLAGS: -trimpath\n")
+        self.assertEqual(self.classify(), (False, [path]))
+
+    def test_environment_move_between_jobs_requires_manual_selection(self):
+        path = ".github/workflows/release.yml"
+        original = "jobs:\n  check:\n    env:\n      GOFLAGS: -trimpath\n  release:\n    steps:\n      - run: goreleaser release --clean\n"
+        self.write(path, original)
+        self.commit()
+        self.base = self.tree
+        self.write(path, original.replace("    env:\n      GOFLAGS: -trimpath\n", "").replace("  release:\n", "  release:\n    env:\n      GOFLAGS: -trimpath\n"))
+        self.assertEqual(self.classify(), (False, [path]))
+
+    def test_multiline_environment_change_requires_manual_selection(self):
+        path = ".github/workflows/release.yml"
+        original = "env:\n  GOFLAGS: >-\n    -trimpath\njobs:\n  release:\n    steps:\n      - run: goreleaser release --clean\n"
+        self.write(path, original)
+        self.commit()
+        self.base = self.tree
+        self.write(path, original.replace("    -trimpath", "    -race"))
+        self.assertEqual(self.classify(), (False, [path]))
+
+    def test_environment_comments_do_not_require_a_release(self):
+        path = ".github/workflows/ci.yml"
+        self.write(path, Path(path).read_text().replace("env:\n", "env:\n  # compiler configuration\n"))
+        self.assertEqual(self.classify(), (False, []))
+
     def test_continued_build_flags_require_manual_selection(self):
         path = ".github/workflows/release.yml"
         original = "jobs:\n  release:\n    steps:\n      - run: |\n          goreleaser release \\\n            --clean\n"
