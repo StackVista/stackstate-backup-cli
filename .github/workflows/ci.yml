@@ -13,7 +13,7 @@ permissions: {}
 
 env:
   # renovate: datasource=github-releases depName=goreleaser/goreleaser
-  GORELEASER_VERSION: v2.20.2
+  GORELEASER_VERSION: v2.20.3
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
