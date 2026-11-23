@@ -16,7 +16,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-const zkSessionTimeout = 2 * time.Second
+const (
+	zkSessionTimeout = 2 * time.Second
+	hbaseSelector    = "app.kubernetes.io/name=hbase"
+	// HDFS and HBase flush and hand off regions on shutdown, which outlasts the generic pod timeout.
+	hbaseTerminationTimeout = 10 * time.Minute
+	hbaseReadyTimeout       = 15 * time.Minute
+)
 
 func deleteRecursive(zkConn *zk.Conn, path string, logger *logger.Logger) error {
 	children, _, err := zkConn.Children(path)
@@ -41,7 +47,7 @@ func deleteRecursive(zkConn *zk.Conn, path string, logger *logger.Logger) error 
 func scaleDownHBase(k8sClient *k8s.Client, namespace string, logger *logger.Logger) error {
 	logger.Println()
 	logger.Infof("Scaling down HBase")
-	_, err := scale.ScaleDown(k8sClient, namespace, "app.kubernetes.io/name=hbase", logger)
+	_, err := scale.ScaleDownWithTimeout(k8sClient, namespace, hbaseSelector, hbaseTerminationTimeout, logger)
 	return err
 }
 
@@ -93,33 +99,38 @@ func WipePVCs(ctx context.Context, k8sClient *k8s.Client, namespace, zkQuorum st
 		}
 	}
 
-	defer func() {
-		err := scale.ScaleUpFromAnnotations(k8sClient, namespace, "app.kubernetes.io/name=hbase", logger)
-		if err != nil {
-			logger.Warningf("Failed to scale up HBase: %v", err)
-		}
-	}()
-
-	// List pvcs in the hbase application
 	pvcs, err := k8sClient.Clientset().CoreV1().PersistentVolumeClaims(namespace).List(ctx, metav1.ListOptions{
-		LabelSelector: "app.kubernetes.io/name=hbase",
+		LabelSelector: hbaseSelector,
 	})
 	if err != nil {
-		return err
+		return scaleUpHBaseAfterError(k8sClient, namespace, logger, err)
 	}
 
 	logger.Println()
 	logger.Infof("Deleting PVCs")
 	for _, pvc := range pvcs.Items {
 		if err := k8sClient.DeletePVC(pvc.Namespace, pvc.Name); err != nil {
-			return err
+			return scaleUpHBaseAfterError(k8sClient, namespace, logger, err)
 		}
 		logger.Infof("  - %s", pvc.Name)
 	}
 	logger.Successf("Deleted PVCs")
 
 	logger.Println()
-	logger.Infof("Scaled up HBase after deleting PVCs")
+	if err := scale.ScaleUpFromAnnotations(k8sClient, namespace, hbaseSelector, logger); err != nil {
+		return fmt.Errorf("failed to scale up HBase after deleting PVCs: %w", err)
+	}
+	// The restore job needs live region servers; starting it during HBase initialization fails with NoNode for /hbase/hbaseid.
+	if err := scale.WaitForReady(k8sClient, namespace, hbaseSelector, hbaseReadyTimeout, logger); err != nil {
+		return fmt.Errorf("HBase did not become ready after deleting PVCs: %w", err)
+	}
 
 	return nil
+}
+
+func scaleUpHBaseAfterError(k8sClient *k8s.Client, namespace string, logger *logger.Logger, cause error) error {
+	if err := scale.ScaleUpFromAnnotations(k8sClient, namespace, hbaseSelector, logger); err != nil {
+		logger.Warningf("Failed to scale up HBase: %v", err)
+	}
+	return cause
 }

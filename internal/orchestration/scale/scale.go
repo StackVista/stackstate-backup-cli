@@ -17,6 +17,7 @@ import (
 const (
 	podTerminationCheckInterval = 2 * time.Second
 	podTerminationTimeout       = 120 * time.Second
+	readinessCheckInterval      = 5 * time.Second
 )
 
 // ScaleDown scales down deployments matching the label selector and logs the results.
@@ -24,6 +25,13 @@ const (
 //
 //nolint:revive // Package name "scale" with function "ScaleDown" is intentionally verbose for clarity
 func ScaleDown(k8sClient *k8s.Client, namespace, labelSelector string, log *logger.Logger) ([]k8s.AppsScale, error) {
+	return ScaleDownWithTimeout(k8sClient, namespace, labelSelector, podTerminationTimeout, log)
+}
+
+// ScaleDownWithTimeout is ScaleDown with a caller-chosen limit on waiting for pods to terminate.
+//
+//nolint:revive // Package name "scale" with function "ScaleDownWithTimeout" is intentionally verbose for clarity
+func ScaleDownWithTimeout(k8sClient *k8s.Client, namespace, labelSelector string, terminationTimeout time.Duration, log *logger.Logger) ([]k8s.AppsScale, error) {
 	log.Infof("Scaling down deployments (selector: %s)...", labelSelector)
 
 	scaledDeployments, err := k8sClient.ScaleDownDeployments(namespace, labelSelector)
@@ -64,7 +72,7 @@ func ScaleDown(k8sClient *k8s.Client, namespace, labelSelector string, log *logg
 	slices.Sort(podSelectors)
 	podSelectors = slices.Compact(podSelectors)
 
-	if err := waitForPodsToTerminate(k8sClient, namespace, podSelectors, log); err != nil {
+	if err := waitForPodsToTerminate(k8sClient, namespace, podSelectors, terminationTimeout, log); err != nil {
 		return scaledApps, fmt.Errorf("failed waiting for pods to terminate: %w", err)
 	}
 
@@ -151,19 +159,19 @@ func ScaleUpAndReleaseLock(k8sClient *k8s.Client, namespace, labelSelector strin
 }
 
 // waitForPodsToTerminate polls until no pod matches any of the pod selectors
-func waitForPodsToTerminate(k8sClient *k8s.Client, namespace string, podSelectors []string, log *logger.Logger) error {
+func waitForPodsToTerminate(k8sClient *k8s.Client, namespace string, podSelectors []string, terminationTimeout time.Duration, log *logger.Logger) error {
 	ctx := context.Background()
 	ticker := time.NewTicker(podTerminationCheckInterval)
 	defer ticker.Stop()
 
-	timeout := time.After(podTerminationTimeout)
+	timeout := time.After(terminationTimeout)
 
 	log.Infof("Waiting for pods to terminate...")
 
 	for {
 		select {
 		case <-timeout:
-			return fmt.Errorf("timeout waiting for pods to terminate after %v", podTerminationTimeout)
+			return fmt.Errorf("timeout waiting for pods to terminate after %v", terminationTimeout)
 		case <-ticker.C:
 			total := 0
 			for _, selector := range podSelectors {
@@ -224,4 +232,62 @@ func ScaleUpFromAnnotations(k8sClient *k8s.Client, namespace, labelSelector stri
 	}
 
 	return nil
+}
+
+// WaitForReady polls until every deployment and statefulset matching the label selector
+// reports all desired replicas ready.
+//
+//nolint:revive // Package name "scale" with function "WaitForReady" is intentionally verbose for clarity
+func WaitForReady(k8sClient *k8s.Client, namespace, labelSelector string, readyTimeout time.Duration, log *logger.Logger) error {
+	ctx := context.Background()
+	ticker := time.NewTicker(readinessCheckInterval)
+	defer ticker.Stop()
+	timeout := time.After(readyTimeout)
+
+	log.Infof("Waiting for workloads to become ready (selector: %s)...", labelSelector)
+
+	for {
+		notReady, err := notReadyWorkloads(ctx, k8sClient, namespace, labelSelector)
+		if err != nil {
+			return err
+		}
+		if len(notReady) == 0 {
+			log.Successf("All workloads are ready")
+			return nil
+		}
+
+		select {
+		case <-timeout:
+			return fmt.Errorf("timeout after %v waiting for workloads to become ready: %v", readyTimeout, notReady)
+		case <-ticker.C:
+			log.Infof("Waiting for %d workload(s) to become ready: %v", len(notReady), notReady)
+		}
+	}
+}
+
+func notReadyWorkloads(ctx context.Context, k8sClient *k8s.Client, namespace, labelSelector string) ([]string, error) {
+	opts := metav1.ListOptions{LabelSelector: labelSelector}
+	var notReady []string
+
+	deployments, err := k8sClient.Clientset().AppsV1().Deployments(namespace).List(ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list deployments: %w", err)
+	}
+	for _, dep := range deployments.Items {
+		if dep.Spec.Replicas != nil && dep.Status.ReadyReplicas < *dep.Spec.Replicas {
+			notReady = append(notReady, "deployment/"+dep.Name)
+		}
+	}
+
+	statefulSets, err := k8sClient.Clientset().AppsV1().StatefulSets(namespace).List(ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list statefulsets: %w", err)
+	}
+	for _, sts := range statefulSets.Items {
+		if sts.Spec.Replicas != nil && sts.Status.ReadyReplicas < *sts.Spec.Replicas {
+			notReady = append(notReady, "statefulset/"+sts.Name)
+		}
+	}
+
+	return notReady, nil
 }
