@@ -105,13 +105,6 @@ func runRestore(appCtx *app.Context) error {
 		return err
 	}
 
-	// Scale down hbase/hdfs/tephra and delete all pvcs
-	if wipePVCs {
-		if err := restore.WipePVCs(appCtx.Context, appCtx.K8sClient, appCtx.Namespace, appCtx.Config.Stackgraph.Restore.ZookeeperQuorum, appCtx.Logger); err != nil {
-			return err
-		}
-	}
-
 	// Ensure deployments are scaled back up and lock released on exit (even if restore fails)
 	defer func() {
 		if len(scaledDeployments) > 0 && !background {
@@ -121,6 +114,13 @@ func runRestore(appCtx *app.Context) error {
 			}
 		}
 	}()
+
+	// Scale down hbase/hdfs/tephra and delete all pvcs
+	if wipePVCs {
+		if err := restore.WipePVCs(appCtx.Context, appCtx.K8sClient, appCtx.Namespace, appCtx.Config.Stackgraph.Restore.ZookeeperQuorum, appCtx.Logger); err != nil {
+			return err
+		}
+	}
 
 	// Setup Kubernetes resources for restore job
 	appCtx.Logger.Println()

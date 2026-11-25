@@ -14,9 +14,11 @@ import (
 	"github.com/stackvista/stackstate-backup-cli/internal/orchestration/restorelock"
 )
 
-const (
+const podTerminationTimeout = 120 * time.Second
+
+// Variables so tests can poll faster.
+var (
 	podTerminationCheckInterval = 2 * time.Second
-	podTerminationTimeout       = 120 * time.Second
 	readinessCheckInterval      = 5 * time.Second
 )
 
@@ -235,14 +237,12 @@ func ScaleUpFromAnnotations(k8sClient *k8s.Client, namespace, labelSelector stri
 }
 
 // WaitForReady polls until every deployment and statefulset matching the label selector
-// reports all desired replicas ready.
+// reports all desired replicas ready, or ctx is done.
 //
 //nolint:revive // Package name "scale" with function "WaitForReady" is intentionally verbose for clarity
-func WaitForReady(k8sClient *k8s.Client, namespace, labelSelector string, readyTimeout time.Duration, log *logger.Logger) error {
-	ctx := context.Background()
+func WaitForReady(ctx context.Context, k8sClient *k8s.Client, namespace, labelSelector string, log *logger.Logger) error {
 	ticker := time.NewTicker(readinessCheckInterval)
 	defer ticker.Stop()
-	timeout := time.After(readyTimeout)
 
 	log.Infof("Waiting for workloads to become ready (selector: %s)...", labelSelector)
 
@@ -257,8 +257,8 @@ func WaitForReady(k8sClient *k8s.Client, namespace, labelSelector string, readyT
 		}
 
 		select {
-		case <-timeout:
-			return fmt.Errorf("timeout after %v waiting for workloads to become ready: %v", readyTimeout, notReady)
+		case <-ctx.Done():
+			return fmt.Errorf("stopped waiting for workloads to become ready: %v: %w", notReady, ctx.Err())
 		case <-ticker.C:
 			log.Infof("Waiting for %d workload(s) to become ready: %v", len(notReady), notReady)
 		}

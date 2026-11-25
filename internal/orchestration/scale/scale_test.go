@@ -1267,7 +1267,17 @@ func TestScaleDown_RetryKeepsRecordedReplicas(t *testing.T) {
 	assert.Equal(t, int32(2), *stsUp.Spec.Replicas)
 }
 
+func useFastPolling(t *testing.T) {
+	t.Helper()
+	origTermination, origReadiness := podTerminationCheckInterval, readinessCheckInterval
+	podTerminationCheckInterval, readinessCheckInterval = 10*time.Millisecond, 10*time.Millisecond
+	t.Cleanup(func() {
+		podTerminationCheckInterval, readinessCheckInterval = origTermination, origReadiness
+	})
+}
+
 func TestWaitForReady(t *testing.T) {
+	useFastPolling(t)
 	labels := map[string]string{"app.kubernetes.io/name": "hbase"}
 	tests := []struct {
 		name        string
@@ -1303,7 +1313,9 @@ func TestWaitForReady(t *testing.T) {
 				}()
 			}
 
-			err = WaitForReady(client, "test-ns", "app.kubernetes.io/name=hbase", 7*time.Second, logger.New(true, false))
+			waitCtx, cancel := context.WithTimeout(ctx, time.Second)
+			defer cancel()
+			err = WaitForReady(waitCtx, client, "test-ns", "app.kubernetes.io/name=hbase", logger.New(true, false))
 			if tt.expectError {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), "statefulset/hbase-rs")
@@ -1324,11 +1336,12 @@ func TestWaitForReady_ScaledToZeroIsReady(t *testing.T) {
 	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(context.Background(), &deploy, metav1.CreateOptions{})
 	require.NoError(t, err)
 
-	err = WaitForReady(client, "test-ns", "app.kubernetes.io/name=hbase", time.Second, logger.New(true, false))
+	err = WaitForReady(context.Background(), client, "test-ns", "app.kubernetes.io/name=hbase", logger.New(true, false))
 	require.NoError(t, err)
 }
 
 func TestScaleDownWithTimeout_TimesOut(t *testing.T) {
+	useFastPolling(t)
 	fakeClient := fake.NewSimpleClientset()
 	client := k8s.NewTestClient(fakeClient)
 	ctx := context.Background()
@@ -1341,7 +1354,7 @@ func TestScaleDownWithTimeout_TimesOut(t *testing.T) {
 	_, err = fakeClient.CoreV1().Pods("test-ns").Create(ctx, &pod, metav1.CreateOptions{})
 	require.NoError(t, err)
 
-	_, err = ScaleDownWithTimeout(client, "test-ns", "app=test", 3*time.Second, logger.New(true, false))
+	_, err = ScaleDownWithTimeout(client, "test-ns", "app=test", 200*time.Millisecond, logger.New(true, false))
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "after 3s")
+	assert.Contains(t, err.Error(), "after 200ms")
 }
