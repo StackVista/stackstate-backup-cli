@@ -105,9 +105,11 @@ func runRestore(appCtx *app.Context) error {
 		return err
 	}
 
-	// Ensure deployments are scaled back up and lock released on exit (even if restore fails)
+	// Ensure deployments are scaled back up and lock released on exit (even if restore fails).
+	// A background job that was created takes over this cleanup via check-and-finalize.
+	jobCreated := false
 	defer func() {
-		if len(scaledDeployments) > 0 && !background {
+		if len(scaledDeployments) > 0 && (!background || !jobCreated) {
 			appCtx.Logger.Println()
 			if err := scale.ScaleUpAndReleaseLock(appCtx.K8sClient, appCtx.Namespace, scaleDownLabelSelector, appCtx.Logger); err != nil {
 				appCtx.Logger.Warningf("Failed to scale up deployments: %v", err)
@@ -138,6 +140,7 @@ func runRestore(appCtx *app.Context) error {
 		return fmt.Errorf("failed to create restore job: %w", err)
 	}
 
+	jobCreated = true
 	appCtx.Logger.Successf("Restore job created: %s", jobName)
 
 	if background {

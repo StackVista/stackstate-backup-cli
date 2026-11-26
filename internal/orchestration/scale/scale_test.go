@@ -1354,7 +1354,27 @@ func TestScaleDownWithTimeout_TimesOut(t *testing.T) {
 	_, err = fakeClient.CoreV1().Pods("test-ns").Create(ctx, &pod, metav1.CreateOptions{})
 	require.NoError(t, err)
 
-	_, err = ScaleDownWithTimeout(client, "test-ns", "app=test", 200*time.Millisecond, logger.New(true, false))
+	_, err = ScaleDownWithTimeout(context.Background(), client, "test-ns", "app=test", 200*time.Millisecond, logger.New(true, false))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "after 200ms")
+}
+
+func TestScaleDownWithTimeout_StopsWhenContextCancelled(t *testing.T) {
+	useFastPolling(t)
+	fakeClient := fake.NewSimpleClientset()
+	client := k8s.NewTestClient(fakeClient)
+	ctx := context.Background()
+	labels := map[string]string{"app": "test"}
+
+	deploy := createDeployment("deploy1", labels, 1)
+	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(ctx, &deploy, metav1.CreateOptions{})
+	require.NoError(t, err)
+	pod := createPod("stuck", labels, corev1.PodRunning)
+	_, err = fakeClient.CoreV1().Pods("test-ns").Create(ctx, &pod, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	cancelCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = ScaleDownWithTimeout(cancelCtx, client, "test-ns", "app=test", time.Minute, logger.New(true, false))
+	require.ErrorIs(t, err, context.Canceled)
 }

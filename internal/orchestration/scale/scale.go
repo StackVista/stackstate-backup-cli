@@ -27,13 +27,13 @@ var (
 //
 //nolint:revive // Package name "scale" with function "ScaleDown" is intentionally verbose for clarity
 func ScaleDown(k8sClient *k8s.Client, namespace, labelSelector string, log *logger.Logger) ([]k8s.AppsScale, error) {
-	return ScaleDownWithTimeout(k8sClient, namespace, labelSelector, podTerminationTimeout, log)
+	return ScaleDownWithTimeout(context.Background(), k8sClient, namespace, labelSelector, podTerminationTimeout, log)
 }
 
-// ScaleDownWithTimeout is ScaleDown with a caller-chosen limit on waiting for pods to terminate.
+// ScaleDownWithTimeout is ScaleDown with a caller-chosen limit on waiting for pods to terminate, which also stops when ctx is done.
 //
 //nolint:revive // Package name "scale" with function "ScaleDownWithTimeout" is intentionally verbose for clarity
-func ScaleDownWithTimeout(k8sClient *k8s.Client, namespace, labelSelector string, terminationTimeout time.Duration, log *logger.Logger) ([]k8s.AppsScale, error) {
+func ScaleDownWithTimeout(ctx context.Context, k8sClient *k8s.Client, namespace, labelSelector string, terminationTimeout time.Duration, log *logger.Logger) ([]k8s.AppsScale, error) {
 	log.Infof("Scaling down deployments (selector: %s)...", labelSelector)
 
 	scaledDeployments, err := k8sClient.ScaleDownDeployments(namespace, labelSelector)
@@ -74,7 +74,7 @@ func ScaleDownWithTimeout(k8sClient *k8s.Client, namespace, labelSelector string
 	slices.Sort(podSelectors)
 	podSelectors = slices.Compact(podSelectors)
 
-	if err := waitForPodsToTerminate(k8sClient, namespace, podSelectors, terminationTimeout, log); err != nil {
+	if err := waitForPodsToTerminate(ctx, k8sClient, namespace, podSelectors, terminationTimeout, log); err != nil {
 		return scaledApps, fmt.Errorf("failed waiting for pods to terminate: %w", err)
 	}
 
@@ -161,8 +161,7 @@ func ScaleUpAndReleaseLock(k8sClient *k8s.Client, namespace, labelSelector strin
 }
 
 // waitForPodsToTerminate polls until no pod matches any of the pod selectors
-func waitForPodsToTerminate(k8sClient *k8s.Client, namespace string, podSelectors []string, terminationTimeout time.Duration, log *logger.Logger) error {
-	ctx := context.Background()
+func waitForPodsToTerminate(ctx context.Context, k8sClient *k8s.Client, namespace string, podSelectors []string, terminationTimeout time.Duration, log *logger.Logger) error {
 	ticker := time.NewTicker(podTerminationCheckInterval)
 	defer ticker.Stop()
 
@@ -172,6 +171,8 @@ func waitForPodsToTerminate(k8sClient *k8s.Client, namespace string, podSelector
 
 	for {
 		select {
+		case <-ctx.Done():
+			return fmt.Errorf("stopped waiting for pods to terminate: %w", ctx.Err())
 		case <-timeout:
 			return fmt.Errorf("timeout waiting for pods to terminate after %v", terminationTimeout)
 		case <-ticker.C:

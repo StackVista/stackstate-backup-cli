@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/go-zookeeper/zk"
@@ -46,14 +49,21 @@ func deleteRecursive(zkConn *zk.Conn, path string, logger *logger.Logger) error 
 	return nil
 }
 
-func scaleDownHBase(k8sClient *k8s.Client, namespace string, logger *logger.Logger) error {
+func scaleDownHBase(ctx context.Context, k8sClient *k8s.Client, namespace string, logger *logger.Logger) error {
 	logger.Println()
 	logger.Infof("Scaling down HBase")
-	_, err := scale.ScaleDownWithTimeout(k8sClient, namespace, hbaseSelector, hbaseTerminationTimeout, logger)
-	return err
+	if _, err := scale.ScaleDownWithTimeout(ctx, k8sClient, namespace, hbaseSelector, hbaseTerminationTimeout, logger); err != nil {
+		return scaleUpHBaseAfterError(k8sClient, namespace, logger, err)
+	}
+	return nil
 }
 
+// WipePVCs deletes the HBase, HDFS and Tephra data and waits until HBase is serving again.
+// An interrupt stops the waits so the callers' deferred scale-up and lock release still run.
 func WipePVCs(ctx context.Context, k8sClient *k8s.Client, namespace, zkQuorum string, logger *logger.Logger) error {
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	if !strings.Contains(zkQuorum, "-stackgraph") {
 		zkConn, closeZK, err := connectZookeeper(k8sClient, namespace, zkQuorum, logger)
 		if err != nil {
@@ -61,7 +71,7 @@ func WipePVCs(ctx context.Context, k8sClient *k8s.Client, namespace, zkQuorum st
 		}
 		defer closeZK()
 
-		if err = scaleDownHBase(k8sClient, namespace, logger); err != nil {
+		if err = scaleDownHBase(ctx, k8sClient, namespace, logger); err != nil {
 			return err
 		}
 
@@ -77,7 +87,7 @@ func WipePVCs(ctx context.Context, k8sClient *k8s.Client, namespace, zkQuorum st
 
 		logger.Successf("Removed nodes from Zookeeper")
 	} else {
-		if err := scaleDownHBase(k8sClient, namespace, logger); err != nil {
+		if err := scaleDownHBase(ctx, k8sClient, namespace, logger); err != nil {
 			return err
 		}
 	}
