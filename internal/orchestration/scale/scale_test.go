@@ -1266,3 +1266,115 @@ func TestScaleDown_RetryKeepsRecordedReplicas(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int32(2), *stsUp.Spec.Replicas)
 }
+
+func useFastPolling(t *testing.T) {
+	t.Helper()
+	origTermination, origReadiness := podTerminationCheckInterval, readinessCheckInterval
+	podTerminationCheckInterval, readinessCheckInterval = 10*time.Millisecond, 10*time.Millisecond
+	t.Cleanup(func() {
+		podTerminationCheckInterval, readinessCheckInterval = origTermination, origReadiness
+	})
+}
+
+func TestWaitForReady(t *testing.T) {
+	useFastPolling(t)
+	labels := map[string]string{"app.kubernetes.io/name": "hbase"}
+	tests := []struct {
+		name        string
+		readyLater  bool
+		expectError bool
+	}{
+		{name: "becomes ready", readyLater: true, expectError: false},
+		{name: "times out", readyLater: false, expectError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fakeClient := fake.NewSimpleClientset()
+			client := k8s.NewTestClient(fakeClient)
+			ctx := context.Background()
+
+			deploy := createDeployment("hbase-console", labels, 1)
+			deploy.Status.ReadyReplicas = 1
+			_, err := fakeClient.AppsV1().Deployments("test-ns").Create(ctx, &deploy, metav1.CreateOptions{})
+			require.NoError(t, err)
+			sts := createStatefulSet("hbase-rs", labels, 3)
+			_, err = fakeClient.AppsV1().StatefulSets("test-ns").Create(ctx, &sts, metav1.CreateOptions{})
+			require.NoError(t, err)
+
+			if tt.readyLater {
+				go func() {
+					time.Sleep(100 * time.Millisecond)
+					current, getErr := fakeClient.AppsV1().StatefulSets("test-ns").Get(ctx, "hbase-rs", metav1.GetOptions{})
+					if getErr != nil {
+						return
+					}
+					current.Status.ReadyReplicas = 3
+					_, _ = fakeClient.AppsV1().StatefulSets("test-ns").UpdateStatus(ctx, current, metav1.UpdateOptions{})
+				}()
+			}
+
+			waitCtx, cancel := context.WithTimeout(ctx, time.Second)
+			defer cancel()
+			err = WaitForReady(waitCtx, client, "test-ns", "app.kubernetes.io/name=hbase", logger.New(true, false))
+			if tt.expectError {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "statefulset/hbase-rs")
+				assert.NotContains(t, err.Error(), "deployment/hbase-console")
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestWaitForReady_ScaledToZeroIsReady(t *testing.T) {
+	fakeClient := fake.NewSimpleClientset()
+	client := k8s.NewTestClient(fakeClient)
+	labels := map[string]string{"app.kubernetes.io/name": "hbase"}
+
+	deploy := createDeployment("hbase-console", labels, 0)
+	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(context.Background(), &deploy, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	err = WaitForReady(context.Background(), client, "test-ns", "app.kubernetes.io/name=hbase", logger.New(true, false))
+	require.NoError(t, err)
+}
+
+func TestScaleDownWithTimeout_TimesOut(t *testing.T) {
+	useFastPolling(t)
+	fakeClient := fake.NewSimpleClientset()
+	client := k8s.NewTestClient(fakeClient)
+	ctx := context.Background()
+	labels := map[string]string{"app": "test"}
+
+	deploy := createDeployment("deploy1", labels, 1)
+	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(ctx, &deploy, metav1.CreateOptions{})
+	require.NoError(t, err)
+	pod := createPod("stuck", labels, corev1.PodRunning)
+	_, err = fakeClient.CoreV1().Pods("test-ns").Create(ctx, &pod, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	_, err = ScaleDownWithTimeout(context.Background(), client, "test-ns", "app=test", 200*time.Millisecond, logger.New(true, false))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "after 200ms")
+}
+
+func TestScaleDownWithTimeout_StopsWhenContextCancelled(t *testing.T) {
+	useFastPolling(t)
+	fakeClient := fake.NewSimpleClientset()
+	client := k8s.NewTestClient(fakeClient)
+	ctx := context.Background()
+	labels := map[string]string{"app": "test"}
+
+	deploy := createDeployment("deploy1", labels, 1)
+	_, err := fakeClient.AppsV1().Deployments("test-ns").Create(ctx, &deploy, metav1.CreateOptions{})
+	require.NoError(t, err)
+	pod := createPod("stuck", labels, corev1.PodRunning)
+	_, err = fakeClient.CoreV1().Pods("test-ns").Create(ctx, &pod, metav1.CreateOptions{})
+	require.NoError(t, err)
+
+	cancelCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	_, err = ScaleDownWithTimeout(cancelCtx, client, "test-ns", "app=test", time.Minute, logger.New(true, false))
+	require.ErrorIs(t, err, context.Canceled)
+}
